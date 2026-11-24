@@ -714,6 +714,47 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 public sealed record BridgeVillagerWhereabouts(string TargetId, string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
 /// <summary>
+/// One OTHER HUMAN PLAYER in the co-op session, standing where this observation can see them.
+///
+/// <para>
+/// THE COLLECTION IS <c>Game1.otherFarmers</c> and nothing else. It is the engine's dictionary of the players who are not
+/// the local one (<c>NetRootDictionary&lt;long, Farmer&gt;</c>, Game1.cs:1011), populated as each one connects, and it is
+/// the collection the engine's own body update walks while skipping a self entry
+/// (<c>otherFarmer.Key != player.UniqueMultiplayerID</c>, Game1.cs:9471-9475). The local actor is NOT published here: her
+/// body already is the snapshot's <c>tile</c>, <c>currentTool</c>, <c>stamina</c> and disposition, and a row naming her
+/// twice would be a second spelling of the same body. <c>Game1.getAllFarmers()</c> is deliberately not read: it also
+/// yields OFFLINE farmhands (<c>netWorldState.farmhandData</c>), whose farmer object is a save record rather than someone
+/// standing on the map.
+/// </para>
+/// <para>
+/// EVERY MEMBER IS AN ENGINE ANSWER, or the word <c>not_measured</c>. <c>Location</c>/<c>X</c>/<c>Y</c> are the farmer's
+/// own <c>currentLocation</c> and tile; <c>Name</c> is <c>Farmer.Name</c>; <c>Facing</c> is
+/// <c>FacingDirection</c> (0 up, 1 right, 2 down, 3 left - NetDirection.cs:43-66); the held pair is
+/// <c>Farmer.CurrentItem</c>, with <c>none</c> for the measured answer "empty hands" (the value this wire already uses for
+/// a measured absence); and <c>Doing</c> is the first of the engine's own action predicates that holds - <c>UsingTool</c>,
+/// <c>isEmoting</c>, <c>IsSitting()</c>, <c>isMoving()</c>, else a measured <c>idle</c>. A farmer the engine holds no
+/// sprite for publishes <c>not_measured</c> instead of <c>idle</c>, because "standing still" is a claim about a body this
+/// process is not simulating.
+/// </para>
+/// <para>
+/// THERE IS NO <c>TargetId</c>, and that is the row's whole honesty: no published action takes a human player as its
+/// target (the farmhand action surface has no such action and this family declares none), so there is no address to mint.
+/// The row is a PERCEPTION fact - who is beside her, where they look, what they hold, what they are doing - and the Host's
+/// label says so. A row that looked addressable and was not is the same defect class as a block printing an address no
+/// action accepts.
+/// </para>
+/// </summary>
+public sealed record BridgeOtherFarmerTarget(
+    string Location,
+    int X,
+    int Y,
+    string Name,
+    string Facing,
+    string HeldQualifiedItemId,
+    string HeldDisplayName,
+    string Doing);
+
+/// <summary>
 /// One farm location's ready-for-harvest crop summary, across the loaded world.
 ///
 /// <para>
@@ -1295,7 +1336,19 @@ public sealed record BridgeSnapshot(
     // family is still published; what this count never means is "the row was dropped because its item id looked wrong".
     // Null when the family itself was not measured (none of its capabilities advertised).
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WorldObjectTargetsOmitted = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WorldObjectTargetsOmitted = null,
+    // The OTHER HUMAN PLAYERS this observation can see - the one fact nothing in this record used to carry. Crops, weeds,
+    // objects, chests, animals, villagers, buildings and ground were all published; the person standing at (33,17) facing
+    // left with a watering can was on no field at all, so a co-op session read as an empty farm with a companion in it.
+    // Read from `Game1.otherFarmers` (see `BridgeOtherFarmerTarget`), window-limited like every other entity family, and
+    // NOT gated on an advertised capability: there is no action to gate it behind, and a perception fact that appears only
+    // once some action is unlocked is a fact about the action surface rather than about the world.
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
+    IReadOnlyList<BridgeOtherFarmerTarget>? OtherFarmers = null,
+    // The other farmers the window left out: this family is radius-bounded like its siblings, so a farm with one human
+    // standing at the far end must not read as a farm with nobody else on it. Null when the family was not measured, an
+    // empty array's count being the measured zero.
+    int? OtherFarmersOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -2128,7 +2181,52 @@ public sealed record BridgeNavigationReadResult(
 );
 
 /// <summary>
-/// Inbound content-table query: one engine content table, and optionally one row of it.
+/// One destination's published names: every spelling this generation's directory DECLARES for one place, and the opaque
+/// handle that names the place itself.
+///
+/// <para>
+/// The fields are split by WHERE A NAME CAME FROM - the place's own label in this locale and in the fallback locale, the
+/// other spellings its row declares, the residents that live there, the goods its shop sells - because the Mod is the only
+/// side that can read `Data/Locations`, the world-map areas, `Data/Characters` and `Data/Shops`. How much each of them
+/// counts towards a match is a ranking decision, and ranking is the Host's business (ADR-0014: the Mod does not interpret,
+/// sort or compose), so no weight travels on this wire.
+/// </para>
+/// <para>
+/// `Ref` is the place's `dr1_` handle, minted once per destination IDENTITY for this publication and bound to the same
+/// runtime, scope and source generation as every other Navigation handle. Two rows may share one handle: the farm's water
+/// landmark declares the farm's identity on purpose so arrival semantics keep working, and a handle names the identity,
+/// not a spelling.
+/// </para>
+/// </summary>
+public sealed record BridgeDestinationIndexRow(
+    string Label,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ContextLabel,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FallbackLabel,
+    IReadOnlyList<string> Aliases,
+    IReadOnlyList<string> RelatedNpcs,
+    IReadOnlyList<string> ServiceTerms,
+    string Ref
+);
+
+/// <summary>Inbound destination-index publication request. It carries no arguments: the directory is the world's.</summary>
+public sealed record BridgeDestinationIndexRequest;
+
+/// <summary>
+/// One generation's flat destination-name directory, or the Mod's named refusal to publish one.
+///
+/// <para>
+/// `Blocked` carries no half list on purpose: a directory the Mod could not publish completely would make the Host answer
+/// "no such place" for the places it dropped, which is a false statement rather than an incomplete one.
+/// </para>
+/// </summary>
+public sealed record BridgeDestinationIndexResult(
+    string Status,
+    string Reason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Generation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<BridgeDestinationIndexRow>? Destinations
+);
+
+/// <summary>Inbound content-table query: one engine content table, and optionally one row of it.</summary>
 ///
 /// <para>
 /// The engine's own tables (`Data/FarmAnimals`, `Data/Shops`, `Data/Machines`, ...) are what the game's rules are made

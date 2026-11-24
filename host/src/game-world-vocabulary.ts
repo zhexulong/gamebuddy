@@ -1010,6 +1010,11 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   lanternSlots: "灯笼位",
   scytheCropTargets: "可割的作物",
   npcRelationshipTargets: "村民",
+  // NOT a target word, and not a second spelling of `村民`. This family is the other HUMAN players in a co-op session, and
+  // no published action takes a person as its target, so the label carries the refusal itself: the model may read who is
+  // standing beside her and must not write a plan node aimed at them. Measured: the observation published crops, weeds,
+  // objects, chests, animals, villagers, buildings and ground and nothing that was the player standing next to her.
+  otherFarmers: "旁边的人（只能看见，不是目标）",
   petTargets: "宠物",
   farmAnimalPetTargets: "可摸的牲畜",
   animalProductTargets: "可收的畜产品",
@@ -1116,28 +1121,39 @@ export const NON_ROW_FAMILIES: Readonly<Record<string, string>> = Object.freeze(
 });
 
 /**
- * The families whose rows the Mod publishes for the WHOLE location, and the envelope this line cuts them to.
+ * The families whose rows the line reports a WITHHELD COUNT for, and the envelope it cuts them to.
  *
  * Every other row family is already radius-bounded on the Mod side (`TargetDiscoveryRadius`, six tiles), so the line
- * prints what it is given. `farmBuildingTargets` is not: `DiscoverBuildFarmBuildingTargets` walks
- * `location.buildings` with no radius test (`farmhandtargetdiscovery.cs:175-207`), because the family is also the
- * commission's site list. Measured `round98`: the greenhouse's footprint began three tiles from her and its ORIGIN
- * corner - the only tile the row publishes - was eight away, so a rule that measured the origin would have called the
- * building she was standing against "far" while printing a coop forty tiles across the farm as "near".
+ * prints what it is given and the Mod's own cap is the family's declared `maxItems` - a bound no reachable world reaches.
+ * `farmBuildingTargets` is the exception in both directions: `DiscoverBuildFarmBuildingTargets` walks
+ * `location.buildings` with no radius test (`farmhandtargetdiscovery.cs`), because the family is also the commission's site
+ * list. Measured `round98`: the greenhouse's footprint began three tiles from her and its ORIGIN corner - the only tile the
+ * row publishes - was eight away, so a rule that measured the origin would have called the building she was standing
+ * against "far" while printing a coop forty tiles across the farm as "near". So that family is cut HERE, on the footprint
+ * (see `footprintDistance`), and the count it costs is stated on the line.
  *
- * So the cut happens HERE, on the footprint (see `footprintDistance`), and the count it costs is stated on the line:
- * a family truncated by its own envelope says so rather than reading as the whole farm's buildings.
+ * `otherFarmers` has the other half only. It needs no Host-side cut - the Mod applies the same six-tile window - but it
+ * does need its omission count printed: another human standing across the farm is a person she cannot see, and a family of
+ * `[]` with no count beside it reads as "nobody else is on this farm", which is the false zero `待浇水作物: 0` was.
  *
- * `unpublished` is the rows the MOD's own cap left out of the family altogether (`farmBuildingTargetsOmitted`), which a
- * bounded list has to state beside it or a farm at the cap reads as a farm with exactly sixteen buildings.
+ * `unpublished` is the rows the MOD's own window or cap left out of the family altogether, and a bounded list has to state
+ * it beside itself or a farm at the cap reads as a farm with exactly that many subjects.
  */
-type LocalBounds = Readonly<{ radius: number; unpublished: (snapshot: Snapshot) => number }>;
+type LocalBounds = Readonly<{ radius?: number; unpublished: (snapshot: Snapshot) => number }>;
 
 const FAMILY_LOCAL_BOUNDS: Readonly<Record<string, LocalBounds>> = Object.freeze({
   farmBuildingTargets: Object.freeze({
     radius: TARGET_DISCOVERY_RADIUS_TILES,
     unpublished: (snapshot: Snapshot): number => {
       const count = snapshot.farmBuildingTargetsOmitted;
+      return typeof count === "number" && Number.isSafeInteger(count) && count > 0 ? count : 0;
+    },
+  }),
+  // The same count for the people beside her, with no cut of this line's own: `DiscoverOtherFarmers` applies the radius
+  // the Mod uses for every entity family, and this line prints the rows it was given.
+  otherFarmers: Object.freeze({
+    unpublished: (snapshot: Snapshot): number => {
+      const count = snapshot.otherFarmersOmitted;
       return typeof count === "number" && Number.isSafeInteger(count) && count > 0 ? count : 0;
     },
   }),
@@ -1258,6 +1274,91 @@ export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string;
   // claims the whole family is hoed - that was `round80`'s half, and `已锄 false` says bare ground as plainly as
   // `可种植 false` did.
   soilTiles: Object.freeze({ field: "hoeDirt", label: "已锄" }),
+});
+
+/**
+ * The words a farmer row prints for the two closed vocabularies it carries, keyed by the wire's own values.
+ *
+ * <p>
+ * TOTAL RECORDS over each union, so a value added to `otherFarmers.facing`/`.doing` on the Mod side cannot reach this line
+ * unnamed: the type stops compiling, and a value this build has not met prints VERBATIM (`farmerWord`) rather than
+ * silently vanishing from a row about a person.
+ * </p>
+ * <p>
+ * `not_measured` is a word here like any other, because it is the row's own answer for a fact the engine could not give:
+ * `没测到` beside `朝向` or `在做` says the fact was not asked, which is different from `站着没事` - the measured answer
+ * that all four of the engine's action predicates said no.
+ * </p>
+ */
+export const FARMER_FACING_WORDS: Readonly<Record<"up" | "right" | "down" | "left" | "not_measured", string>> =
+  Object.freeze({ up: "上", right: "右", down: "下", left: "左", not_measured: "没测到" });
+
+export const FARMER_DOING_WORDS: Readonly<
+  Record<"using_tool" | "emoting" | "sitting" | "walking" | "idle" | "not_measured", string>
+> = Object.freeze({
+  using_tool: "在用工具",
+  emoting: "在摆手势",
+  sitting: "坐着",
+  walking: "在走",
+  idle: "站着没事",
+  not_measured: "没测到",
+});
+
+/** The wire's word for "the engine answered: the hand is empty" - a measurement, not silence. */
+const FARMER_HELD_NONE = "none";
+
+/** One row's word for a closed-vocabulary field: named when this build knows it, verbatim when it does not. */
+function farmerWord(words: Readonly<Record<string, string>>, value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) return "";
+  return words[value] ?? value;
+}
+
+/** A row's field as text, or `undefined` for an absent/blank one - never the word `undefined`. */
+function rowText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/**
+ * The person facts a farmer row prints after its tile: WHO is standing there, which way they look, what they hold, and
+ * what they are doing.
+ *
+ * <p>
+ * IT IS THE ROW'S WHOLE REASON FOR EXISTING. `otherFarmers` is the one family whose subject is a person rather than a
+ * thing, so the generic sentence - a label, a tile and one state word - would print `旁边的人… (33,17)` and leave out
+ * everything a reader would ask next. The four halves are the wire's four answerable facts and nothing more: the name the
+ * engine holds for that player, `facing`, the held item's own display name, and `doing` - the first of the engine's action
+ * predicates that holds.
+ * </p>
+ * <p>
+ * `none` IS A MEASUREMENT AND PRINTS AS ONE. An empty hand publishes `none` rather than an absent member, so this line can
+ * say `空手` - a fact - instead of leaving a silence that reads as "not measured" (`heldQualifiedItemId: none`, which the
+ * Mod writes only when `Farmer.CurrentItem` answered null). A field the row genuinely does not carry prints nothing.
+ * </p>
+ */
+function otherFarmerSuffix(candidate: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const name = rowText(candidate.name);
+  if (name !== undefined) parts.push(boundedName(name));
+  const facing = farmerWord(FARMER_FACING_WORDS, candidate.facing);
+  if (facing !== "") parts.push(`朝向 ${facing}`);
+  const held = rowText(candidate.heldDisplayName);
+  if (held === FARMER_HELD_NONE) parts.push("空手");
+  else if (held !== undefined) parts.push(`拿 ${held}`);
+  const doing = farmerWord(FARMER_DOING_WORDS, candidate.doing);
+  if (doing !== "") parts.push(`在做 ${doing}`);
+  return parts.length === 0 ? "" : ` ${parts.join(" · ")}`;
+}
+
+/**
+ * The families whose rows print facts ONE `state` field cannot say, by the function that prints them.
+ *
+ * `ROW_STATE_FIELDS` is one `field`/`label` pair per family, which is exactly right for a family told apart by one state
+ * (`colorTargets`' colour, `soilTiles`' `hoeDirt`) and exactly wrong for a family whose subject is a person with four
+ * answerable facts. Declared as a table so a second such family arrives without a second branch in the sentence, and so the
+ * gate that reads this file by family name can see which families are worded where.
+ */
+const ROW_FAMILY_SUFFIXES: Readonly<Record<string, (row: Record<string, unknown>) => string>> = Object.freeze({
+  otherFarmers: otherFarmerSuffix,
 });
 
 /**
@@ -1403,7 +1504,7 @@ export function nearbyTargetFamilies(
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
     const { standing, removed, inFlight } = splitFreshRows(value, freshness);
-    const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family], ROW_KIND_WORDS[family]);
+    const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family], ROW_KIND_WORDS[family], family);
     const distance = (tile: PlacedRow): number => (readable ? footprintDistance(actor, tile) : 0);
     tiles.sort((left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y);
     // THE MOD'S OWN ENVELOPE, where the family does not have one of its own: a row past it is a place she cannot see
@@ -1417,7 +1518,7 @@ export function nearbyTargetFamilies(
     const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
     const proved: TargetLineProof = Object.freeze({ removed, inFlight, ageTurns: freshness.ageTurns });
     const envelope: LocalEnvelope | undefined =
-      bounds === undefined
+      bounds?.radius === undefined
         ? undefined
         : Object.freeze({
             radius: bounds.radius,
@@ -1470,6 +1571,12 @@ type RenderableRow = Readonly<{
   state: string;
   /** Where a structure's door is and which rows in front of it are its own (`buildingSceneSuffix`), or `""`. */
   scene: string;
+  /**
+   * The facts about a PERSON standing on the row's tile, as `ROW_FAMILY_SUFFIXES` prints them - who they are, which way
+   * they look, what they hold, what they are doing - or `""` for every family whose rows are not people. A selection
+   * read's rows carry no such fact and leave it undefined.
+   */
+  person?: string | undefined;
   window: string;
   w: number;
   h: number;
@@ -1651,7 +1758,9 @@ function placedTargetTiles(
   value: readonly unknown[],
   state: Readonly<{ field: string; label: string }> | undefined,
   kindWords: Readonly<Record<string, string>> | undefined = undefined,
+  family: string | undefined = undefined,
 ): PlacedRow[] {
+  const suffix = family === undefined ? undefined : ROW_FAMILY_SUFFIXES[family];
   const tiles: PlacedRow[] = [];
   for (const row of value) {
     if (row === null || typeof row !== "object") continue;
@@ -1666,6 +1775,7 @@ function placedTargetTiles(
       state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
       scene: buildingSceneSuffix(candidate),
       window: declaredWindowSuffix(candidate),
+      person: suffix === undefined ? "" : suffix(candidate),
       w: extentSide(candidate.w),
       h: extentSide(candidate.h),
       block: rowBlock(candidate),
@@ -1777,7 +1887,11 @@ function renderTargetFamily(
   proved: TargetLineProof = NOTHING_PROVED,
   local?: LocalEnvelope,
 ): string | undefined {
-  if (total === 0) return undefined;
+  // AN EMPTY FAMILY THAT WITHHELD A SUBJECT IS NOT "NOTHING HERE". The Mod published no row and counted the ones its own
+  // window left out, and dropping that count onto the "这一带没有" line would say nobody is there about a session with
+  // another human across the farm - the false-zero shape `待浇水作物: 0` was.
+  if (total === 0)
+    return local === undefined || local.unpublished < 1 ? undefined : `${label} 这一带没有${withheldTail(local)}`;
   const standing = total - proved.removed - proved.inFlight;
   if (proved.removed >= total) return `${label} 全部 ${String(proved.removed)} 格已不在（${COUNTED_AFTER_THE_STEP}）`;
   if (shown.length === 0 && local !== undefined && local.distant > 0 && local.distant >= standing)
@@ -1787,7 +1901,7 @@ function renderTargetFamily(
   const tiles = shown
     .map(
       (tile) =>
-        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.kindWord === undefined || tile.kindWord === "" ? "" : `${tile.kindWord} `}${tile.x},${tile.y}${footprintSuffix(tile)})${tile.surface}${tile.state}${tile.scene}${tile.window}`,
+        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.kindWord === undefined || tile.kindWord === "" ? "" : `${tile.kindWord} `}${tile.x},${tile.y}${footprintSuffix(tile)})${tile.person ?? ""}${tile.surface}${tile.state}${tile.scene}${tile.window}`,
     )
     .join(" ");
   return `${label} ${tiles}${blockSuffix(shown)}${omitted > 0 ? ` 其余 ${String(omitted)} 格未列出` : ""}${localTail(local)}${targetLineFreshness(proved)}`;
@@ -1799,7 +1913,7 @@ function renderTargetFamily(
  * A family the Mod publishes for a whole location is printed here, so the rows past the envelope leave the line the way
  * the cap's rows do - counted, by name, and never silently.
  */
-type LocalEnvelope = Readonly<{ radius: number; distant: number; standing: number; unpublished: number }>;
+type LocalEnvelope = Readonly<{ radius?: number; distant: number; standing: number; unpublished: number }>;
 
 function localTail(local: LocalEnvelope | undefined): string {
   return `${cutTail(local)}${withheldTail(local)}`;
@@ -1807,7 +1921,7 @@ function localTail(local: LocalEnvelope | undefined): string {
 
 /** The rows the family's own envelope left out: the ones that stand on this map, past the radius. */
 function cutTail(local: LocalEnvelope | undefined): string {
-  if (local === undefined || local.distant < 1) return "";
+  if (local === undefined || local.radius === undefined || local.distant < 1) return "";
   return `（另有 ${String(local.distant)} 处在 ${String(local.radius)} 格外没列）`;
 }
 

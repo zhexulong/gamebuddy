@@ -62,10 +62,14 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -157,11 +161,15 @@
           "argumentSchema": {
             "x": {
               "type": "integer",
-              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.",
+              "minimum": -1,
+              "maximum": 1000
             },
             "y": {
               "type": "integer",
-              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.",
+              "minimum": -1,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -202,13 +210,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -290,7 +304,9 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -333,13 +349,19 @@
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -387,13 +409,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -432,13 +460,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -482,13 +516,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -533,11 +573,15 @@
           "argumentSchema": {
             "x": {
               "type": "integer",
-              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.",
+              "minimum": -1,
+              "maximum": 1000
             },
             "y": {
               "type": "integer",
-              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.",
+              "minimum": -1,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -582,13 +626,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "charge": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
             }
           },
           "outputFacts": {},
@@ -631,16 +681,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -684,16 +744,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -737,16 +807,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             },
             "charge": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
             }
           },
           "outputFacts": {},
@@ -794,22 +874,32 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -853,20 +943,30 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -910,13 +1010,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {
@@ -957,21 +1063,31 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
               "type": "string",
-              "description": "The item to load into the machine, copied from `loadInputQualifiedItemId` of the machineTargets row. The machine's own Data/Machines rows decide which inputs it accepts and how many it consumes; the row publishes the item that machine takes. An input its data does not accept is refused `machine_load_unsupported_input`, and that refusal names the inputs the machine does take."
+              "description": "The item to load into the machine, copied from `loadInputQualifiedItemId` of the machineTargets row. The machine's own Data/Machines rows decide which inputs it accepts and how many it consumes; the row publishes the item that machine takes. An input its data does not accept is refused `machine_load_unsupported_input`, and that refusal names the inputs the machine does take.",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1015,13 +1131,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1060,17 +1182,25 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1109,17 +1239,25 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1164,10 +1302,14 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1208,16 +1350,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1256,21 +1408,29 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
               "type": "string",
               "description": "Exactly (O)322, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1314,21 +1474,29 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
               "type": "string",
               "description": "Exactly (O)710, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1372,21 +1540,29 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
               "type": "string",
               "description": "Exactly (O)685, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1430,20 +1606,30 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1488,18 +1674,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1543,14 +1737,20 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
               "type": "string",
-              "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw."
+              "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1595,18 +1795,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1650,14 +1858,20 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
               "type": "string",
-              "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw."
+              "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1697,18 +1911,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "description": "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result."
+              "description": "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1748,21 +1970,31 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
               "type": "string",
-              "description": "The opaque `placed_furniture` target id of the tank standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result."
+              "description": "The opaque `placed_furniture` target id of the tank standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1807,21 +2039,31 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
               "type": "string",
-              "description": "The opaque `empty_pedestal` target id of the pedestal on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the pedestal itself."
+              "description": "The opaque `empty_pedestal` target id of the pedestal on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the pedestal itself.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1866,19 +2108,28 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1921,19 +2172,28 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -1976,18 +2236,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2030,18 +2298,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2084,18 +2360,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2258,18 +2542,27 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The slot must hold a tool this action can use, but it need not be `snapshot.currentToolSlot`: the handler takes the tool from the named slot directly."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The slot must hold a tool this action can use, but it need not be `snapshot.currentToolSlot`: the handler takes the tool from the named slot directly.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2308,14 +2601,21 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2354,13 +2654,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2403,13 +2709,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2448,13 +2760,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2493,13 +2811,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2538,13 +2862,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2592,13 +2922,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2646,20 +2982,30 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2703,13 +3049,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2850,11 +3202,15 @@
           "argumentSchema": {
             "chestId": {
               "type": "string",
-              "description": "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id."
+              "description": "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id.",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedQualifiedItemId": {
               "type": "string",
-              "description": "The item id to move, copied from `qualifiedItemId` of the chestStoreTargets row. There is no `slot`: the body takes the FIRST stack of this item id in the backpack and releases exactly that stack, and the receipt's `source_slot` names which one moved. Refused `item_not_owned_in_slot` when the backpack holds none of it by then."
+              "description": "The item id to move, copied from `qualifiedItemId` of the chestStoreTargets row. There is no `slot`: the body takes the FIRST stack of this item id in the backpack and releases exactly that stack, and the receipt's `source_slot` names which one moved. Refused `item_not_owned_in_slot` when the backpack holds none of it by then.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2899,11 +3255,15 @@
           "argumentSchema": {
             "chestId": {
               "type": "string",
-              "description": "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id."
+              "description": "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id.",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedQualifiedItemId": {
               "type": "string",
-              "description": "The item id to move, copied from `qualifiedItemId` of the chestRetrieveTargets row. There is no `slot`: the body takes the FIRST stack in the container holding this item id, so the item id is the whole address on the container's side too. Refused `chest_empty` when nothing there still holds it."
+              "description": "The item id to move, copied from `qualifiedItemId` of the chestRetrieveTargets row. There is no `slot`: the body takes the FIRST stack in the container holding this item id, so the item id is the whole address on the container's side too. Refused `chest_empty` when nothing there still holds it.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2942,19 +3302,28 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -2997,22 +3366,32 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3056,19 +3435,28 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3111,19 +3499,28 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3166,18 +3563,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3221,17 +3626,25 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds."
+              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3276,17 +3689,25 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds."
+              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3331,17 +3752,25 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds."
+              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3388,13 +3817,19 @@
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -3435,13 +3870,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3486,13 +3927,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3537,13 +3984,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3584,10 +4037,14 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3636,13 +4093,19 @@
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -3683,13 +4146,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3729,17 +4198,25 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
-              "description": "The backpack slot holding the item to load. This action SELECTS that slot for the native call and restores the previous selection after, so it need not be the held one now - but it is not a tool slot."
+              "description": "The backpack slot holding the item to load. This action SELECTS that slot for the native call and restores the previous selection after, so it need not be the held one now - but it is not a tool slot.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3784,13 +4261,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3830,19 +4313,28 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "slot": {
               "type": "integer",
               "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.",
-              "resolvedAtExecution": true
+              "resolvedAtExecution": true,
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
               "type": "string",
-              "resolvedAtExecution": true
+              "description": "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.",
+              "resolvedAtExecution": true,
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3885,10 +4377,14 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             }
           },
           "outputFacts": {},
@@ -3931,13 +4427,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -3976,13 +4478,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4021,13 +4529,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4066,13 +4580,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4111,13 +4631,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4156,7 +4682,9 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4197,7 +4725,9 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4238,13 +4768,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4283,13 +4819,19 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "quantity": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9999
             }
           },
           "outputFacts": {},
@@ -4330,18 +4872,26 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedQualifiedItemId": {
               "type": "string",
-              "description": "The item id to ship, copied from `qualifiedItemId` of the shippingBinTargets row. There is no `slot`: the body takes the FIRST carried stack of this item id on arrival and ships exactly that stack, because the walk to a bin takes many ticks and a magnet pickup or a stack merge shifts slots on the way. The receipt's `slot` names which stack actually moved."
+              "description": "The item id to ship, copied from `qualifiedItemId` of the shippingBinTargets row. There is no `slot`: the body takes the FIRST carried stack of this item id on arrival and ships exactly that stack, because the walk to a bin takes many ticks and a magnet pickup or a stack merge shifts slots on the way. The receipt's `slot` names which stack actually moved.",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
               "type": "string",
-              "description": "The bin's published id, copied from `targetId` of the shippingBinTargets row. It already names the location and the bin's footprint, so the body re-resolves the live bin from it; a bin that has moved or been replaced is refused `shipping_bin_target_changed` instead of being retargeted onto whatever now stands there."
+              "description": "The bin's published id, copied from `targetId` of the shippingBinTargets row. It already names the location and the bin's footprint, so the body re-resolves the live bin from it; a bin that has moved or been replaced is refused `shipping_bin_target_changed` instead of being retargeted onto whatever now stands there.",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4386,13 +4936,19 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "Backpack slot HOLDING the wearable to equip. `snapshot.toolSlots` lists tools only, so this is NOT a tool slot."
+              "description": "Backpack slot HOLDING the wearable to equip. `snapshot.toolSlots` lists tools only, so this is NOT a tool slot.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4430,10 +4986,14 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "Backpack slot the wearable is taken OFF into. It must be EMPTY: an occupied destination is refused by name (`wearable_destination_slot_occupied`)."
+              "description": "Backpack slot the wearable is taken OFF into. It must be EMPTY: an occupied destination is refused by name (`wearable_destination_slot_occupied`).",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4578,10 +5138,14 @@
               ]
             },
             "expectedSkill": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
             },
             "expectedLevel": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
             }
           },
           "outputFacts": {},
@@ -4689,16 +5253,23 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "colorSelection": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0
             }
           },
           "outputFacts": {},
@@ -4738,13 +5309,19 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4787,13 +5364,19 @@
               "type": "string"
             },
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4839,7 +5422,9 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4876,7 +5461,9 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -4913,7 +5500,9 @@
           "kind": "execution",
           "argumentSchema": {
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -5027,13 +5616,19 @@
           "kind": "execution",
           "argumentSchema": {
             "leftSlot": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 36
             },
             "rightSlot": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -5070,13 +5665,19 @@
           "kind": "execution",
           "argumentSchema": {
             "leftSlot": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 36
             },
             "rightSlot": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},
@@ -5114,10 +5715,14 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "The backpack slot holding the geode, taken from the observation inventory row."
+              "description": "The backpack slot holding the geode, taken from the observation inventory row.",
+              "minimum": 0,
+              "maximum": 36
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "outputFacts": {},

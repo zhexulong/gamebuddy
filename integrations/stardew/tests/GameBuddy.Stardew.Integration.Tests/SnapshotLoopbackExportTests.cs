@@ -433,6 +433,10 @@ public sealed class SnapshotLoopbackExportTests
                 new ChestItem("(O)388", 99),
             });
             sample.world.PlaceVillager("Abigail", x: 3, y: 4, friendship: null);
+            // A second HUMAN PLAYER, which is the other subject an observation can hold: `otherFarmers` reads
+            // `Game1.otherFarmers`, and the Host gate that consumes this artifact validates the row's eight members against
+            // the wire schema - so the sample proves the Mod's own bytes are what the Host admits.
+            sample.world.PlaceOtherFarmer("Sam", x: 4, y: 4, id: 2002, facing: 3, heldQualifiedItemId: "(O)24", heldDisplayName: "防风草");
             // A REAL pack, because `toolSlots` is the family the collection lane closed the bridge on: the engine gives
             // a tool that cannot be upgraded `-1` (measured on Stardew Valley 1.6.15 build 24356), the Host reads a
             // level as an upgrade tier, and the wire contract says an absent level means "this tool does not upgrade".
@@ -462,6 +466,7 @@ public sealed class SnapshotLoopbackExportTests
             ("debrisTargets", "DiscoverDebrisTargets"),
             ("chests", "DiscoverChestStates"),
             ("npcRelationshipTargets", "DiscoverNpcRelationshipTargets"),
+            ("otherFarmers", "DiscoverOtherFarmers"),
             ("toolSlots", "DiscoverToolSlots"),
         };
 

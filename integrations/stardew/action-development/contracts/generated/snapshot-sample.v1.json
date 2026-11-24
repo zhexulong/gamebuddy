@@ -381,6 +381,18 @@
         "y": 0
       }
     ],
+    "otherFarmers": [
+      {
+        "doing": "idle",
+        "facing": "left",
+        "heldDisplayName": "(O)24",
+        "heldQualifiedItemId": "(O)24",
+        "location": "ProbeFarm",
+        "name": "Sam",
+        "x": 4,
+        "y": 4
+      }
+    ],
     "rockSourceTargets": [
       {
         "displayName": "(O)2",

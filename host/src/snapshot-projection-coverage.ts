@@ -66,6 +66,10 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   // decision that had been made - measured `round98`, where the line printed the greenhouse's footprint and door while
   // the gate said nobody had decided whether she sees the family at all.
   "farmBuildingTargets",
+  // The people beside her. This family reaches the model through `nearbyTargetFamilies` and its label
+  // (`旁边的人（只能看见，不是目标）`), printed on the same per-turn line as the buildings above - which is the whole point:
+  // the observation covered eight kinds of thing and none of them was the human standing three tiles away.
+  "otherFarmers",
 ]);
 
 /**

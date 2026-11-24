@@ -679,7 +679,10 @@ public sealed class TargetFamilyCompletenessTests
             // backs `FarmerCollection.Any` (`isPlayerPresent` reads it while building a native path), and
             // `hudMessages` is read by `Farmer.couldInventoryAcceptThisItem` (Farmer.cs:4741) whenever the pack is
             // full. Both are assigned in `Game1`'s own startup, so an uninitialized `Game1` leaves them null.
-            Game1.otherFarmers ??= new NetRootDictionary<long, Farmer>();
+            // `otherFarmers` is read by this world's own `DiscoverOtherFarmers`, and a collection carried in from an
+            // earlier fixture would put a farmer from that world into this one's co-op session - which every native
+            // predicate that asks "is a player present" reads. A fresh collection per world keeps the sessions apart.
+            Game1.otherFarmers = new NetRootDictionary<long, Farmer>();
             Game1.hudMessages ??= new List<HUDMessage>();
             // `Game1.options` is created in `Game1`'s constructor, and its own constructor calls `setToDefaults` which
             // reads game content (Options.cs:624). `Rumble.rumble` - reached by every native tool swing that lands a
@@ -1208,6 +1211,81 @@ public sealed class TargetFamilyCompletenessTests
             if (friendship is not null) this.Actor.friendshipData[name] = friendship;
             this.Farm.characters.Add(npc);
         }
+
+        /// <summary>
+        /// A second HUMAN PLAYER in the session: a real <see cref="Farmer"/> this world places on the probe farm and
+        /// registers in `Game1.otherFarmers`, the collection `DiscoverOtherFarmers` reads.
+        ///
+        /// <para>
+        /// Built the way this file builds every native object - an uninitialized instance whose NetFields are supplied -
+        /// because `Farmer`'s own constructor loads `Data/Characters` and a sprite sheet this process does not have. The
+        /// members the family reads are the ones supplied exactly: the tile (through a real sprite, which is what `Tile`
+        /// measures), the name, the facing, the hand and its `Items[CurrentToolIndex]`, and the `usingTool`/`isSitting`
+        /// NetBools the engine's own action predicates answer from.
+        /// </para>
+        /// <para>
+        /// `farmerSprite: false` gives that player a plain <see cref="AnimatedSprite"/> instead: a body whose animation
+        /// state the engine does not hold in the form `Farmer.FarmerSprite` answers, which is the one case the row calls
+        /// `not_measured` rather than claiming the body is standing still.
+        /// </para>
+        /// </summary>
+        internal Farmer PlaceOtherFarmer(
+            string name,
+            int x,
+            int y,
+            long id,
+            int facing = 2,
+            string? heldQualifiedItemId = null,
+            string? heldDisplayName = null,
+            bool farmerSprite = true)
+        {
+            var other = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
+            SeedMissingNetFields(other);
+            // `Character.NetFields` is a get-only auto-property INITIALIZER, and `SeedMissingNetFields` cannot seed it: the
+            // type's only constructor takes an optional name (`NetFields(string name = null)`), so it has no
+            // `Type.EmptyTypes` constructor. A null here is not cosmetic - `Game1.otherFarmers[id] = other` goes through
+            // `NetExtendableRef.clearValueParent`, which dereferences the value's own `NetFields` with no null guard
+            // (the same trap `PutToolInPackSlot` records for `Item`).
+            typeof(Character)
+                .GetField("<NetFields>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(other, new NetFields("Farmer"));
+            SetInstanceField(other, "position", new NetPosition());
+            SetInstanceField(other, "currentLocationRef", new NetLocationRef());
+            SetInstanceField(other, "netMount", new NetRef<StardewValley.Characters.Horse>());
+            AnimatedSprite sprite = farmerSprite
+                ? (FarmerSprite)FormatterServices.GetUninitializedObject(typeof(FarmerSprite))
+                : (AnimatedSprite)FormatterServices.GetUninitializedObject(typeof(AnimatedSprite));
+            SetInstanceField(sprite, "spriteWidth", new NetInt(16));
+            SetInstanceField(sprite, "spriteHeight", new NetInt(32));
+            SetInstanceField(sprite, "tempSpriteHeight", -1);
+            SetInstanceField(other, "sprite", new NetRef<AnimatedSprite> { Value = sprite });
+            SetInstanceField(other, "uniqueMultiplayerID", new NetLong(id));
+            SetInstanceField(other, "facingDirection", new NetDirection(facing));
+            SetInstanceField(other, "usingTool", new NetBool(false));
+            SetInstanceField(other, "isSitting", new NetBool(false));
+            SetInstanceField(other, "currentToolIndex", new NetInt(0));
+            // An EMPTY HAND is the engine's own `netItemStowed` flag, not a negative slot: `Farmer.CurrentItem` answers null
+            // for a stowed item and indexes `Items[CurrentToolIndex]` otherwise, so a `-1` here would be a state the game
+            // cannot produce and a read the engine answers by throwing.
+            SetInstanceField(other, "netItemStowed", new NetBool(heldQualifiedItemId is null));
+            var pack = new StardewValley.Inventories.Inventory();
+            for (int slot = 0; slot < PackCapacity; slot++) pack.Add(null!);
+            if (heldQualifiedItemId is not null) pack[0] = PlacedObject(heldQualifiedItemId, heldDisplayName, category: 0);
+            SetInstanceField(other, "netItems", new NetRef<StardewValley.Inventories.Inventory> { Value = pack });
+            SetInstanceField(other, "maxItems", new NetInt(PackCapacity));
+            other.Name = name;
+            other.position.Set(new Vector2(x * 64 + 8, y * 64));
+            other.currentLocation = this.Farm;
+            Game1.otherFarmers![id] = other;
+            return other;
+        }
+
+        /// <summary>
+        /// The rows the SHIPPED family publishes for this world, with the count it withheld: the production projection, not a
+        /// second copy of it.
+        /// </summary>
+        internal IReadOnlyList<BridgeOtherFarmerTarget> OtherFarmers(out int omitted) =>
+            FarmhandTargetDiscovery.DiscoverOtherFarmers(this.Actor, out omitted);
 
         /// <summary>
         /// A living tree at the durability the ENGINE gives one, not a fixture's convenience value.
@@ -1936,6 +2014,9 @@ public sealed class TargetFamilyCompletenessTests
                     // The ground reading a family shares with its siblings: one per call here, which is the same lifetime
                     // one observation gives it.
                     : parameter.ParameterType == typeof(GroundSurface) ? GroundSurface.Of(this.Farm)
+                    // An `out` count beside the rows (`DiscoverOtherFarmers`): the reader writes it and this probe does not
+                    // read it, so it is handed a default box the runtime fills and discards.
+                    : parameter.ParameterType.IsByRef ? null
                     : recorder)
                 .ToArray();
             object targets = method.Invoke(DiscoveryMembers.Target(method, executions), arguments)!;

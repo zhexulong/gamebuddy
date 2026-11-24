@@ -1129,6 +1129,121 @@ internal sealed class FarmhandTargetDiscovery
             .ToArray();
     }
 
+    /// <summary>The wire's word for a fact this row could not measure, and the one it uses for a measured absence.</summary>
+    internal const string OtherFarmerNotMeasured = "not_measured";
+    internal const string OtherFarmerHeldNone = "none";
+
+    /// <summary>
+    /// The other HUMAN PLAYERS standing where this observation can see them, nearest first, bounded to the same window
+    /// every entity family uses (<see cref="ExecutionManager.TargetDiscoveryRadius"/>).
+    ///
+    /// <para>
+    /// ONE ROW PER FARMER IN <c>Game1.otherFarmers</c>, which is the engine's dictionary of the players who are not the
+    /// local one. The family exists because the observation covered crops, weeds, objects, chests, animals, villagers,
+    /// buildings and ground and NOTHING in it was a person: in a co-op session the companion stood beside a human with a
+    /// watering can and no published fact said so. A self entry is skipped - the engine's own update loop skips it too
+    /// (Game1.cs:9471-9475) - because her body already is the snapshot's tile, tool, stamina and disposition.
+    /// </para>
+    /// <para>
+    /// THE WINDOW IS THE RADIUS AND NOT <c>IsPublishedTargetTileInRadius</c>. That predicate also demands an addressable
+    /// tile - on the map, with a passable neighbour - which is what a TARGET family needs and what this family must not
+    /// apply: no action takes a farmer as a target, so withholding a person for standing on a tile no action could be
+    /// dispatched at would hide the very fact the family exists for.
+    /// </para>
+    /// <para>
+    /// <paramref name="omitted"/> is every other farmer this observation did NOT publish - on another map, or on this one
+    /// past the window, or past the row cap - so a session whose other human is across the farm reads as one omitted
+    /// rather than as nobody. Only farmers are counted: the local actor is not a subject of this family at all.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<BridgeOtherFarmerTarget> DiscoverOtherFarmers(Farmer player, out int omitted)
+    {
+        omitted = 0;
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeOtherFarmerTarget>();
+
+        List<BridgeOtherFarmerTarget> result = new();
+        foreach (Farmer other in Game1.otherFarmers.Values
+            .Where(other => other is not null && !ReferenceEquals(other, player) && other.UniqueMultiplayerID != player.UniqueMultiplayerID)
+            .OrderBy(other => ExecutionManager.ChebyshevDistance(player, (int)other.Tile.X, (int)other.Tile.Y))
+            .ThenBy(other => other.UniqueMultiplayerID))
+        {
+            if (!ReferenceEquals(other.currentLocation, location)
+                || !ExecutionManager.IsTileWithinChebyshevRadius(player, (int)other.Tile.X, (int)other.Tile.Y, ExecutionManager.TargetDiscoveryRadius)
+                || result.Count >= ExecutionManager.OtherFarmerLimit)
+            {
+                omitted += 1;
+                continue;
+            }
+            Item? held = DescribeOtherFarmerHeld(other);
+            result.Add(new BridgeOtherFarmerTarget(
+                location.NameOrUniqueName,
+                (int)other.Tile.X,
+                (int)other.Tile.Y,
+                other.Name,
+                DescribeOtherFarmerFacing(other),
+                held?.QualifiedItemId ?? OtherFarmerHeldNone,
+                // The held item's own display name through the seam every sibling family names an item with
+                // (`ItemRegistry.GetData(...).DisplayName`, falling back to the id). `Item.DisplayName` is not that seam:
+                // it resolves through the registry on every read and throws when the row is not loaded.
+                held is null ? OtherFarmerHeldNone : ExecutionManager.RequireDisplayName(held.QualifiedItemId),
+                DescribeOtherFarmerDoing(other)));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// What the farmer is HOLDING, through the engine's own <c>CurrentItem</c> - which indexes
+    /// <c>Items[CurrentToolIndex]</c> with no bounds test on the negative side, so a hand pointing outside the pack throws
+    /// from inside `Inventory` on the game thread. A synced index and a synced pack can disagree for a frame, and a
+    /// snapshot may not take the world down for it: such a farmer is answered with the engine's OTHER held-item source,
+    /// <c>TemporaryItem</c> (the first branch `CurrentItem` itself reads), and with nothing when that is empty too.
+    /// </summary>
+    internal static Item? DescribeOtherFarmerHeld(Farmer farmer)
+    {
+        int slot = farmer.CurrentToolIndex;
+        return slot < 0 || slot >= farmer.Items.Count ? farmer.TemporaryItem : farmer.CurrentItem;
+    }
+
+    /// <summary>
+    /// The way the farmer is facing, in the engine's own four numbers (0 up, 1 right, 2 down, 3 left - NetDirection.cs:43-66
+    /// names them in the interpolation; `Farmer.faceDirection` writes the same four). A value outside them is
+    /// <c>not_measured</c> rather than a direction this file picked.
+    /// </summary>
+    internal static string DescribeOtherFarmerFacing(Farmer farmer) => farmer.FacingDirection switch
+    {
+        0 => "up",
+        1 => "right",
+        2 => "down",
+        3 => "left",
+        _ => OtherFarmerNotMeasured,
+    };
+
+    /// <summary>
+    /// What the farmer is DOING, from the engine's own predicates and in the order that decides: a farmer mid-swing is not
+    /// merely standing, and the tool in the air is what a reader is looking at.
+    ///
+    /// <para>
+    /// The four answers are <c>UsingTool</c> (Farmer.cs:1732), <c>isEmoting</c> (Character.cs:145), <c>IsSitting()</c>
+    /// (Farmer.cs:4697) and <c>isMoving()</c> (Character.cs:1384) - the same predicates the engine's own animation and
+    /// action code reads. None of them holding is a MEASURED <c>idle</c>: all four were asked and all four said no. A
+    /// farmer the engine holds no sprite for carries no animation state to ask, and that row says
+    /// <c>not_measured</c> instead of claiming a body is standing still.
+    /// </para>
+    /// </summary>
+    internal static string DescribeOtherFarmerDoing(Farmer farmer)
+    {
+        // A body the engine holds no FARMER animation state for is not a body standing still: `Farmer.FarmerSprite` is a
+        // cast of `Character.Sprite`, so asking it directly would throw on anything else. The row says
+        // `not_measured` rather than claiming an answer nobody could ask for.
+        if (farmer.Sprite is not FarmerSprite) return OtherFarmerNotMeasured;
+        if (farmer.UsingTool) return "using_tool";
+        if (farmer.isEmoting) return "emoting";
+        if (farmer.IsSitting()) return "sitting";
+        if (farmer.isMoving()) return "walking";
+        return "idle";
+    }
+
     internal static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts(DiscoveryExclusionRecorder exclusions)
     {
         List<BridgeWateringWhereabouts> result = new();
