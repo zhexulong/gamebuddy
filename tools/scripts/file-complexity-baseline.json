@@ -22,7 +22,7 @@
     "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs": 4415,
     "integrations/stardew/farmhandexecutioncontroller.cs": 4845,
     "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs": 2157,
-    "integrations/stardew/ModEntry.cs": 3345,
+    "integrations/stardew/ModEntry.cs": 3356,
     "integrations/stardew/ModEntry.Fixtures.cs": 2228,
     "integrations/stardew/SleepAndAdvanceDayLifecycle.cs": 2105,
     "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs": 2254,
