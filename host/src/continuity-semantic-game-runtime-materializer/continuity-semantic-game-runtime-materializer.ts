@@ -180,6 +180,11 @@ function createBodyProgramTools(
   revealReaders: () => void,
   runTrace: RunTrace,
   announceSettledFact: (fact: WorldFact) => void,
+  /**
+   * The Host's own stable name for this Game session - the one component a compiled plan's identity cannot derive from
+   * the snapshot, because `snapshotRevision` restarts at 0 in every session. See `planProgramId`.
+   */
+  sessionToken: string,
 ): readonly ToolDefinition[] {
   const withPort = async <TResult>(
     request: Record<string, unknown>,
@@ -422,7 +427,7 @@ function createBodyProgramTools(
             });
           }
           const nodes = compiled.program.nodes;
-          const programId = planProgramId(compiled.snapshotRevision, nodes);
+          const programId = planProgramId(sessionToken, compiled.snapshotRevision, nodes);
           try {
             const submitted = await submitProgram({ programId, nodes });
             const code = submitted.details.code;
@@ -2107,6 +2112,7 @@ export function createHostGameRuntimeMaterializer(
               () => revealProgramReaders(),
               runTrace,
               (fact) => announceHostFact(fact, FACT_PRODUCER.programSettlement),
+              permit.gameSessionId,
             )
           : Object.freeze([]);
         const recovery = tracedStep(runTrace, RUN_SPAN_NAMES.journalRead, { journal: "recovery", at: "binding" }, () =>

@@ -136,10 +136,15 @@ test("node admission binds grants to opaque Mod policy identity and rejects mism
   if (issued.result === "granted")
     assert.deepEqual(issued.grant.policyIdentity, { value: "mod-policy_01", capabilityRevision: 7 });
 
-  // Same node lineage but a substituted Mod identity cannot replay its earlier grant.
+  // Same node lineage but a substituted Mod identity cannot replay its earlier grant. The answer names the field the
+  // durable record disagreed on, and nothing about the LIVE policy identity: `policy_identity_mismatch` claimed a
+  // disagreement the validator never found, which is what made the model read a terminal veto as transient.
   const substituted = challenge({ policyIdentity: { value: "mod-policy_02", capabilityRevision: 7 } });
   assert.throws(() => journal.admissionRecord(substituted), /node_admission_challenge_mismatch/);
-  assert.deepEqual(await service.admit(substituted), { result: "rejected", code: "policy_identity_mismatch" });
+  assert.deepEqual(await service.admit(substituted), {
+    result: "rejected",
+    code: "admission_record_conflict:policy_identity",
+  });
 });
 
 test("node admission journals before reply and treats write loss, response loss, and validator loss as unavailable", async () => {

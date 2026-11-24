@@ -362,6 +362,42 @@ public sealed class BodyProgramControllerPumpTests
         admission.ResultsTaken.Should().ContainSingle();
     }
 
+    /// <summary>
+    /// AN ACCEPTED REJECTION IS A NODE'S WHOLE STORY, SO THE LOG MUST STATE IT.
+    ///
+    /// <para>
+    /// Only a REFUSED rejection used to be reported, so a program the Host answered inside a millisecond left `sent` and
+    /// then silence - and silence is indistinguishable from a request that was never answered. Measured `round99`:
+    /// `plan_0_01eb956d2f831b31`'s two nodes came back `rejected/policy_identity_mismatch` in 372 µs, both settled durably,
+    /// nothing was logged, and the run's own audit read 44 s of the MODEL's thinking as a lost admission. The code here is
+    /// the Host's durable-record conflict sentence, so this test also pins that the Mod can hold a rejection naming the
+    /// fields that differed instead of dropping it as `InvalidInput`.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnAcceptedRejectionIsReportedWithItsProgramNodeAndCode()
+    {
+        const string code = "admission_record_conflict:deadline:policy_identity";
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new RejectedAdmissionTransport(code);
+        var reported = new List<string>();
+        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"))
+        {
+            Diagnostics = reported.Add,
+        };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").RejectionCode.Should().Be(
+            code,
+            "the journal holds the Host's own sentence, so nothing about the fields had to be re-worded here");
+        reported.Should().ContainSingle(line => line.Contains("admission_rejected", StringComparison.Ordinal))
+            .Which.Should().Be(
+                $"[GameBuddy-body-program] admission_rejected;program=program;node=inspect;code={code}",
+                "the line names the program, the node and the code - the three facts a reader needs to tell an answer from silence");
+    }
+
     [Fact]
      public void StopBeforeSourceStartsParksThePump()
     {

@@ -311,7 +311,11 @@ test("admissionRecord rejects a JSON-owned __proto__ challenge before replay loo
     attachmentGeneration: "attachment_02",
     policyRevision: "host-policy_02",
   }));
-  assert.deepEqual(await service.admit(maliciousChallenge), { result: "rejected", code: "policy_identity_mismatch" });
+  assert.deepEqual(
+    await service.admit(maliciousChallenge),
+    { result: "rejected", code: "admission_record_conflict:challenge_shape" },
+    "a challenge the durable store refuses on its own shape is a conflict about the CHALLENGE, not a claim that the live policy identity moved",
+  );
 });
 
 test("malformed NUL-bearing wire admission tuple members are rejected", async () => {

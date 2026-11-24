@@ -12,9 +12,10 @@ import type { GameConnection } from "./game-connection.js";
 import type { BodyNodeAdmissionChallenge, BodyNodeAdmissionGrant, ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
 import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
-import type {
-  HostNodeAdmissionRecord,
-  StardewLogicalActionRecoveryJournal,
+import {
+  type HostNodeAdmissionRecord,
+  StardewAdmissionRecordConflict,
+  type StardewLogicalActionRecoveryJournal,
 } from "./stardew-logical-action-recovery-journal.js";
 
 /**
@@ -73,8 +74,17 @@ export class HostNodeAdmissionService {
     try {
       existing = this.journal.admissionRecord(challenge);
     } catch (error) {
+      // THE DURABLE STORE ANSWERED ABOUT A DIFFERENT CHALLENGE, and saying so is the whole answer. A rejection is a
+      // durable veto, so what settles this node has to be the fact that really decided it: measured `round99`,
+      // `plan_0_01eb956d2f831b31` was compiled at `snapshotRevision: 0` - the revision every session starts at - so a
+      // later session reused the id, an older session's record refused both nodes, and the code that reached the model
+      // was `policy_identity_mismatch`: a claim about the LIVE policy identity, which had not moved at all. The model read
+      // it as transient and re-submitted identical work under a new program id, which is the only escape a terminal
+      // veto this wrong leaves.
+      if (error instanceof StardewAdmissionRecordConflict)
+        return Object.freeze({ result: "rejected", code: `admission_record_conflict:${error.differs.join(":")}` });
       if (error instanceof Error && error.message === "node_admission_challenge_mismatch")
-        return Object.freeze({ result: "rejected", code: "policy_identity_mismatch" });
+        return Object.freeze({ result: "rejected", code: "admission_record_conflict:challenge_shape" });
       throw error;
     }
     if (existing?.state === "grant_issued") return Object.freeze({ result: "granted", grant: existing.grant! });

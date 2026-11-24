@@ -672,6 +672,25 @@ internal static class BodyProgramValidation
     /// </summary>
     internal const string RowActionNotEnabledPrefix = "row_action_not_enabled:";
     /// <summary>
+    /// The prefix of a rejection that says a durable Host admission record refuses THIS challenge.
+    ///
+    /// <para>
+    /// The Host's own words, and the reason the set has to hold them: the record is durable across sessions, so a record
+    /// written by an earlier session can disagree with a live one. Measured `round99`, `plan_0_01eb956d2f831b31` was
+    /// compiled at `snapshotRevision: 0` - the revision every session starts at - a previous session's record answered
+    /// for it, and the code that reached the model was `policy_identity_mismatch`: a claim about the live policy identity,
+    /// which had not moved. The fields after the prefix are the ones that actually differed
+    /// (`deadline`, `policy_identity`, `catalog_revision`, `stop_epoch`, `action_id`, `arguments`, `claims`), so the line
+    /// a reader sees names the fact instead of the incident.
+    /// </para>
+    /// <para>
+    /// WIDENED BY GRAMMAR, NOT BY A VOCABULARY. This side never acts on an individual field - it settles the node with the
+    /// whole sentence - so validating the character class is all the closed set this guard has to be. Writing the field
+    /// list here too would be a second spelling of a fact the Host owns.
+    /// </para>
+    /// </summary>
+    internal const string AdmissionRecordConflictPrefix = "admission_record_conflict:";
+    /// <summary>
     /// The rejection codes the Host may answer one node's admission with, plus the three the MOD answers for a challenge
     /// its own transport refused to carry.
     ///
@@ -695,7 +714,9 @@ internal static class BodyProgramValidation
         or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch"
         or "enqueue_failed" or "admission_not_delivered" or "challenge_not_serialisable"
         || (value is not null && IsReasonCode(value) && value.StartsWith(RowActionNotEnabledPrefix, StringComparison.Ordinal)
-            && IsIdentifier(value[RowActionNotEnabledPrefix.Length..]));
+            && IsIdentifier(value[RowActionNotEnabledPrefix.Length..]))
+        || (value is not null && IsReasonCode(value) && value.StartsWith(AdmissionRecordConflictPrefix, StringComparison.Ordinal)
+            && value.Length > AdmissionRecordConflictPrefix.Length);
     /// <summary>
     /// The one spelling of the reason-code grammar on this side of the boundary: lowercase ASCII, digits, and `_`/`:`/`-`.
     ///

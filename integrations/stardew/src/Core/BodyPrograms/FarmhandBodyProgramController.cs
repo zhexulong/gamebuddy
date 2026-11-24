@@ -804,7 +804,17 @@ public sealed class FarmhandBodyProgramController
     private bool TryReject(string programId, BodyProgramJournalNode node, NodeAdmissionChallenge challenge, string code, string? refusalDetail)
     {
         BodyProgramControllerResult<NodeAdmissionChallenge> rejected = this.authority.TryRejectAdmission(challenge, code, refusalDetail);
-        if (rejected.IsSuccess) return true;
+        if (rejected.IsSuccess)
+        {
+            // AN ACCEPTED REJECTION IS A NODE'S WHOLE STORY, and it used to be the one line this pump never wrote: only a
+            // REFUSED rejection was reported, so a program the Host rejected inside a millisecond left `sent` and then
+            // silence in the log. Measured `round99`: `plan_0`'s two nodes were answered `rejected` in 372 µs, both were
+            // durably settled, and the absence of this line made 44 s of the MODEL's own thinking read as a request that
+            // was never answered at all. The line is one per node, because a node rejects once - the journal refuses a
+            // second rejection of the same node.
+            this.Diagnose($"admission_rejected;program={programId};node={node.NodeId};code={code}");
+            return true;
+        }
         string name = rejected.Code == BodyProgramControllerResultCode.InvalidInput
             ? "admission_rejection_refused_by_policy"
             : "admission_rejection_refused";

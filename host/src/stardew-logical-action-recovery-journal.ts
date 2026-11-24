@@ -81,6 +81,29 @@ export type HostNodeAdmissionRecord = Readonly<{
   rejectionCode?: string;
 }>;
 
+/**
+ * A durable admission record already answers for this node tuple, with a DIFFERENT challenge.
+ *
+ * <p>
+ * WHAT IT SEPARATES. The record's key is the tuple the Mod names (program, node, and both attempts), and the whole point
+ * of the record is that one node attempt gets one decision - so a challenge that differs anywhere else is a different
+ * program that happens to share that tuple, never the same attempt re-sent (the Mod re-sends the object it minted,
+ * verbatim). Measured `round99`: `plan_0_01eb956d2f831b31` was compiled at `snapshotRevision: 0`, which every session
+ * starts at, so a later session reused the id and this record - written by a session whose policy identity no longer
+ * exists - answered the live attempt. The code that reached the model said `policy_identity_mismatch`, which claimed a
+ * disagreement about the LIVE policy identity that never happened; `differs` is the fact the deciding layer actually found.
+ * </p>
+ */
+export class StardewAdmissionRecordConflict extends Error {
+  public constructor(
+    /** The differing challenge fields, in the journal's own fixed vocabulary, ready to be named in a code. */
+    public readonly differs: readonly string[],
+  ) {
+    super(`node_admission_challenge_mismatch:${differs.join(":")}`);
+    this.name = "StardewAdmissionRecordConflict";
+  }
+}
+
 type Document = Readonly<{
   schemaVersion: 1;
   scope?: Record<string, unknown>;
@@ -593,9 +616,10 @@ export class StardewLogicalActionRecoveryJournal {
       throw error;
     }
     const record = this.#admissionRecords.get(admissionKey(challenge));
-    if (record !== undefined && !sameAdmissionChallenge(record.challenge, challenge))
-      throw new Error("node_admission_challenge_mismatch");
-    return record ?? null;
+    if (record === undefined) return null;
+    const differs = admissionChallengeDiff(record.challenge, challenge);
+    if (differs.length > 0) throw new StardewAdmissionRecordConflict(differs);
+    return record;
   }
   public async recordAdmission(record: HostNodeAdmissionRecord): Promise<HostNodeAdmissionRecord> {
     assertAdmissionRecord(record);
@@ -1256,8 +1280,31 @@ function admissionKey(challenge: BodyNodeAdmissionChallenge): string {
   // delimiter boundary or make distinct controller-named tuples collide.
   return JSON.stringify([challenge.programId, challenge.nodeId, challenge.nodeAttempt, challenge.admissionAttempt]);
 }
+/**
+ * The challenge fields two records for the SAME tuple can disagree on, in a fixed vocabulary a code can carry.
+ *
+ * <p>
+ * The tuple itself is `admissionKey`'s four fields and is therefore never in here. The names are lowercase snake because
+ * they become part of a reason code (`admission_record_conflict:deadline:policy_identity`), which the wire's own grammar
+ * and the Mod's rejection vocabulary both already accept.
+ * </p>
+ */
+function admissionChallengeDiff(
+  left: BodyNodeAdmissionChallenge,
+  right: BodyNodeAdmissionChallenge,
+): readonly string[] {
+  const differs: string[] = [];
+  if (left.actionId !== right.actionId) differs.push("action_id");
+  if (left.catalogRevision !== right.catalogRevision) differs.push("catalog_revision");
+  if (left.stopEpoch !== right.stopEpoch) differs.push("stop_epoch");
+  if (left.deadlineMs !== right.deadlineMs) differs.push("deadline");
+  if (!sameOptional(left.policyIdentity, right.policyIdentity)) differs.push("policy_identity");
+  if (!sameOptional(left.canonicalBoundArgs, right.canonicalBoundArgs)) differs.push("arguments");
+  if (!sameOptional(left.derivedResourceClaims, right.derivedResourceClaims)) differs.push("claims");
+  return Object.freeze(differs);
+}
 function sameAdmissionChallenge(left: BodyNodeAdmissionChallenge, right: BodyNodeAdmissionChallenge): boolean {
-  return sameOptional(left, right);
+  return admissionChallengeDiff(left, right).length === 0;
 }
 function freezeAdmissionRecord(record: HostNodeAdmissionRecord): HostNodeAdmissionRecord {
   return deepFreeze(canonicalize(record)) as HostNodeAdmissionRecord;

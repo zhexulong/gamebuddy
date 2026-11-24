@@ -797,7 +797,7 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
             bindings: {},
           },
         ]);
-        assert.equal(payload.programId, planProgramId(1, payload.nodes));
+        assert.equal(payload.programId, planProgramId("game_session_attestation", 1, payload.nodes));
         // The accepted answer, as a caller reads it: the batch is NOT settled (the Mod has just recorded it), and the
         // one node the script wrote is answered at its own index with the state the Mod recorded. The clock is asserted
         // separately - it is a reading, not a constant.
