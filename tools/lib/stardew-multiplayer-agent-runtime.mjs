@@ -182,21 +182,26 @@ function allocationPrompt(allocation) {
 }
 
 /**
- * The whole agent-driven run, against an already-armed shared world.
+ * Open the product's Game runtime on the ONE authenticated bridge consumer, and keep it open.
+ *
+ * Why this is separate from `runAgentDrivenLoop`: a paired run needs SEVERAL Agent turns on ONE session (one per
+ * slice, plus the next-day question) and it needs the connected client in its own hands while a model turn is in
+ * flight, because the player-side probe dispatches through that same client rather than opening a second connection
+ * (two writers on one pipe is the shape that produced `journal_key_owned_by_another_process`). Rebuilding the runtime
+ * between turns would also make the next-day question a different session, which is the one thing a memory slice must
+ * not be.
  *
  * Why it connects its OWN client instead of the smoke harness's: the launch handle needs a client that was connected
  * WITH the integration adapter, and the harness calls `LocalStardewBridgeClient.connect(scope, pipe, token)` with three
  * arguments (`stardew-native-smoke-harness-v1.mjs:438`) while the ladder passes the adapter as the fourth. Reusing the
  * harness's client here would fail at launch-handle creation, so this path connects exactly as the ladder does.
  */
-export async function runAgentDrivenLoop({
+export async function openAgentDrivenSession({
   config,
-  allocation,
   traceDir,
   onFact,
   runtimeRoot: configuredRuntimeRoot = process.env.GAMEBUDDY_LOOP_RUNTIME_ROOT ?? undefined,
   companionLocale = "zh-CN",
-  turnTimeoutMs = 600_000,
 }) {
   const host = await loadHostBuild();
   const scope = Object.freeze({
@@ -258,27 +263,61 @@ export async function runAgentDrivenLoop({
       loadHostBuild: async () => host,
       hostBuild: host,
     });
-    const prompt = allocationPrompt(allocation);
-    const turn = await runAgentTurnWithTools(materialized.runtime, prompt, {
-      runtimeRoot,
-      identity: host.identityKey(identity),
-      timeoutMs: turnTimeoutMs,
-    });
-    const agentTurns = turn.turns;
+    const promptOf = (allocation) => allocationPrompt(allocation);
     return Object.freeze({
-      agentTurns: Object.freeze(agentTurns),
+      // The connected client, published because the paired probe sends through it: it is the ONE consumer the Mod
+      // admits, and a second connection would be a second writer on the same pipe.
+      client,
       personaMounted: Object.freeze({
         name: personaMounted.name,
         worldBookEntries: personaMounted.worldBookEntries,
         macroTokens: personaMounted.macroTokens,
       }),
-      prompt,
+      promptOf,
+      /** One Agent turn through the runtime's own player-input channel. */
+      async runTurn(allocation, { timeoutMs = 600_000 } = {}) {
+        const prompt = promptOf(allocation);
+        const turn = await runAgentTurnWithTools(materialized.runtime, prompt, {
+          runtimeRoot,
+          identity: host.identityKey(identity),
+          timeoutMs,
+        });
+        return Object.freeze({ ...turn, prompt });
+      },
+      dispose() {
+        unsubscribeFact();
+        unsubscribeConnection();
+      },
+    });
+  } catch (error) {
+    unsubscribeFact();
+    unsubscribeConnection();
+    throw error;
+  }
+}
+
+/** The single-turn caller: the session above, opened and disposed around one Agent turn. */
+export async function runAgentDrivenLoop({
+  config,
+  allocation,
+  traceDir,
+  onFact,
+  runtimeRoot: configuredRuntimeRoot = process.env.GAMEBUDDY_LOOP_RUNTIME_ROOT ?? undefined,
+  companionLocale = "zh-CN",
+  turnTimeoutMs = 600_000,
+}) {
+  const session = await openAgentDrivenSession({ config, traceDir, onFact, runtimeRoot: configuredRuntimeRoot, companionLocale });
+  try {
+    const turn = await session.runTurn(allocation, { timeoutMs: turnTimeoutMs });
+    return Object.freeze({
+      agentTurns: Object.freeze(turn.turns),
+      personaMounted: session.personaMounted,
+      prompt: turn.prompt,
       admitted: turn.admitted,
       settled: turn.settled,
     });
   } finally {
-    unsubscribeFact();
-    unsubscribeConnection();
+    session.dispose();
   }
 }
 
