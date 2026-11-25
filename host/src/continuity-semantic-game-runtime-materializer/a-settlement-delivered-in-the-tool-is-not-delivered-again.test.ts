@@ -12,11 +12,7 @@ import {
   type SettledProgramAnswer,
   watchProgramSettlement,
 } from "../program-settlement-digest.js";
-import {
-  isTerminalProgramStatus,
-  type PlanAnswerNode,
-  waitForTerminalProgramStatus,
-} from "../program-status-wait.js";
+import { isTerminalProgramStatus, type PlanAnswerNode, waitForTerminalProgramStatus } from "../program-status-wait.js";
 import type { Snapshot } from "../protocol.js";
 import { ROOT } from "../wire-declaration.test-support.js";
 import { planSelfWaitDecision, readPlanWorldSnapshot } from "./continuity-semantic-game-runtime-materializer.js";
@@ -190,7 +186,7 @@ async function replay(programme: Programme, protocol: Protocol): Promise<Replay>
   const clock = virtualClock();
   const read = async () => journalAt(programme, clock.now());
   const nodes = compiledNodes(programme);
-  const decision = planSelfWaitDecision(programme.nodes, undefined);
+  const decision = planSelfWaitDecision(undefined);
   const watching = watchProgramSettlement({
     read,
     onSettled: async (status) => {
@@ -216,10 +212,11 @@ async function replay(programme: Programme, protocol: Protocol): Promise<Replay>
     const delivery = protocol.tellsTheWatch ? reporter.holdDelivery(programme.programId) : undefined;
     try {
       const first = await read();
-      const outcome: Readonly<{ result: unknown; waited: Readonly<{ terminality: string }> }> =
-        isTerminalProgramStatus(first)
-          ? Object.freeze({ result: first, waited: Object.freeze({ terminality: "terminal" }) })
-          : await waitForTerminalProgramStatus(read, first, decision.boundMs, clock.now, clock.sleep);
+      const outcome: Readonly<{ result: unknown; waited: Readonly<{ terminality: string }> }> = isTerminalProgramStatus(
+        first,
+      )
+        ? Object.freeze({ result: first, waited: Object.freeze({ terminality: "terminal" }) })
+        : await waitForTerminalProgramStatus(read, first, decision.bound, clock.now, clock.sleep);
       settledInTheCall = outcome.waited.terminality === "terminal";
       if (settledInTheCall) delivery?.answerInTool();
       if (protocol.carriesTheWorld) {
@@ -337,7 +334,10 @@ test("a_settlement_delivered_in_the_tool_is_not_delivered_again", async () => {
  */
 test("the pre-change delivery - a wait that does not tell the watch - is red on this run's own programmes", async () => {
   const before = await verdictOver(ROUND84.programmes, { tellsTheWatch: false, carriesTheWorld: false });
-  assert.ok(before.waitedAndSettled > 0, `blocked: nothing was held, so nothing could be delivered twice: ${before.report}`);
+  assert.ok(
+    before.waitedAndSettled > 0,
+    `blocked: nothing was held, so nothing could be delivered twice: ${before.report}`,
+  );
   assert.equal(
     before.reportedAgain.length,
     before.waitedAndSettled,
@@ -354,7 +354,10 @@ test("the pre-change delivery - a wait that does not tell the watch - is red on 
 test("a ledger-only answer is red on the snapshot line, with the delivery already fixed", async () => {
   const ledgerOnly = await verdictOver(ROUND84.programmes, { tellsTheWatch: true, carriesTheWorld: false });
   assert.deepEqual(ledgerOnly.reportedAgain, [], `the delivery half stays fixed: ${ledgerOnly.report}`);
-  assert.ok(ledgerOnly.waited > 0, `blocked: nothing held the turn, so nothing could carry a reading: ${ledgerOnly.report}`);
+  assert.ok(
+    ledgerOnly.waited > 0,
+    `blocked: nothing held the turn, so nothing could carry a reading: ${ledgerOnly.report}`,
+  );
   assert.equal(
     ledgerOnly.snapshotCarried,
     0,
@@ -458,7 +461,11 @@ test("the harvest-and-till pair comes back with a snapshot that shows the bag an
     throw new Error("bridge_response_timeout");
   };
   const failed = await readPlanWorldSnapshot(stale);
-  assert.deepEqual(failed, { snapshotUnavailable: "snapshot_unavailable:observe_failed" }, "a stale world is never the answer");
+  assert.deepEqual(
+    failed,
+    { snapshotUnavailable: "snapshot_unavailable:observe_failed" },
+    "a stale world is never the answer",
+  );
   // And a connection with no observation route at all says that, rather than omitting the field: "no change" and "not
   // read" are different facts.
   assert.deepEqual(await readPlanWorldSnapshot({} as GameConnection), {

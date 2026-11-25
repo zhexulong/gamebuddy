@@ -31,12 +31,7 @@ import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
-import {
-  MAX_PLAN_NODES,
-  MAX_PLAN_SELF_WAIT_NODES,
-  PLAN_NODE_PACE_MS,
-  PLAN_SELF_WAIT_BUDGET_MS,
-} from "../body-program-script.js";
+import { PLAN_SELF_WAIT_BUDGET_MS, PLAN_SELF_WAIT_HOLD_MS } from "../body-program-script.js";
 import { MAX_PROGRAM_STATUS_WAIT_MS } from "../program-status-wait.js";
 import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recovery-supervisor.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
@@ -1112,63 +1107,33 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
     "why a family came back empty this turn - a diagnostic roster the fact line reads, never a target any action addresses",
 });
 
-test("a plan that outlasts the wait bound is answered on acceptance; one that fits is held", async () => {
+test("a plan's hold is the producer's silence window under its total, and a caller's own bound wins in both directions", async () => {
   // THE CORRECTION STAYS AND BECOMES A MEASUREMENT. `plan_work` first blocked until the program settled, which saved
   // one model round trip (polling fell 48 -> 4) and took away the control points that make a body program usable: while
   // the call is held the model cannot `stop`, `append` or redirect, so `program_stop` is unreachable exactly when a
   // player needs it. Waiting then became opt-in - and a plan measured `round84` (33 of 59 programmes are 1-3 nodes, a
-  // plan executes in 1-4 s) paid 10.1 s of delivery to learn what the call it had already made would have answered. Each
-  // arm below is one of those two facts, and the threshold between them is DERIVED: the budget over the recorded
-  // per-node pace, never a node count written here.
-  assert.equal(
-    MAX_PLAN_SELF_WAIT_NODES,
-    Math.floor(PLAN_SELF_WAIT_BUDGET_MS / PLAN_NODE_PACE_MS),
-    "the threshold is the budget over the observed pace, so a re-measurement moves it and a hand-picked count cannot",
-  );
-  assert.ok(
-    MAX_PLAN_SELF_WAIT_NODES > 0,
-    "blocked: a zero threshold would hold no plan at all and this file would pass",
-  );
-  for (let nodeCount = 1; nodeCount <= MAX_PLAN_SELF_WAIT_NODES; nodeCount += 1) {
-    const held = planSelfWaitDecision(nodeCount, undefined);
-    assert.equal(held.wait, true, `${String(nodeCount)} nodes fit inside one decision`);
-    assert.equal(
-      held.boundMs,
-      PLAN_SELF_WAIT_BUDGET_MS,
-      "held for the budget, not for the 30 s the status tool allows",
-    );
-    assert.equal(
-      held.predictedMs,
-      nodeCount * PLAN_NODE_PACE_MS,
-      "the prediction is the node count at the observed pace",
-    );
-  }
-  const past = planSelfWaitDecision(MAX_PLAN_SELF_WAIT_NODES + 1, undefined);
+  // plan executes in 1-4 s) paid 10.1 s of delivery to learn what the call it had already made would have answered.
+  //
+  // WHAT BOUNDS THE HOLD IS THE PRODUCER'S TWO NUMBERS, NOT A THRESHOLD DERIVED HERE. The node-count threshold this
+  // file used to derive (`MAX_PLAN_SELF_WAIT_NODES = budget / pace`, and the `plan_outlasts_the_wait_bound` arm that
+  // declined past it) is gone from `body-program-script.ts`: the decision cannot see the plan any more, so nothing here
+  // can derive an answer about the plan's size. Every plan is held, under a silence window every finished step renews
+  // and a total no renewal crosses, and both numbers are read from the producer rather than written here.
   assert.deepEqual(
-    past,
-    {
-      wait: false,
-      boundMs: 0,
-      predictedMs: (MAX_PLAN_SELF_WAIT_NODES + 1) * PLAN_NODE_PACE_MS,
-      reasonCode: "plan_outlasts_the_wait_bound",
-    },
-    "a plan predicted to outlast the bound is answered on acceptance, and says why it was not held",
+    planSelfWaitDecision(undefined),
+    { wait: true, bound: { silenceMs: PLAN_SELF_WAIT_BUDGET_MS, holdMs: PLAN_SELF_WAIT_HOLD_MS } },
+    "every plan is held, for the silence window, under the total - a re-measurement moves the producer, not this file",
   );
   // A CALLER'S OWN BOUND WINS IN BOTH DIRECTIONS: `0` is how a caller about to stop or redirect keeps the turn free,
-  // and a named bound is obeyed (capped by the same maximum the status tool obeys) whatever the node count says.
-  const neverAsked = planSelfWaitDecision(1, 0);
+  // and a named bound is obeyed, capped by the same maximum the status tool obeys.
+  const neverAsked = planSelfWaitDecision(0);
   assert.ok(!neverAsked.wait, "`waitMs: 0` never holds the turn");
   assert.equal(neverAsked.reasonCode, "caller_asked_never", "and the answer says the caller asked for that");
-  assert.equal(planSelfWaitDecision(1, 250).boundMs, 250);
-  assert.equal(
-    planSelfWaitDecision(1, 90_000).boundMs,
-    MAX_PROGRAM_STATUS_WAIT_MS,
+  assert.deepEqual(planSelfWaitDecision(250), { wait: true, bound: 250 }, "a named bound is that many milliseconds");
+  assert.deepEqual(
+    planSelfWaitDecision(90_000),
+    { wait: true, bound: MAX_PROGRAM_STATUS_WAIT_MS },
     "a caller cannot ask for more than the wire's own maximum",
-  );
-  assert.equal(
-    planSelfWaitDecision(MAX_PLAN_NODES, 5_000).wait,
-    true,
-    "and a long plan is held when the caller asks for it",
   );
 
   // The declined arm AWAITS NOTHING: it answers from the journal the submit already carried, so it cannot hold the turn
@@ -1177,9 +1142,9 @@ test("a plan that outlasts the wait bound is answered on acceptance; one that fi
   const { shape: source } = readSourceShape(
     join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
   );
-  const plan = source.slice(source.indexOf("const selfWait = planSelfWaitDecision(nodes.length, waitMs);"));
+  const plan = source.slice(source.indexOf("const selfWait = planSelfWaitDecision(waitMs);"));
   const declined = plan.indexOf("if (!selfWait.wait) {");
-  assert.ok(declined > 0, "the plan tool decides with the derived rule before it reads anything");
+  assert.ok(declined > 0, "the plan tool decides with the producer's rule before it reads anything");
   const heldAt = plan.indexOf("const startedAtMs =");
   assert.ok(heldAt > declined, "and the held arm begins after the declined one");
   assert.doesNotMatch(
@@ -1203,7 +1168,7 @@ test("a plan that outlasts the wait bound is answered on acceptance; one that fi
   assert.match(source, /waitedMs: Math\.max\(0, Date\.now\(\) - startedAtMs\),/u);
   assert.match(
     source,
-    /await waitForTerminalProgramStatus\(readStatus, first, selfWait\.boundMs\)/u,
+    /await waitForTerminalProgramStatus\(readStatus, first, selfWait\.bound\)/u,
     "by WAITING for it with the one waiter and the decision's own bound",
   );
 });
@@ -1447,7 +1412,7 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(source, /status: settled\.result,/, "and carries the status a second call would have fetched");
   assert.match(
     source,
-    /await waitForTerminalProgramStatus\(readStatus, first, selfWait\.boundMs\)/u,
+    /await waitForTerminalProgramStatus\(readStatus, first, selfWait\.bound\)/u,
     "by WAITING for it with the one waiter, not by returning early and inviting a poll",
   );
   // The run artifact keeps the script, the snapshot it read and the program it produced, so a failed plan can be
