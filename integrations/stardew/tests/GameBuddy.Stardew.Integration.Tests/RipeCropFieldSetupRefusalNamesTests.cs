@@ -94,7 +94,7 @@ public sealed class RipeCropFieldSetupRefusalNamesTests
     [Theory]
     [InlineData("private void InitializeNativeLocalHarvestCropFixture(", "472", 6,
         "fixture_native_local_harvest_crop_setup_unavailable")]
-    [InlineData("private void InitializeNativeLocalPairedCompanionFixture(", "472", 6,
+    [InlineData("private NativeLocalPairedCompanionWorld BuildNativeLocalPairedCompanionWorld(", "472", 6,
         "fixture_native_paired_companion_setup_unavailable")]
     [InlineData("private void InitializeNativeLocalHarvestCropInventoryFullRecoveryFixture(", "472", 6,
         "fixture_native_local_harvest_full_bag_setup_unavailable")]
