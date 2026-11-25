@@ -1183,7 +1183,7 @@ function factLine(fact: WorldFact): FactRendering | null {
       return sentence(`- ${at}${state}${reason}`);
     }
     case "world_fact":
-      return sentence(worldFactLine(fact, at));
+      return worldFactLine(fact, at);
   }
 }
 
@@ -1252,16 +1252,30 @@ function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
   return boundedField("evidence", (evidence as { detail?: unknown }).detail) ?? "";
 }
 
-function worldFactLine(fact: WorldFact, at: string): string {
+/**
+ * One world fact's line, and the address it may owe.
+ *
+ * The second half exists because a fact the Host reads PARTIALLY is still a fact she was told: the narration says what she
+ * heard in words, and the machine spelling of what the Host could not read (`unknown_field=channel`) prints on the block's
+ * address line, where this file keeps every token it does not put in a sentence (`ADDRESSABLE_FACTS_HEAD`).
+ *
+ * NULL IS A LINE THAT DOES NOT EXIST, and every case here is built from `sentence`, which answers nothing at all for an
+ * empty narration (a generic fact whose producer wrote nothing). The caller this returns into (`factLine`) is already
+ * nullable and `composeWorldFacts` drops the null, so the absence is stated where it is produced instead of a rendering
+ * being invented here for a fact that has no words.
+ */
+function worldFactLine(fact: WorldFact, at: string): FactRendering | null {
   const kind = fact.semanticKind ?? "";
   switch (kind) {
     case "day_started": {
       const day = fact.payload.day;
-      return `- ${at}新的一天${typeof day === "number" ? `：第 ${day} 天` : ""}`;
+      return sentence(`- ${at}新的一天${typeof day === "number" ? `：第 ${day} 天` : ""}`);
     }
     case "time_milestone": {
       const milestone = fact.payload.milestone;
-      return `- ${at}又过了一个时辰${typeof milestone === "string" || typeof milestone === "number" ? `：${milestone}` : ""}`;
+      return sentence(
+        `- ${at}又过了一个时辰${typeof milestone === "string" || typeof milestone === "number" ? `：${milestone}` : ""}`,
+      );
     }
     // THE ONE FACT THAT SAYS THE WORLD IS WAITING ON HER, and the line `round76` needed and did not have: the account
     // counted 37 of these in ten minutes, not one opened a turn, and the model-facing text for one was the literal word
@@ -1282,7 +1296,9 @@ function worldFactLine(fact: WorldFact, at: string): string {
         ...heldWorldOf(fact).map((declaration) => HELD_WORLD_ZH[declaration]),
         ...(keys.length === 0 ? [] : [`可以答：${keys.join(" / ")}`]),
       ].join("，");
-      return `- ${at}${modal} 挡在面前${prose === "" ? "" : `：「${prose}」`}${state === "" ? "" : `（${state}）`}`;
+      return sentence(
+        `- ${at}${modal} 挡在面前${prose === "" ? "" : `：「${prose}」`}${state === "" ? "" : `（${state}）`}`,
+      );
     }
     case "npc_dialogue_presented": {
       const speaker = typeof fact.payload.speaker === "string" ? fact.payload.speaker : "有人";
@@ -1304,21 +1320,32 @@ function worldFactLine(fact: WorldFact, at: string): string {
       // reading the pump's opener asks, so the prompt and the turn agree about whether the world is blocked.
       const holding = heldWorldOf(fact).map((declaration) => HELD_WORLD_ZH[declaration]);
       const tail = [...holding, ...(choices.length === 0 ? [] : [`可以答：${choices.join(" / ")}`])].join("，");
-      return `- ${at}${speaker}说：「${pages.join(" ")}」${tail === "" ? "" : `（${tail}）`}`;
+      return sentence(`- ${at}${speaker}说：「${pages.join(" ")}」${tail === "" ? "" : `（${tail}）`}`);
     }
+    // SOMEONE ELSE IN THE LOBBY SAID SOMETHING, which is the one thing a co-op companion had no fact for at all: the
+    // snapshot carries no chat family and the Mod's other chat hook is the TYPING path on the Host's own machine, so a line
+    // the Host spoke reached her screen and no fact. It is here, beside `npc_dialogue_presented` and under the same rule -
+    // the fact a reader has to decide on - because it is the same kind of event: a person said words to her, and whether
+    // they were addressed to her is part of the fact.
+    case MULTIPLAYER_CHAT_KIND:
+      return multiplayerChatLine(fact, at);
     case "native_notice": {
       // The engine's own HUD line, quoted verbatim: the whole reason this fact exists is that she may answer what the
       // game itself said ("It's getting late..."), and a line that only said 有个提示 would drop the words.
       const notice = typeof fact.payload.notice === "string" ? fact.payload.notice : undefined;
       const clock =
         typeof fact.payload.inGameTime === "string" ? formatGameClock(Number(fact.payload.inGameTime), true) : "";
-      return `- ${at}游戏里冒出个提示：${notice === undefined ? "（没有文字）" : `「${notice}」`}${clock === "" ? "" : `（${clock}）`}`;
+      return sentence(
+        `- ${at}游戏里冒出个提示：${notice === undefined ? "（没有文字）" : `「${notice}」`}${clock === "" ? "" : `（${clock}）`}`,
+      );
     }
     case "world_state_stale": {
       // The token is the whole fact, and it is printed VERBATIM: the pump minted it from the one function that spells it
       // (`worldStateStaleCode`), so re-deriving it here would be a second rendering of one number.
       const code = typeof fact.payload.code === "string" ? fact.payload.code : "";
-      return `- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`;
+      return sentence(
+        `- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`,
+      );
     }
     case "execution_stalled": {
       // WHICH execution, WHY the body is waiting, and FOR HOW LONG are all the Mod's own statements (`reason=
@@ -1331,11 +1358,95 @@ function worldFactLine(fact: WorldFact, at: string): string {
       const parts: string[] = [];
       if (seconds !== undefined) parts.push(`已等 ${String(seconds)} 秒`);
       if (reason !== "") parts.push(`原因 ${reason}`);
-      return `- ${at}${action} 卡住不动了${parts.length === 0 ? "" : `（${parts.join("，")}）`}`;
+      return sentence(`- ${at}${action} 卡住不动了${parts.length === 0 ? "" : `（${parts.join("，")}）`}`);
     }
     default:
-      return genericWorldFactLine(fact, at, kind);
+      return sentence(genericWorldFactLine(fact, at, kind));
   }
+}
+
+/**
+ * THE ONE KIND THAT CARRIES ANOTHER PLAYER'S WORDS, and the picture of its payload: `MultiplayerChatPayload` on the Mod's
+ * side publishes exactly these five fields, so the list below is the reader's half of one wire shape rather than a
+ * vocabulary this file invented.
+ *
+ * <p>
+ * WHY THE LIST EXISTS AT ALL. A fact is read field by field, so a field the Mod adds later would vanish without a word: the
+ * line would still read as a complete account of what someone said. Naming the population it accepts is what lets the line
+ * state the rest on the block's ADDRESS line (`unknown_field=<name>`) - a reader can then see that the two sides of the wire
+ * disagree, which is a different fact from "nothing else was published".
+ * </p>
+ */
+const MULTIPLAYER_CHAT_KIND = "multiplayer_chat";
+
+/** The five fields `MultiplayerChatPayload` publishes; anything else is named as unread rather than dropped. */
+const MULTIPLAYER_CHAT_FIELDS: readonly string[] = Object.freeze([
+  "speaker",
+  "text",
+  "textTruncated",
+  "addressedToThisPlayer",
+  "day",
+]);
+
+/** The Mod's own word for a speaker the engine could not name (`MultiplayerChatPayload.SpeakerNotMeasured`). */
+const SPEAKER_NOT_MEASURED = "not_measured";
+
+/** A run of whitespace, including the line breaks a chat text may carry and a one-line-per-fact block may not. */
+const LINE_BREAK_RUN = /\s+/gu;
+
+/**
+ * One line another player sent, as she heard it: WHO said it, WHAT they said, whether it was said to her, and the clock it
+ * arrived at.
+ *
+ * <p>
+ * WHY THIS LINE IS THE POINT OF THE FACT. A co-op companion stood next to a person who typed a promise into the lobby and
+ * had no fact that said a word had been spoken - the snapshot carries no chat family, and the Mod's other chat hook is the
+ * TYPING path on the Host's own machine. The words therefore reached her screen and nothing else, so a judgement that
+ * needed her to have HEARD a line ("东边那棵树先动") was measuring something no part of the product gave her. The Mod now
+ * publishes the reception (`MultiplayerChatReception`), and this is where it becomes a sentence she can act on.
+ * </p>
+ *
+ * <p>
+ * THE SPEAKER IS SAID, AND AN UNMEASURED ONE IS NOT A NAME. The Mod publishes `not_measured` for a line the engine could
+ * not attribute; printing that token as a name would hand her the machine's word for a person, so an absent speaker reads
+ * as `有人` - the same reading `npc_dialogue_presented` gives a dialogue with no name.
+ * </p>
+ *
+ * <p>
+ * A CUT LINE SAYS IT WAS CUT. The Mod publishes a verbatim PREFIX when a line passes the wire's bound and sets
+ * `textTruncated`; a reader quoting a half sentence must know it was half, so the flag is stated rather than swallowed.
+ * </p>
+ *
+ * <p>
+ * THE DAY QUALIFIES THE HOUR, and it is printed in the words `day_started` already uses for the same number: both carry
+ * `Game1.Date.TotalDays`, and one number gets one spelling. The hour alone cannot say which night a `01:50` belongs to,
+ * which is the reason the Mod publishes the day on this payload at all.
+ * </p>
+ */
+function multiplayerChatLine(fact: WorldFact, at: string): FactRendering {
+  const named =
+    typeof fact.payload.speaker === "string" &&
+    fact.payload.speaker !== "" &&
+    fact.payload.speaker !== SPEAKER_NOT_MEASURED
+      ? fact.payload.speaker
+      : null;
+  const who = named === null ? "有人" : `玩家「${named}」`;
+  // ONE LINE PER FACT. A chat text arrives from another machine and the wire does not forbid a line break in it; a fact
+  // that could write a second line into the block could forge a line she reads as the Host's.
+  const said = typeof fact.payload.text === "string" ? fact.payload.text.replace(LINE_BREAK_RUN, " ").trim() : "";
+  const toHer = fact.payload.addressedToThisPlayer === true ? "只对你说" : "说";
+  const cut = fact.payload.textTruncated === true ? "（原话更长，这里只有前面一段）" : "";
+  const day =
+    typeof fact.payload.day === "number" && Number.isFinite(fact.payload.day)
+      ? `第 ${String(fact.payload.day)} 天 `
+      : "";
+  const unread = Object.keys(fact.payload)
+    .filter((field) => !MULTIPLAYER_CHAT_FIELDS.includes(field))
+    .sort();
+  return {
+    narration: `- ${at}${day}${who}${toHer}：「${said === "" ? "（没有文字）" : said}」${cut}`,
+    address: unread.length === 0 ? null : addressOf(MULTIPLAYER_CHAT_KIND, null, `unknown_field=${unread.join(",")}`),
+  };
 }
 
 /**

@@ -221,6 +221,133 @@ test("block_coverage: every block the composer emits is in the closed set, and e
  * sentence whose number is not the set's length (`floor_block_count_owes_update`).
  * </p>
  */
+/**
+ * THE LOBBY'S WORDS REACH HER PROMPT, which is what the whole `multiplayer_chat` fact exists for.
+ *
+ * <p>
+ * MEASURED BY CONSTRUCTION BEFORE THIS UNIT: the Mod publishes the fact
+ * (`Sensory/MultiplayerChatReception.cs`), and `fact-brief.ts` had no case for its kind - so a line another player spoke
+ * arrived, matched no branch of `worldFactLine`, and was printed as the literal token `multiplayer_chat` under
+ * `<world-facts>`. A co-op promise ("东边那棵树先别动") therefore never entered her input, and every judgement that needed
+ * her to have heard it was measuring a prompt that could not carry it.
+ * </p>
+ *
+ * <p>
+ * THE LINE IS ASSERTED WHERE IT LANDS AND FOR WHAT IT SAYS: the block it belongs to is `<world-facts>` - the one that
+ * carries what she has to decide on, beside `npc_dialogue_presented` - and the sentence names the speaker, the words
+ * verbatim, the clock the fact arrived at, and the day that qualifies that clock.
+ * </p>
+ */
+test("a_multiplayer_chat_fact_reaches_her_prompt_naming_the_speaker_the_words_and_the_clock", () => {
+  const chat = (payload: Record<string, unknown>) =>
+    fact({
+      kind: "world_fact",
+      eventId: "multiplayer_chat_1",
+      semanticKind: "multiplayer_chat",
+      payload,
+      gameTime: "2210",
+      revision: 1205,
+    });
+  const render = (payload: Record<string, unknown>): string =>
+    composeFactBrief({
+      inputs: [],
+      snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
+      events: [chat(payload)],
+      locale: "zh-CN",
+    });
+
+  const lobby = render({
+    speaker: "Mika",
+    text: "东边那棵树先别动，等我回来一起看。",
+    textTruncated: false,
+    addressedToThisPlayer: false,
+    day: 34,
+  });
+  const line = lobby.split("\n").find((text) => text.includes("东边那棵树先别动")) ?? "";
+  assert.notEqual(line, "", `the words never reached the prompt:\n${lobby}`);
+  assert.match(line, /^- 22:10 第 34 天 玩家「Mika」说：「东边那棵树先别动，等我回来一起看。」/u);
+  assert.ok(
+    lobby.indexOf("<world-facts>") < lobby.indexOf(line) && lobby.indexOf(line) < lobby.indexOf("</world-facts>"),
+    `the chat line is not in <world-facts>, the block of what she has to decide on:\n${lobby}`,
+  );
+  assert.equal(lobby.includes("multiplayer_chat"), false, `the bare kind is not a sentence she can read:\n${lobby}`);
+
+  // A line said TO her says so; a line past the wire's bound says it was cut; an unattributable speaker is a person whose
+  // name nobody measured, never the machine's `not_measured` printed as if it were a name.
+  const toHer = render({
+    speaker: "Mika",
+    text: "过来看看",
+    textTruncated: true,
+    addressedToThisPlayer: true,
+    day: 34,
+  });
+  assert.match(toHer, /玩家「Mika」只对你说：「过来看看」（原话更长，这里只有前面一段）/u);
+  const unnamed = render({
+    speaker: "not_measured",
+    text: "有人吗",
+    textTruncated: false,
+    addressedToThisPlayer: false,
+    day: 34,
+  });
+  assert.match(unnamed, /有人说：「有人吗」/u);
+  assert.equal(unnamed.includes("not_measured"), false, `an absent name is not a token in her sentence:\n${unnamed}`);
+});
+
+/**
+ * A FIELD THE HOST DOES NOT KNOW IS NAMED, NOT SWALLOWED.
+ *
+ * <p>
+ * The payload is read field by field, so a field the Mod adds later would disappear without a word: the line would still
+ * read as a whole account of what someone said. The declaration the line reads (`MULTIPLAYER_CHAT_FIELDS`) is what makes
+ * that visible - the words she heard are still spoken, and the disagreement between the two sides of the wire is stated
+ * on the block's ADDRESS line, where this file keeps every machine spelling it does not put in a sentence.
+ * </p>
+ *
+ * <p>
+ * AND IT MUST NOT FIRE ON A PAYLOAD THE HOST KNOWS WHOLE: the control is the same fact without the extra field, whose
+ * delivery must carry no address line at all.
+ * </p>
+ */
+test("an_unknown_multiplayer_chat_field_is_refused_by_name_rather_than_silently_dropped", () => {
+  const chat = (payload: Record<string, unknown>): WorldFact =>
+    fact({
+      kind: "world_fact",
+      eventId: "multiplayer_chat_2",
+      semanticKind: "multiplayer_chat",
+      payload,
+      gameTime: "2210",
+      revision: 1205,
+    });
+  const render = (events: readonly WorldFact[]): string =>
+    composeFactBrief({
+      inputs: [],
+      snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
+      events,
+      locale: "zh-CN",
+    });
+  const known = { speaker: "Mika", text: "晚安", textTruncated: false, addressedToThisPlayer: false, day: 34 };
+
+  const drifted = render([chat({ ...known, channel: "lobby" })]);
+  assert.ok(
+    drifted.includes(`unknown_field=channel`),
+    `the field the Host cannot read is named on the address line:\n${drifted}`,
+  );
+  // The words still reach her: a contract drift may cost the extra field, never the sentence somebody spoke.
+  assert.match(drifted, /玩家「Mika」说：「晚安」/u);
+  assert.equal(
+    drifted.split("\n").filter((line) => line.includes("channel") && !line.startsWith(ADDRESSABLE_FACTS_HEAD)).length,
+    0,
+    `the machine spelling belongs on the address line, not in the sentence:\n${drifted}`,
+  );
+
+  const whole = render([chat(known)]);
+  assert.equal(
+    whole.includes(ADDRESSABLE_FACTS_HEAD),
+    false,
+    `a payload the Host knows whole owes no address at all:\n${whole}`,
+  );
+});
+
 test("floor_block_count: the prompt floor states the closed set's own length, and names each member", () => {
   const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   const sentences = floor.split(/(?<=[.!?。！？])\s+/u).filter((piece) => piece.trim() !== "");
@@ -535,8 +662,16 @@ test("pack_rows_are_addressable_and_the_sentence_stays_a_sentence", () => {
     `the qualified item id must not be in the sentence: ${sentence}`,
   );
   assert.equal(/\[槽/u.test(sentence), false, `and no slot marker either: ${sentence}`);
-  assert.equal(new RegExp(`(?<!\\d)${SLOT}(?!\\d)`, "u").test(sentence), false, `and not the slot as a bare number: ${sentence}`);
-  assert.match(sentence, new RegExp(`${STACK} 份 ${DISPLAY_NAME}`, "u"), `the count and the name are the sentence: ${sentence}`);
+  assert.equal(
+    new RegExp(`(?<!\\d)${SLOT}(?!\\d)`, "u").test(sentence),
+    false,
+    `and not the slot as a bare number: ${sentence}`,
+  );
+  assert.match(
+    sentence,
+    new RegExp(`${STACK} 份 ${DISPLAY_NAME}`, "u"),
+    `the count and the name are the sentence: ${sentence}`,
+  );
 
   // THE ADDRESS IS THE PAIR THE ARGUMENT TAKES.
   assert.match(address, /\(O\)378/u, `the address field carries the qualified id: ${address}`);
@@ -862,7 +997,11 @@ test("soilTiles prints the ground in both states, and each row states which one 
   const unmeasured = nearbyTargetFamilies({ ...world, soilTiles: [{ x: 65, y: 15 }] } as unknown as Snapshot).find(
     (entry) => entry.family === "soilTiles",
   );
-  assert.equal(unmeasured?.rendered, "地块 (65,15)", `a row with no published state stays silent: ${String(unmeasured?.rendered)}`);
+  assert.equal(
+    unmeasured?.rendered,
+    "地块 (65,15)",
+    `a row with no published state stays silent: ${String(unmeasured?.rendered)}`,
+  );
   // A measured empty family is the answer "there is no soil in reach here", not silence.
   const none = composeWorldState({
     snapshot: { ...world, soilTiles: [] } as unknown as Snapshot,
@@ -872,8 +1011,9 @@ test("soilTiles prints the ground in both states, and each row states which one 
     contentAgeMs: 0,
   });
   assert.equal(
-    nearbyTargetFamilies({ ...world, soilTiles: [] } as unknown as Snapshot).find((entry) => entry.family === "soilTiles")
-      ?.rendered,
+    nearbyTargetFamilies({ ...world, soilTiles: [] } as unknown as Snapshot).find(
+      (entry) => entry.family === "soilTiles",
+    )?.rendered,
     undefined,
     "an empty family prints on the counted line, never as a row",
   );
@@ -923,7 +1063,10 @@ test("round81_tilled_row: the row states the state the Hoe decision is made on",
     y: 18 + Math.floor(index / 13),
     hoeDirt: true,
   }));
-  const line = seedText(seedWorld({ soilTiles: patch })).split("\n").find((entry) => entry.startsWith("地块 ")) ?? "";
+  const line =
+    seedText(seedWorld({ soilTiles: patch }))
+      .split("\n")
+      .find((entry) => entry.startsWith("地块 ")) ?? "";
   assert.notEqual(line, "", "the soil family reaches the block");
   assert.equal(line.includes("已锄 true"), true, `every row states the state it is in: ${line}`);
   assert.equal(
@@ -1910,7 +2053,6 @@ test("evidence_cut_keeps_the_decision_fields: the fields a reader acts on surviv
   const unnamedDrops: string[] = [];
   const silentCuts: string[] = [];
   let overBudget = 0;
-  let cut = 0;
 
   for (const detail of population) {
     const input = detail.split(";");
@@ -1922,7 +2064,6 @@ test("evidence_cut_keeps_the_decision_fields: the fields a reader acts on surviv
     const notice = dropNotice(rendered);
     const shown = kept.map(nameOf);
     if (detail.length > MODEL_FIELD_CEILINGS.evidence) overBudget += 1;
-    if (shown.length < input.length) cut += 1;
 
     for (const entry of kept)
       if (!input.includes(entry))
@@ -2046,7 +2187,10 @@ function renderedEvidence(detail: string): string {
   assert.ok(head >= 0, `the delivery printed no address line, so the detail is not in the message at all: ${text}`);
   const line = text.slice(head + ADDRESSABLE_FACTS_HEAD.length).split("\n")[0] ?? "";
   const marker = line.indexOf("reasonCode=");
-  assert.ok(marker >= 0, `the address line carries no reasonCode, so this reader is looking at the wrong field: ${line}`);
+  assert.ok(
+    marker >= 0,
+    `the address line carries no reasonCode, so this reader is looking at the wrong field: ${line}`,
+  );
   return line.slice(line.indexOf("；", marker) + 1);
 }
 
@@ -2343,7 +2487,12 @@ test("a_chore_is_read_from_its_field: a settlement names its chore without any s
   /** The remainder clause of one settlement of `node`, against a reading that carries one family's rows. */
   const clauseFor = (programId: string, node: Readonly<Record<string, unknown>>, family: string): string =>
     remainderClause(
-      composeFactBrief({ inputs: [], snapshot: readingOf(family), locale: "zh-CN", events: [settled(programId, node)] }),
+      composeFactBrief({
+        inputs: [],
+        snapshot: readingOf(family),
+        locale: "zh-CN",
+        events: [settled(programId, node)],
+      }),
     ) ?? "";
 
   const families = Object.keys(TARGET_FAMILY_LABELS);
@@ -2366,7 +2515,11 @@ test("a_chore_is_read_from_its_field: a settlement names its chore without any s
     const otherFamily = family === "harvestTargets" ? "weedTargets" : "harvestTargets";
     const hostile = `tile = 60,9 ; chore = ${otherFamily} ; crop=474 ; chore=${otherFamily}`;
     const unscannable = clauseFor(`plan_hostile_${family}`, { ...named, evidence: hostile, chore: family }, family);
-    if (!unscannable.includes("2 处") || !unscannable.includes(label) || unscannable.includes(TARGET_FAMILY_LABELS[otherFamily] ?? otherFamily))
+    if (
+      !unscannable.includes("2 处") ||
+      !unscannable.includes(label) ||
+      unscannable.includes(TARGET_FAMILY_LABELS[otherFamily] ?? otherFamily)
+    )
       findings.push(`${family}:unscannable ${JSON.stringify(unscannable)}`);
     else read += 1;
 
@@ -2376,7 +2529,8 @@ test("a_chore_is_read_from_its_field: a settlement names its chore without any s
       { ...named, state: "partially_succeeded", evidence: HARVEST_DETAIL, chore: family },
       family,
     );
-    if (!partial.includes("2 处") || !partial.includes(label)) findings.push(`${family}:partial ${JSON.stringify(partial)}`);
+    if (!partial.includes("2 处") || !partial.includes(label))
+      findings.push(`${family}:partial ${JSON.stringify(partial)}`);
     else read += 1;
 
     // (d) NO FALLBACK: this node's strings name the family the old way, in both of the shapes a settlement can state it,
@@ -2400,14 +2554,22 @@ test("a_chore_is_read_from_its_field: a settlement names its chore without any s
       { ...named, state: "failed", evidence: HARVEST_DETAIL, chore: family },
       family,
     );
-    if (!unproved.includes("未测（这一份结算没说是哪一类活）")) findings.push(`${family}:unproved ${JSON.stringify(unproved)}`);
+    if (!unproved.includes("未测（这一份结算没说是哪一类活）"))
+      findings.push(`${family}:unproved ${JSON.stringify(unproved)}`);
     else honest += 1;
   }
 
   // (f) A REAL HARVEST IS COUNTED, not merely un-refused: one crop off a three-crop reading says TWO left.
   const round73 = clauseFor(
     "plan_round73",
-    { nodeId: "n0", actionId: "harvest_crop", state: "succeeded", tile: { x: 80, y: 40 }, evidence: HARVEST_DETAIL, chore: "harvestTargets" },
+    {
+      nodeId: "n0",
+      actionId: "harvest_crop",
+      state: "succeeded",
+      tile: { x: 80, y: 40 },
+      evidence: HARVEST_DETAIL,
+      chore: "harvestTargets",
+    },
     "harvestTargets",
   );
   const report =

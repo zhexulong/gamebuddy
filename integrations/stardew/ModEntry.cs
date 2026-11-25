@@ -152,6 +152,12 @@ public sealed partial class ModEntry : Mod
     private bool nativeChatObservationInstalled;
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
+    /// <summary>
+    /// The screen whose client observes the lobby's chat RECEPTION, set only by
+    /// <see cref="InstallMultiplayerChatReception"/>. A static because Harmony's prefix is static and the engine hands it
+    /// no context; the funnel re-checks that the screen it lands on is the configured AI Farmhand.
+    /// </summary>
+    private static ModEntry? multiplayerChatReceptionOwner;
     // Presentation only: a client shows the companion's lines it has heard about, and forgets them on their own clock.
     private readonly CompanionBubbleBoard companionBubbles = new();
     private StardewSalientEventHooks? salientEventHooks;
@@ -312,6 +318,90 @@ public sealed partial class ModEntry : Mod
         }
     }
 
+    /// <summary>
+    /// Install the AI Farmhand client's own chat RECEPTION hook. Installed only where a companion has a screen (the
+    /// formal AI-client role): the Host's player reads their own lines on their own screen and needs no observation, and
+    /// `hostRoleConfigured` builds no bridge at all (`ModEntry.cs` returns early for that role).
+    ///
+    /// <para>
+    /// THE METHOD IS THE ENGINE'S <c>Multiplayer.receiveChatMessage</c> AND THE PATCH IS A PREFIX, both on purpose. That
+    /// method is where a received chat message becomes a fact on this client (`Multiplayer.processIncomingMessage` case 10,
+    /// <c>Multiplayer.cs:1649-1656</c>); the chat box is written only INSIDE its own <c>if (Game1.chatBox != null)</c>
+    /// guard (<c>:1153</c>), and a client that joined a hosted world never ran <c>Game1.loadForNewGame</c>
+    /// (<c>Game1.cs:3362</c>) - so hooking the box would be a second hook that never fires. A prefix also runs before the
+    /// engine's word filter and its lobby-vs-private collapse, which is the raw line and the recipient this fact states.
+    /// </para>
+    ///
+    /// <para>
+    /// THE PARAMETER NAMES ARE CHECKED, NOT ASSUMED. Harmony binds a prefix's ordinary parameters by the TARGET's own
+    /// parameter names, so the signature is verified here - type array and name order - and a build whose engine renamed
+    /// them logs a named failure and installs nothing rather than binding a line to the wrong argument.
+    /// </para>
+    /// </summary>
+    private void InstallMultiplayerChatReception()
+    {
+        MethodInfo? target;
+        MethodInfo? prefix;
+        try
+        {
+            target = AccessTools.Method(
+                typeof(Multiplayer),
+                "receiveChatMessage",
+                new[] { typeof(Farmer), typeof(long), typeof(LocalizedContentManager.LanguageCode), typeof(string) });
+            prefix = AccessTools.Method(typeof(ModEntry), nameof(NativeMultiplayerReceiveChatPrefix));
+            string[] names = target?.GetParameters().Select(parameter => parameter.Name ?? string.Empty).ToArray()
+                ?? Array.Empty<string>();
+            if (prefix is null
+                || names.Length != 4
+                || names[0] != "sourceFarmer"
+                || names[1] != "recipientID"
+                || names[2] != "language"
+                || names[3] != "message")
+                throw new MissingMethodException("Multiplayer.receiveChatMessage(Farmer sourceFarmer, long recipientID, LocalizedContentManager.LanguageCode language, string message)");
+        }
+        catch (Exception exception)
+        {
+            multiplayerChatReceptionOwner = null;
+            this.Monitor.Log($"GameBuddy disabled multiplayer chat reception: lookup_failed ({exception.GetType().Name}).", LogLevel.Error);
+            return;
+        }
+        try
+        {
+            Harmony harmony = new(this.ModManifest.UniqueID + ".multiplayer-chat-reception");
+            harmony.Patch(target, prefix: new HarmonyMethod(prefix));
+            multiplayerChatReceptionOwner = this;
+            this.Monitor.Log("GameBuddy enabled multiplayer chat reception: lobby lines other players send are published as multiplayer_chat facts.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            multiplayerChatReceptionOwner = null;
+            this.Monitor.Log($"GameBuddy disabled multiplayer chat reception: patch_failed ({exception.GetType().Name}).", LogLevel.Error);
+        }
+    }
+
+    // Harmony binds ordinary prefix parameters by the TARGET's parameter name. The three this prefix asks for are the
+    // engine's own names (`Multiplayer.cs:1151`), checked at install time by `InstallMultiplayerChatReception`, and the
+    // message still travels to whatever presentation the engine gives it: a failure here costs the fact, never the chat.
+    private static void NativeMultiplayerReceiveChatPrefix(Farmer sourceFarmer, long recipientID, string message)
+    {
+        try { multiplayerChatReceptionOwner?.PublishReceivedMultiplayerChat(sourceFarmer, recipientID, message); }
+        catch
+        {
+            // Never interrupt native chat: the same containment the typing-path hook keeps.
+        }
+    }
+
+    /// <summary>
+    /// Publish one received lobby line as a world fact, on the one screen that is a companion. A screen that is not the
+    /// configured AI Farmhand publishes nothing: on any other screen her session is not this fact's subject.
+    /// </summary>
+    private void PublishReceivedMultiplayerChat(Farmer? sourceFarmer, long recipientID, string? message)
+    {
+        if (!this.IsConfiguredAiScreen(out _, out _))
+            return;
+        MultiplayerChatReception.PublishReceived(this.GetEmbodimentState().BridgeSession, sourceFarmer, recipientID, message, this.Monitor);
+    }
+
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
     {
         this.ApplyWindowModeInitial();
@@ -454,6 +544,10 @@ public sealed partial class ModEntry : Mod
             // It only starts once the world is ready (see OnUpdateTicked).
             if (!this.TryArmSleepLifecycle())
                 return;
+            // Chat reception is armed on this role and no other: it is the one screen
+            // where a companion hears what another player says (see
+            // InstallMultiplayerChatReception).
+            this.InstallMultiplayerChatReception();
             // Start while the native title/farmhand menu owns available-Farmhand
             // reception; the manifest itself binds the later world scope.
             this.TryStartFarmhandProvisioner();

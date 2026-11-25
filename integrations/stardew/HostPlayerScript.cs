@@ -110,11 +110,10 @@ internal sealed record HostPlayerScriptDocument(IReadOnlyList<HostPlayerScriptSt
 /// <c>FarmhandTargetDiscovery.DescribeOtherFarmerDoing</c> reads <c>isEmoting</c> - and that field exists on her copy of
 /// the Host's Farmer only if the balloon travelled the network. <see cref="PerformEmote"/> therefore raises it through
 /// the engine's player-emote entry, not the local animation arm.</item>
-/// <item><c>say</c> becomes the lobby's own chat line, and NOTHING ON HER OBSERVATION SIDE NAMES IT: the wire's snapshot
-/// has no chat family (<c>protocol/bridge-v1.schema.json</c>), and the Mod's one chat ingress is a Harmony postfix on
-/// the HOST's <c>ChatBox.textBoxEnter</c> (<c>ModEntry.cs:508</c>), which a scripted line never reaches. What the line
-/// reaches is every client's <c>Game1.chatBox</c> log - a person watching sees it, the companion's published facts do
-/// not - so a judgement that needs her to have HEARD it is measuring something this file cannot give her.</item>
+/// <item><c>say</c> becomes the lobby's own chat line, and her client's reception of it is the Mod's <c>multiplayer_chat</c>
+/// world fact (<see cref="MultiplayerChatReception"/>): the line is published from
+/// <c>Multiplayer.receiveChatMessage</c> on HER machine, where another player's words actually arrive, and the prompt
+/// renders it as a fact naming the speaker and the words.</item>
 /// <item><c>chest_take</c> becomes the container's own state: the row she reads afterwards is the chest's contents, and
 /// the step takes the same <c>Chest.GetMutex()</c> lock the product's container actions take, so the two farmers contend
 /// rather than race.</item>
