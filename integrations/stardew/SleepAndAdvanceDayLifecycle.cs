@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -101,6 +102,15 @@ internal sealed class SleepAndAdvanceDayLifecycle
         new EligibilityReason("awaiting_online_farmers:", "another farmer connects", IsPrefix: true),
     };
 
+    /// <summary>The provenance of a settlement's <c>bedTime</c>: the latest clock read while the night's day was current.</summary>
+    internal const string PreCrossingClockSource = "pre_crossing_clock";
+
+    /// <summary>The settlement's own reason for a night with no readable hour, named so a gap cannot read as an early night.</summary>
+    internal const string PreCrossingClockAbsent = "no_clock_reading_before_the_crossing";
+
+    /// <summary>The engine's last in-day clock value (<c>2600</c> is 02:00 of the following morning).</summary>
+    internal const int MaximumTimeOfDay = 2600;
+
     /// <summary>
     /// Frames to keep watching for the native save boundary before continuing.
     /// The day fact is the authority; a client observes the rollover over the
@@ -167,6 +177,27 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private bool multiPlayer;
     private bool savingObserved;
     private int dayStartWaitFrames;
+
+    /// <summary>
+    /// The hour the night took the actor: the latest <c>Game1.timeOfDay</c> read while the night's own day was still
+    /// current, or null when no reading was ever taken.
+    ///
+    /// <para>
+    /// NOT the clock at the settlement. <c>Game1.NewDay</c> resets <c>timeOfDay</c> to 600 before the crossing is
+    /// observable, so a lifecycle that read the clock where it publishes the settlement would report 06:00 for a night
+    /// that took the farmer at 22:10 - and a co-op night judge requiring an hour would then compare two farmers by a
+    /// number neither of them produced. The reading is therefore taken every frame while the PRE-CROSSING day is still
+    /// current, and it is the maximum rather than the last: the clock only advances within a day, so the latest value
+    /// seen is the hour the night began even if a later poll returned a stale projection.
+    /// </para>
+    /// <para>
+    /// The evidence file publishes it as the settlement's <c>bedTime</c> beside its <c>bedTimeSource</c>
+    /// (<see cref="PreCrossingClockSource"/>), or as <c>bedTimeAbsent</c> with the reason when this is null. A night
+    /// whose clock could not be read must stay unreadable rather than be filled in: the paired run's night judge turns
+    /// an unreadable hour into <c>not_measured</c>, a different fact from an early night.
+    /// </para>
+    /// </summary>
+    private int? bedTimeBeforeTheCrossing;
 
     // Event edges are COUNTERS, not sticky flags. The load-time Saved/DayStarted
     // fire long before the night is slept, so a boolean would already be true when
@@ -438,6 +469,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return false;
 
         this.ticks++;
+        this.ObservePreCrossingClock();
 
         Phase phaseBefore = this.phase;
         bool terminal = this.Step();
@@ -600,6 +632,37 @@ internal sealed class SleepAndAdvanceDayLifecycle
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Take this frame's reading of the hour, while the night's own day is still current. See
+    /// <see cref="bedTimeBeforeTheCrossing"/> for why the reading is taken here and not at the settlement.
+    /// </summary>
+    private void ObservePreCrossingClock()
+    {
+        bool dayStillCurrent = this.dayBaselineCaptured
+            && Game1.Date is not null
+            && Game1.Date.TotalDays == this.dayBefore;
+        this.bedTimeBeforeTheCrossing = LaterPreCrossingClock(this.bedTimeBeforeTheCrossing, Game1.timeOfDay, dayStillCurrent);
+    }
+
+    /// <summary>
+    /// The later of two readings of the same day's clock, or <paramref name="current"/> unchanged when this frame's
+    /// reading may not count.
+    ///
+    /// <para>
+    /// Pure so the rule can be pinned without a running game: a frame from after the crossing (the clock has already
+    /// been reset to 600) and a value that is not an <c>HHMM</c> time may not contribute, and a night that never saw one
+    /// stays null instead of reporting midnight - the one hour a fabricated reading would happily impersonate.
+    /// </para>
+    /// </summary>
+    internal static int? LaterPreCrossingClock(int? current, int timeOfDay, bool dayStillCurrent)
+    {
+        if (!dayStillCurrent)
+            return current;
+        if (timeOfDay is <= 0 or > MaximumTimeOfDay || timeOfDay % 100 > 59)
+            return current;
+        return current is null || timeOfDay > current.Value ? timeOfDay : current;
     }
 
     private string Topology()
@@ -1878,6 +1941,27 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 return true;
         }
 
+        this.Finish("passed", "day_advanced", this.NightSettlement(dayAfter, daysAfter, this.bedTimeBeforeTheCrossing));
+        return true;
+    }
+
+    /// <summary>
+    /// The settlement the passed terminal publishes: the crossing's own day facts, plus the hour it took the actor.
+    ///
+    /// <para>
+    /// The hour arrives as an argument because <c>Game1.timeOfDay</c> at the settlement already belongs to the NEW day
+    /// (see <see cref="bedTimeBeforeTheCrossing"/>); the caller passes the reading it took while the night's own day was
+    /// still current.
+    /// </para>
+    /// <para>
+    /// A seam rather than a block inside the crossing wait because the hour is the one field of this file the paired
+    /// co-op run reads to decide its S3 slice (<c>readHostNightRecord</c>: <c>settlement.bedTime</c> beside
+    /// <c>settlement.bedTimeSource</c>), and a publication whose only other proof is a live night can stop being written
+    /// with every headless suite still green.
+    /// </para>
+    /// </summary>
+    internal Dictionary<string, object?> NightSettlement(int dayAfter, int daysAfter, int? bedTime)
+    {
         var settlement = new Dictionary<string, object?>
         {
             ["enteredVia"] = this.enteredVia,
@@ -1894,13 +1978,23 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["saveBoundaryNotObserved"] = this.saveBoundaryNotObserved,
             ["readyCheckObserved"] = this.readyCheckObserved,
         };
+        // THE HOUR, AND WHAT PRODUCED IT. Published only when a reading exists, so a consumer cannot read a fabricated
+        // 06:00: the settlement is built after the crossing, when `Game1.timeOfDay` already belongs to the new day.
+        if (bedTime is { } hour)
+        {
+            settlement["bedTime"] = hour;
+            settlement["bedTimeSource"] = PreCrossingClockSource;
+        }
+        else
+        {
+            settlement["bedTimeAbsent"] = PreCrossingClockAbsent;
+        }
         if (this.multiPlayer)
         {
             settlement["readyAtCompletion"] = this.readyAtCompletion;
             settlement["requiredAtCompletion"] = this.requiredAtCompletion;
         }
-        this.Finish("passed", "day_advanced", settlement);
-        return true;
+        return settlement;
     }
 
     /// <summary>
@@ -1942,6 +2036,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
             parts.Add($"days_before={this.daysBefore}");
             parts.Add($"day_after={Game1.Date.TotalDays}");
             parts.Add($"days_after={Game1.stats.DaysPlayed}");
+            // The night's hour in the same flat shape as every other receipt key, so the bridge receipt and the
+            // evidence file say the same fact rather than only one of them carrying it.
+            parts.Add($"bed_time={(this.bedTimeBeforeTheCrossing?.ToString(CultureInfo.InvariantCulture) ?? PreCrossingClockAbsent)}");
         }
         if (this.multiPlayer)
         {

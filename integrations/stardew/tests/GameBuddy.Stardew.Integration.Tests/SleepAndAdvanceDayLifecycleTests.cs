@@ -172,6 +172,58 @@ public sealed class SleepAndAdvanceDayLifecycleTests
         SleepAndAdvanceDayLifecycle.TryStart(new DummyMonitor(), ValidConfig).Should().NotBeNull();
     }
 
+    // --- The night's published hour -------------------------------------------
+    //
+    // `Game1.NewDay` resets `timeOfDay` to 600 before the crossing is observable, so the settlement cannot read the
+    // hour where it publishes it. The reading is taken every frame while the night's own day is still current, and it
+    // is the maximum of those readings. A night no frame read must stay null: a co-op night judge turns an unreadable
+    // hour into `not_measured`, and a fabricated early hour would pass it instead.
+
+    [Fact]
+    public void PreCrossingClock_KeepsTheLatestReadingOfTheNightSOwnDay()
+    {
+        SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(null, 2210, dayStillCurrent: true).Should().Be(2210);
+        SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(2210, 2230, dayStillCurrent: true).Should().Be(2230);
+        // A stale poll returning an earlier hour may not walk the night backwards.
+        SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(2230, 2210, dayStillCurrent: true).Should().Be(2230);
+        SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(null, 2600, dayStillCurrent: true).Should().Be(2600);
+    }
+
+    [Fact]
+    public void PreCrossingClock_IgnoresEveryReadingFromAfterTheCrossing()
+    {
+        // The crossing reset the clock to 600, and that number belongs to the NEW day.
+        SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(2210, 600, dayStillCurrent: false).Should().Be(2210);
+        SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(null, 600, dayStillCurrent: false).Should().BeNull(
+            "a night that saw no reading of its own day must report none rather than the new day's 06:00");
+        foreach (int notAClock in new[] { 0, -10, 2700, 1061, 2261 })
+            SleepAndAdvanceDayLifecycle.LaterPreCrossingClock(null, notAClock, dayStillCurrent: true).Should().BeNull();
+    }
+
+    [Fact]
+    public void TheSettlementPublishesTheNightsHourBesideWhatProducedIt()
+    {
+        // The evidence file is all the paired co-op run reads, and its S3 slice is decided by this one field: a
+        // settlement without `bedTime` makes the slice `not_measured` by construction, however real the night was. This
+        // is the writer's OWN settlement, so removing the publication fails here by name instead of only in a live run.
+        var lifecycle = SleepAndAdvanceDayLifecycle.TryStart(new DummyMonitor(), ValidConfig);
+        lifecycle.Should().NotBeNull();
+
+        var clocked = lifecycle!.NightSettlement(dayAfter: 5, daysAfter: 5, bedTime: 2210);
+        clocked["bedTime"].Should().Be(2210);
+        clocked["bedTimeSource"].Should().Be("pre_crossing_clock");
+        clocked.Should().NotContainKey("bedTimeAbsent");
+
+        // A night no frame read stays unread: the gap is named, never filled with the new day's 06:00.
+        var unread = lifecycle.NightSettlement(dayAfter: 5, daysAfter: 5, bedTime: null);
+        unread.Should().NotContainKey("bedTime");
+        unread["bedTimeAbsent"].Should().Be("no_clock_reading_before_the_crossing");
+
+        // The crossing's own day facts ride beside it, because the reader takes the night's identity from the settlement.
+        clocked["dayAfter"].Should().Be(5);
+        clocked.Should().ContainKey("dayBefore");
+    }
+
     // --- Pass-out hazard predicate --------------------------------------------
     //
     // Pass-out is an automatic native gate (Game1.cs:6452: `timeOfDay >= 2600 ||
