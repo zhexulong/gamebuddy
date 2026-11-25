@@ -46,7 +46,7 @@
  * either side is `not_measured`: a fabricated 0 compares equal to another fabricated 0 and would read as "same tick".
  */
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { assessCompanionBehaviourRubric } from "./lib/companion-behaviour-rubric.mjs";
@@ -73,8 +73,14 @@ import {
  * The Host player's script wire (`integrations/stardew/HostPlayerScript.cs`). The run writes this schema and the Mod
  * performs it; both sides assert the literal, so a drift on either side fails its own test instead of producing a
  * script the other side refuses at run time.
+ *
+ * IT IS ONE GROWING DOCUMENT, NOT ONE FILE PER SLICE. S2 proved the one-file-one-life shape impossible: the Mod adopted
+ * S1's steps and finished, so the steps S2 wrote to the same path were never performed and the slice reported
+ * `not_measured: one_side_never_dispatched` about a fixture that had been armed. So each slice APPENDS its steps to the
+ * same document, every step carries the 1-based `seq` this run gives it, and the Mod's cursor over those positions is
+ * what makes a step new. v2 is that contract: v1 had no positions and could not be extended.
  */
-export const HOST_PLAYER_SCRIPT_SCHEMA = "gamebuddy-host-player-script/v1";
+export const HOST_PLAYER_SCRIPT_SCHEMA = "gamebuddy-host-player-script/v2";
 
 /**
  * THE COVENANT: the one promise S4 asks about, made by the player in S1 through the world's own chat.
@@ -186,9 +192,15 @@ export function sliceAllocation(slice, { item = null } = {}) {
  * hide from it is not worth the risk of reading as a pass.
  */
 export function allocationLeaksTile(allocation, tile) {
-  if (tile === null || tile === undefined || !Number.isSafeInteger(tile.x) || !Number.isSafeInteger(tile.y)) return false;
+  if (tile === null || tile === undefined || !Number.isSafeInteger(tile.x) || !Number.isSafeInteger(tile.y))
+    return false;
   const text = Array.isArray(allocation) ? allocation.join("\n") : String(allocation ?? "");
-  const wanted = new Set([`${tile.x},${tile.y}`, `${tile.x}:${tile.y}`, `${tile.x}, ${tile.y}`, `${tile.x}: ${tile.y}`]);
+  const wanted = new Set([
+    `${tile.x},${tile.y}`,
+    `${tile.x}:${tile.y}`,
+    `${tile.x}, ${tile.y}`,
+    `${tile.x}: ${tile.y}`,
+  ]);
   if ([...wanted].some((spelling) => text.includes(spelling))) return true;
   const numbers = text.match(/-?\d+/gu) ?? [];
   return numbers.includes(String(tile.x)) || numbers.includes(String(tile.y));
@@ -293,9 +305,7 @@ export function planHostClaimScript({ snapshot }) {
     return Object.freeze({
       contended: null,
       steps: Object.freeze([]),
-      dropped: Object.freeze([
-        Object.freeze({ step: "all", reason: "snapshot_published_no_chest_holding_an_item" }),
-      ]),
+      dropped: Object.freeze([Object.freeze({ step: "all", reason: "snapshot_published_no_chest_holding_an_item" })]),
     });
   const item = arrayOf(chest.items).find((entry) => typeof entry?.qualifiedItemId === "string") ?? null;
   const contended = Object.freeze({
@@ -326,20 +336,70 @@ export function planHostClaimScript({ snapshot }) {
   });
 }
 
-/** Hand the fixture its script. False when this launch has no Host player lane, which every caller reports by name. */
-export function writeHostPlayerScript(path, steps) {
-  if (typeof path !== "string" || path.length === 0) return false;
-  writeFileSync(path, `${JSON.stringify({ schema: HOST_PLAYER_SCRIPT_SCHEMA, steps }, null, 2)}\n`);
-  return true;
+/**
+ * Hand the Host player's channel one slice's steps, appended behind the ones already armed. The returned `seqs` are this
+ * slice's positions in the document - what a wait is matched by and what a record is attributed to - and the writer is
+ * the only thing that assigns them, so two slices cannot name the same position.
+ *
+ * THE WRITE IS A REPLACE, NOT A TRUNCATE. The Mod polls this path while the world runs, so a partial document would be
+ * read as an unreadable one and stop the channel for the rest of the run: the text lands in a staging file first and is
+ * renamed over the document, which the reader sees either whole-old or whole-new.
+ */
+export function appendHostPlayerScript(path, steps, { sealed = false } = {}) {
+  if (typeof path !== "string" || path.length === 0)
+    return Object.freeze({ ok: false, reason: "host_player_script_not_configured", seqs: Object.freeze([]) });
+  const existing = readHostPlayerScriptDocument(path);
+  if (existing.reason !== null) return Object.freeze({ ok: false, reason: existing.reason, seqs: Object.freeze([]) });
+  const appended = arrayOf(steps).map((step, offset) =>
+    Object.freeze({ ...step, seq: existing.steps.length + offset + 1 }),
+  );
+  const staging = `${path}.writing`;
+  writeFileSync(
+    staging,
+    `${JSON.stringify({ schema: HOST_PLAYER_SCRIPT_SCHEMA, sealed, steps: [...existing.steps, ...appended] }, null, 2)}\n`,
+  );
+  renameSync(staging, path);
+  return Object.freeze({ ok: true, reason: null, seqs: Object.freeze(appended.map((step) => step.seq)) });
 }
 
-/** One record the Host player's channel wrote, normalised into the same field names a receipt is read by. */
+/**
+ * The fixture saying it will append no more. This is the only way the channel ends quietly: an open document whose steps
+ * have all settled is a wait for the next slice, and a run that never seals would leave it polling a file nobody writes.
+ */
+export function sealHostPlayerScript(path) {
+  return appendHostPlayerScript(path, [], { sealed: true });
+}
+
+/** The document as it stands, or the reason it cannot be extended. A missing file is an empty document, not an error. */
+function readHostPlayerScriptDocument(path) {
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return { steps: [], reason: null };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { steps: [], reason: "host_player_script_unreadable" };
+  }
+  if (parsed?.schema !== HOST_PLAYER_SCRIPT_SCHEMA) return { steps: [], reason: "host_player_script_schema_mismatch" };
+  if (!Array.isArray(parsed.steps)) return { steps: [], reason: "host_player_script_steps_missing" };
+  return { steps: parsed.steps, reason: null };
+}
+
+/**
+ * One record the Host player's channel wrote, normalised into the same field names a receipt is read by. `seq` is the
+ * step's position in the document and is what makes the record attributable to the slice that appended it.
+ */
 export function normalizeHostRecord(payload) {
   const tile =
     Number.isInteger(payload?.x) && Number.isInteger(payload?.y)
       ? Object.freeze({ x: payload.x, y: payload.y, source: "host_player_record" })
       : null;
   return Object.freeze({
+    seq: Number.isSafeInteger(payload?.seq) ? payload.seq : null,
     stepId: typeof payload?.stepId === "string" ? payload.stepId : null,
     action: typeof payload?.action === "string" ? payload.action : "unknown",
     state: payload?.state ?? "unknown",
@@ -373,6 +433,7 @@ export function readHostPlayerRecords(path) {
     } catch {
       records.push(
         Object.freeze({
+          seq: null,
           stepId: null,
           action: "records",
           state: "unreadable",
@@ -390,35 +451,39 @@ export function readHostPlayerRecords(path) {
 }
 
 /**
- * Wait until the channel has settled every step the slice asked for, or the slice's budget runs out.
+ * Wait until the channel has settled the steps THIS slice appended, or the slice's budget runs out.
  *
- * The script is performed by the OTHER process on the game thread, so a wait is the only way to read it; `timedOut`
+ * A WAIT IS MATCHED BY POSITION, NOT BY STEP ID AND NOT BY "THE FILE CHANGED". The document is shared by every slice, and
+ * S1's `walk` and S2's `walk` are two different steps in it, so a wait keyed on the name would be satisfied by the
+ * previous slice's record the instant it started - which is exactly how S2 used to read as dispatched when nothing had
+ * dispatched it. `seqs` is what the writer handed back, so a stale record from an earlier slice cannot match.
+ *
+ * A CHANNEL-LEVEL REFUSAL ends the wait at once and travels with the records: the channel is finished, no further step
+ * will ever settle, and a slice that waited out its budget instead would report its own clock as the finding.
+ *
+ * The steps are performed by the OTHER process on the game thread, so a wait is the only way to read them; `timedOut`
  * travels with the records because "the player did not arrive in time" and "the player arrived" are different readings
  * of the same file.
  */
-export async function awaitHostPlayerRecords({
-  path,
-  stopAtStepIds = [],
-  timeoutMs,
-  now = () => Date.now(),
-  pollMs = 250,
-}) {
+export async function awaitHostPlayerRecords({ path, seqs = [], timeoutMs, now = () => Date.now(), pollMs = 250 }) {
+  const wanted = arrayOf(seqs);
   const deadline = now() + timeoutMs;
-  let records = readHostPlayerRecords(path);
-  while (now() < deadline) {
-    records = readHostPlayerRecords(path);
-    const settled = new Set(records.filter((record) => record.stepId !== null).map((record) => record.stepId));
-    const scriptSettled = records.some((record) => record.action === "script" && record.state !== "unknown");
-    if (scriptSettled || stopAtStepIds.every((stepId) => settled.has(stepId)))
-      return { records, timedOut: false };
+  while (true) {
+    const all = readHostPlayerRecords(path);
+    const own = all.filter((record) => record.seq !== null && wanted.includes(record.seq));
+    const refusal = all.find((record) => record.action === "script" && record.state === "rejected") ?? null;
+    if (refusal !== null) return { records: [...own, refusal], timedOut: false };
+    if (wanted.every((seq) => own.some((record) => record.seq === seq))) return { records: own, timedOut: false };
+    if (now() >= deadline) return { records: own, timedOut: true };
     await new Promise((resolveDelay) => setTimeout(resolveDelay, pollMs));
   }
-  return { records, timedOut: true };
 }
 
 /** The tile the Host player actually reached, from the walk step's own record; null when she never got there. */
 function hostWalkTile(records) {
-  const walk = arrayOf(records).find((record) => record.action === "walk_to_tile" && TERMINAL_SUCCESS.has(record.state));
+  const walk = arrayOf(records).find(
+    (record) => record.action === "walk_to_tile" && TERMINAL_SUCCESS.has(record.state),
+  );
   return walk?.targetTile ?? null;
 }
 
@@ -586,7 +651,12 @@ export function judgeCoopNight({ hostNight, companionNight }) {
     return verdict("s3_night", "not_measured", "companion_night_absent", reads);
   if (!Number.isInteger(companionNight.bedTime)) return verdict("s3_night", "failed", "companion_never_slept", reads);
   if (hostNight.day !== companionNight.day)
-    return verdict("s3_night", "failed", `wrong_night:probe=day${hostNight.day}:companion=day${companionNight.day}`, reads);
+    return verdict(
+      "s3_night",
+      "failed",
+      `wrong_night:probe=day${hostNight.day}:companion=day${companionNight.day}`,
+      reads,
+    );
   return verdict("s3_night", "passed", "both_farmers_slept_in_the_same_night", {
     ...reads,
     order: hostNight.bedTime <= companionNight.bedTime ? "host_first" : "companion_first",
@@ -705,8 +775,7 @@ export function judgeCrossDayMemory({
       ...covenantReads,
       rule: "the field already answers it, so recalling it proves nothing",
     });
-  if (covenant.spoken !== true)
-    return verdict("s4_memory", "not_measured", "covenant_never_spoken", covenantReads);
+  if (covenant.spoken !== true) return verdict("s4_memory", "not_measured", "covenant_never_spoken", covenantReads);
   if (anchor === null || anchor === undefined || anchor.tile === null || anchor.tile === undefined)
     return verdict("s4_memory", "not_measured", "anchor_absent:no_day_one_action_on_a_tile", covenantReads);
   if (companionTurns.length === 0)
@@ -738,7 +807,9 @@ export function judgeCrossDayMemory({
 /** One line per slice, printed the moment the slice is decided; every read the verdict used is on it. */
 export function renderSliceLine(sliceVerdict) {
   const reads = Object.entries(sliceVerdict.reads)
-    .map(([key, value]) => `${key}=${typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)}`)
+    .map(
+      ([key, value]) => `${key}=${typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)}`,
+    )
     .join(" ");
   return `PAIRED_SLICE ${sliceVerdict.slice} ${sliceVerdict.state} ${sliceVerdict.reasonCode}${
     reads.length > 0 ? ` ${reads}` : ""
@@ -821,9 +892,9 @@ export function readHostNightRecord(path) {
     bedTimeSource: bedTime === null || typeof settlement?.bedTimeSource !== "string" ? null : settlement.bedTimeSource,
     bedTimeAbsent:
       bedTime === null
-        ? (typeof settlement?.bedTimeAbsent === "string"
-            ? settlement.bedTimeAbsent
-            : "host_lifecycle_evidence_publishes_no_bed_time")
+        ? typeof settlement?.bedTimeAbsent === "string"
+          ? settlement.bedTimeAbsent
+          : "host_lifecycle_evidence_publishes_no_bed_time"
         : null,
   });
 }
@@ -872,12 +943,14 @@ export function readPairedOptions(argv = process.argv) {
   return Object.freeze({
     // The existing multiplayer loop entry already exports `GAMEBUDDY_LOOP_TRACE_DIR` for the runner it launches, so a
     // paired run started through it needs no second convention: one variable, one meaning.
-    traceDir: value("trace-dir") ?? process.env.GAMEBUDDY_PAIRED_TRACE_DIR ?? process.env.GAMEBUDDY_LOOP_TRACE_DIR ?? null,
+    traceDir:
+      value("trace-dir") ?? process.env.GAMEBUDDY_PAIRED_TRACE_DIR ?? process.env.GAMEBUDDY_LOOP_TRACE_DIR ?? null,
     hostNightEvidence: value("host-night-evidence") ?? process.env.GAMEBUDDY_PAIRED_HOST_SLEEP_EVIDENCE ?? null,
     // The fixture's Host player lane. Both paths are absolute and both are required: the driver arms them into the Host
     // process before launch, so a run that is given one of them is a run whose arm is half-written.
     hostPlayerScript: value("host-player-script") ?? process.env.GAMEBUDDY_PAIRED_HOST_PLAYER_SCRIPT ?? null,
-    hostPlayerScriptRecords: value("host-player-script-records") ?? process.env.GAMEBUDDY_PAIRED_HOST_PLAYER_SCRIPT_RECORDS ?? null,
+    hostPlayerScriptRecords:
+      value("host-player-script-records") ?? process.env.GAMEBUDDY_PAIRED_HOST_PLAYER_SCRIPT_RECORDS ?? null,
     sliceSeconds: Number(value("slice-seconds") ?? 0) || null,
   });
 }
@@ -948,8 +1021,7 @@ export async function runPairedLiveRun({
     timeline({ atMs, type: fact.type, payload: fact.payload });
   };
 
-  const openSession = () =>
-    sessionFactory({ config, traceDir, onFact, runtimeRoot, continuityId: identity });
+  const openSession = () => sessionFactory({ config, traceDir, onFact, runtimeRoot, continuityId: identity });
   let session = await openSession();
   const observeFn = observe ?? (() => observeFresh(session.client));
   const clockOf = (snapshot) => snapshotClock(snapshot);
@@ -1042,11 +1114,12 @@ export async function runPairedLiveRun({
     const allocation = sliceAllocation("s1_attention");
     const promptTileLeak = allocationLeaksTile(allocation, plan.subject.tile);
     timeline({ atMs: now() - startedAtMs, type: "s1_allocation", payload: { allocation, promptTileLeak } });
-    if (!writeHostPlayerScript(hostPlayerScript, plan.steps))
+    const armed = appendHostPlayerScript(hostPlayerScript, plan.steps);
+    if (!armed.ok)
       return judgeJointAttention({ hostRecords: null, companion: [], subject: plan.subject.kind, promptTileLeak });
     const stub = await awaitHostPlayerRecords({
       path: hostPlayerScriptRecords,
-      stopAtStepIds: ["walk", "emote", "say"],
+      seqs: armed.seqs,
       timeoutMs: budgetMs,
       now,
       pollMs,
@@ -1079,8 +1152,9 @@ export async function runPairedLiveRun({
       return judgeConcurrentClaim({ contended: null });
     }
     contendedTile = plan.contended.tile;
-    if (!writeHostPlayerScript(hostPlayerScript, plan.steps)) {
-      print(`PAIRED_FIXTURE_MISSING host_player_stub reason=host_player_script_not_configured arm=${HOST_PLAYER_STUB_LAUNCH}`);
+    const armed = appendHostPlayerScript(hostPlayerScript, plan.steps);
+    if (!armed.ok) {
+      print(`PAIRED_FIXTURE_MISSING host_player_stub reason=${armed.reason} arm=${HOST_PLAYER_STUB_LAUNCH}`);
       return judgeConcurrentClaim({ contended: null });
     }
     const mark = receipts.length;
@@ -1089,7 +1163,7 @@ export async function runPairedLiveRun({
     const turnPromise = askCompanion(sliceAllocation("s2_claim", { item: plan.contended.displayName }));
     const stub = await awaitHostPlayerRecords({
       path: hostPlayerScriptRecords,
-      stopAtStepIds: ["walk", "chest"],
+      seqs: armed.seqs,
       timeoutMs: budgetMs,
       now,
       pollMs,
@@ -1106,11 +1180,11 @@ export async function runPairedLiveRun({
             evicted: Object.freeze([]),
             targetTile: hostRecord.targetTile,
           });
-    const herReceipts = receipts
-      .slice(mark)
-      .filter((receipt) => receipt.actionId === "chest_retrieve");
+    const herReceipts = receipts.slice(mark).filter((receipt) => receipt.actionId === "chest_retrieve");
     const companionSide =
-      herReceipts.find((receipt) => tileKey(receipt.targetTile) === tileKey(plan.contended.tile)) ?? herReceipts[0] ?? null;
+      herReceipts.find((receipt) => tileKey(receipt.targetTile) === tileKey(plan.contended.tile)) ??
+      herReceipts[0] ??
+      null;
     return judgeConcurrentClaim({
       contended: plan.contended,
       host: hostSide,
@@ -1177,6 +1251,11 @@ export async function runPairedLiveRun({
       sessionBoundary: "fresh_game_runtime_session_on_the_same_continuity_identity",
     });
   });
+
+  // The fixture is done arming. Sealing is what lets the Host player's channel end quietly once its last step settles,
+  // instead of polling a document nobody will append to for the rest of the process. A launch with no arm has nothing to
+  // seal, and its own `not_configured` line was already printed by the slice that needed it.
+  sealHostPlayerScript(hostPlayerScript);
 
   const rubric = assessCompanionBehaviourRubric({
     turns: turnsSeen.map((text, index) => ({ turnId: `paired_${index + 1}`, text })),
