@@ -39,8 +39,15 @@
 // foreign game whose header was overwritten and whose surviving lines carry no path leaves no trace at all,
 // and its lines then read as this run's by the one-header rule. Only a machine with no other game on it can
 // make that residue empty - which is exactly why a launch refuses to start on one.
+//
+// ATTRIBUTION IS NOT PRESERVATION, so every refresh also KEEPS what it could attribute (`smapi-tick-capture.cjs`):
+// the file is truncated by the next game that starts here, and a run that only ever reads it loses the game's last
+// words the moment a sibling appears (measured 2026-11-26, `.tmp/lane-whycrah.md` §1). The copy goes into this run's
+// own state directory and the block this module prints ends by naming the tick that still holds the last line about a
+// save or an exit.
 const { closeSync, fstatSync, openSync, readdirSync, readSync, statSync } = require("node:fs");
 const path = require("node:path");
+const { createSmapiTickCapture } = require("./smapi-tick-capture.cjs");
 
 /** How much of one log file is read: the head, where the session header is. */
 const READ_BUDGET_BYTES = 4 * 1024 * 1024;
@@ -52,6 +59,13 @@ const LOG_FILE_NAME = /^SMAPI-latest(?:\.player-\d+)?\.txt$/iu;
 const SESSION_START = /\] Log started at /u;
 const MODS_GO_HERE = /\] Mods go here: (.*)$/u;
 const SAVE_LOADED = /Context: loaded save '([^']+)'/u;
+
+/** The state directory a capture driver was handed (`GB_SHOTS_LAUNCH_STATE`), or `null` when nobody handed one. */
+function launchStateStateDirectory(environment = process.env) {
+  const launchStatePath = environment.GB_SHOTS_LAUNCH_STATE;
+  if (typeof launchStatePath !== "string" || launchStatePath.length === 0) return null;
+  return path.dirname(launchStatePath);
+}
 
 /** The directory every Stardew process on this machine writes its log into, or `null` with no APPDATA. */
 function smapiLogDir() {
@@ -402,19 +416,39 @@ function missingSaveReason(reading, facts) {
 }
 
 /**
- * One run's reading of this machine's SMAPI log: refreshed as the game writes, printed when it changes.
+ * One run's reading of this machine's SMAPI log: refreshed as the game writes, KEPT as it is read, printed when it
+ * changes.
  *
  * `ownMarkers` and `ownWorldNames` are held BY REFERENCE, so a driver can add the world name it claimed with
  * `ownWorldNames.push(...)` after the fixture ran and every later refresh uses it - the world is only known
  * once the fixture has read the product's staged request, and the game's save line only appears after that.
  * `say` is called with the whole `smapi_lines:` block the first time and whenever the head line or the
  * per-file reasoning changes; the counts alone move on every tick and repeating them would bury the log.
+ *
+ * `stateDirectory` is this run's own `<stage>/state`, where the copies of what each refresh read are kept
+ * (`smapi-tick-capture.cjs`). A capture driver is handed that directory as `GB_SHOTS_LAUNCH_STATE ->
+ * <stage>/state/launch.json`, the same handoff `capture/common.cjs` uses for `GB_SHOTS_OUT`, so no driver call site has
+ * to spell it; a reader with no such handoff (a unit test, a hand probe) keeps nothing and says so. `describe()`
+ * reads ONCE MORE before it prints, because the run's last words are the point: what it prints is the drain, and the
+ * drain has to include the reading made at the moment the run ended.
  */
-function createSmapiLogReading({ ownMarkers = [], ownWorldNames = [], say = null, logDir, logFiles = null } = {}) {
+function createSmapiLogReading({
+  ownMarkers = [],
+  ownWorldNames = [],
+  say = null,
+  logDir,
+  logFiles = null,
+  stateDirectory = launchStateStateDirectory(),
+} = {}) {
   let reading = null;
   let said = null;
+  const tickCapture = createSmapiTickCapture({
+    directory: typeof stateDirectory === "string" && stateDirectory.length > 0 ? path.join(stateDirectory, "smapi") : null,
+  });
   const refresh = () => {
     reading = attributeSmapiLog({ logDir, logFiles, ownMarkers, ownWorldNames });
+    // What this reading could bind to this run is kept before anything else can rewrite the file it came from.
+    tickCapture.capture(reading);
     if (typeof say !== "function") return reading;
     const lines = describeSmapiAttribution(reading);
     const head = lines[0];
@@ -431,7 +465,7 @@ function createSmapiLogReading({ ownMarkers = [], ownWorldNames = [], say = null
     // cached reading is a quote from an earlier machine state.
     last: () => lastOwnLine(refresh()),
     claim: (launchBeganMs) => claimChainFacts(reading ?? refresh(), launchBeganMs),
-    describe: () => describeSmapiAttribution(reading ?? refresh()),
+    describe: () => [...describeSmapiAttribution(refresh()), ...tickCapture.describe()],
   };
 }
 

@@ -18,7 +18,7 @@
  *                   fails on `decision` (`one_session_of_this_run` instead of `contested`), exit 1.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -292,5 +292,67 @@ test("the same file, joined on the slot the save line carries, is one session of
   assert.match(
     describeSmapiAttribution(attributeSmapiLog({ ownMarkers: [ROUNDW_STAGE], logFiles: roundwLog() })).at(-1),
     /this_run=0 own_slots=\[\]/u,
+  );
+});
+
+/*
+ * ---- the copies: a reading KEEPS what it could attribute ----
+ *
+ * The machine's one log is truncated by every game that starts here, so a run that only reads it loses the Player
+ * Host's last words the moment a sibling appears (`.tmp/lane-whycrah.md` §1: the game ended at 21:02:02, a sibling
+ * truncated the file at 05:02:11, and only the one line the driver had printed survived). The wiring under test is the
+ * one the launch chain's own sampler uses: `refresh()` on every plateau poll, `describe()` at the drain - and no
+ * driver call site has to name the directory the copies go to.
+ */
+const OWN_SAVE_LINE = "[05:01:53 TRACE game] SaveGame.Save() completed without exceptions.";
+
+test("the reading keeps a copy of each state it read, and its drain names the tick that held the last save line", () => {
+  const logDir = mkdtempSync(join(tmpdir(), "gb-smapi-keep-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "gb-smapi-keep-state-"));
+  const logPath = join(logDir, "SMAPI-latest.txt");
+  writeFileSync(
+    logPath,
+    [...header(ROUNDW_MODS), `[05:01:53 TRACE game] Context: loaded save '${ROUNDW_SLOT}'`, OWN_SAVE_LINE].join("\r\n"),
+    "utf8",
+  );
+  const reading = createSmapiLogReading({
+    ownMarkers: [ROUNDW_STAGE],
+    ownWorldNames: [ROUNDW_SLOT],
+    logDir,
+    stateDirectory: stateDir,
+  });
+  reading.refresh();
+  assert.deepEqual(
+    readdirSync(join(stateDir, "smapi")).sort(),
+    ["0001.txt"],
+    "the poll's copy is one tick file, named by the tick that made it",
+  );
+  assert.match(readFileSync(join(stateDir, "smapi", "0001.txt"), "utf8"), /SaveGame\.Save\(\) completed/u);
+
+  // A sibling game starts and truncates the file: nothing in it names this run any more.
+  writeFileSync(
+    logPath,
+    [...header(OTHER_MODS), `[05:02:11 TRACE game] Context: loaded save '${OTHER_WORLD}'`].join("\r\n"),
+    "utf8",
+  );
+  const drained = reading.describe();
+  assert.equal(
+    drained.filter((line) => line.startsWith("smapi_lines:"))[0],
+    "smapi_lines: this_run=0 other_run=2 unattributable=3",
+    "the drain reads once more, so it reports the file as the machine has it now",
+  );
+  assert.equal(
+    drained.at(-1),
+    `smapi_tick_capture_last_save_or_exit: tick 1 at ${join(stateDir, "smapi", "0001.txt")}: ${JSON.stringify(OWN_SAVE_LINE)}`,
+    "and the words the run chased are still quotable, out of the tick it kept",
+  );
+});
+
+test("a reading nobody handed a state directory says it kept nothing instead of implying an empty log", () => {
+  assert.match(
+    createSmapiLogReading({ ...own, logFiles: roundwLog() })
+      .describe()
+      .at(-1),
+    /^smapi_tick_capture: no copy of the game's own log was kept \(/u,
   );
 });
