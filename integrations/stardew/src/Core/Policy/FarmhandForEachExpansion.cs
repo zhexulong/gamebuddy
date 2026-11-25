@@ -114,7 +114,18 @@ public sealed record FarmhandForEachTargetResult(
     string? Evidence,
     string? Healed = null,
     IReadOnlyList<FarmhandForEachStepResult>? Steps = null,
-    string? StoppedAt = null)
+    string? StoppedAt = null,
+    /// <summary>
+    /// The addresses this row's own terminal proved the reading no longer describes - the receipt's typed list, carried
+    /// through the row so the pass can union it.
+    ///
+    /// <para>
+    /// A `for_each` settles ONE node for sixty rows, and the settlement is the only shape its proofs reach a reader in. A
+    /// row's `Evidence` is a string this pass prints; the subtracted addresses are not, so they have to travel typed - which
+    /// is what stops a tilled pass from offering its own footprint back as work (`round80`).
+    /// </para>
+    /// </summary>
+    IReadOnlyList<string>? Evicted = null)
 {
     /// <summary>Where the target is, in the one shape every answer uses - or null when the row carries no tile.</summary>
     public string? Tile => this.X is null || this.Y is null
@@ -582,7 +593,7 @@ public static class FarmhandForEachExpansion
                     receipt.ExecutionId,
                     receipt.State,
                     receipt.ReasonCode,
-                    receipt.Evidence);
+                    receipt.Evidence) { Evicted = receipt.Evicted };
             }
         return null;
     }

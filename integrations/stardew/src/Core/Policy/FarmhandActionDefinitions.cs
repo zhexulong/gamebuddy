@@ -644,7 +644,7 @@ public sealed record FarmhandActionEffects(IReadOnlyList<FarmhandActionEffect> D
 /// What this action's SUCCESS takes out of the work its <see cref="TargetFamily"/> publishes, or null on an action whose
 /// family nobody has had to answer for yet. <see cref="FarmhandChoreDeclaration"/> states why `Clears` is the wrong field
 /// to ask and why `TargetFamily` alone cannot answer; here, one row says what the answer buys: the settlement mints
-/// <c>chore=&lt;family&gt;</c> into its own evidence (<see cref="FarmhandActionCatalog.ChoreClause"/>), and the Host counts
+/// <c>chore=&lt;family&gt;</c> into its own evidence (<see cref="FarmhandActionCatalog.ChoreEntry"/>), and the Host counts
 /// what is left of that family from the reading it already holds (`host/src/fact-brief.ts#remainderSentence`). A step
 /// that consumes no family says so with a token from <see cref="FarmhandChoreDeclaration.LeavesRowsReasons"/> instead of
 /// staying silent, because silence is what the remainder clause has to report as `未测`.
@@ -866,21 +866,22 @@ public static class FarmhandActionCatalog
     }
 
     /// <summary>
-    /// The clause a reader is owed for a finished chore - <c>chore=&lt;family&gt;</c> - or null for a family nobody named.
+    /// The ONE spelling of the clause: `chore=&lt;family&gt;`, or null for a family nobody named.
     ///
     /// <para>
-    /// ONE SPELLING, TWO SEAMS. The clause is a field of the receipt's own `evidence.detail`, which is the string the
-    /// reader receives (`BridgeSession.TryProjectReceipt`), so it is written where that string is composed for every
-    /// terminal - `ExecutionManager.RememberTerminal` - and after a `:` on a `for_each` pass's own verdict line
-    /// (`RouteReenteringBodyProgramExecutor.ChoreSuffix`). Measured `round71`: the clause was minted into the
-    /// Body Program executor's `route_reentrant_terminal:` postcondition instead, and three harvested crops produced a
-    /// receipt that said `crop_harvested` with no clause anywhere in the log, because that postcondition is not the
-    /// string the reader reads.
+    /// ONE FUNCTION, TWO FORMS, ONE VALUE. The family itself is the declaration (`ChoreFamilyOf` for a settled action,
+    /// `PassChoreFamily` for a finished pass) and from that value three spellings are minted: the receipt's
+    /// `evidence.detail` appends this clause after a `;`, a `for_each` pass's verdict line appends it after a `:`, and the
+    /// same family travels as a TYPED field (`LocalExecutionReceipt.Chore` -> `BodyProgramJournalNode.Chore` -> the wire
+    /// node's `chore`). Both string seams and the typed field read the one family value, and both string seams spell it
+    /// through this function, so a clause and a field can never name different families.
     /// </para>
     /// <para>
-    /// IT SPELLS A FAMILY AND NOT AN ACTION ID, because the family is the one value the TYPED field carries as well
-    /// (`LocalExecutionReceipt.Chore` -> the journal node's `Chore` -> the wire node's `chore`): one value, two forms,
-    /// never two answers.
+    /// WHY THAT MATTERS RATHER THAN "they agree today": a reader that parses a string cannot be deleted while the fact it
+    /// guesses at is spelled only in the string. `host/src/fact-brief.ts` did exactly that - it found `chore=` with
+    /// `indexOf` in `evidence.detail` - and a space, a reordering or a renamed key turned a finished chore into
+    /// `未测`. The field is what makes the parser deletable; this function is what keeps the string it replaces honest
+    /// until the last reader leaves.
     /// </para>
     /// </summary>
     public static string? ChoreClause(string? family) => family is null ? null : $"{ChoreField}={family}";
@@ -922,7 +923,7 @@ public static class FarmhandActionCatalog
     {
         E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, TileA(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("equip_tool", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("tool", "string", ToolEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "Game1.player.CurrentToolIndex"), FarmhandActionLifecycle.Published, "toolSlots"),
-        E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, Transition(entersDoor: false), FarmhandActionLifecycle.Published, "warps"),
+        E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, Transition(), FarmhandActionLifecycle.Published, "warps"),
         // Native 1.6 minecart travel is a distinct action, not a `travel`
         // objective family. Both the Mod's execution parser and
         // FarmhandExecutionAcceptance are exact-shape allow-lists with no
@@ -975,7 +976,7 @@ public static class FarmhandActionCatalog
 // (`Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)`), so the body must already stand beside the
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
 // learned the precondition only by being refused. Declared here so `plan_shape` can say it instead.
-E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Transition(entersDoor: true), FarmhandActionLifecycle.Published, "warps"),
+E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Transition(), FarmhandActionLifecycle.Published, "warps"),
         // till_soil drives the actor's own Hoe: the handler takes the hoe its claim names before tilling
         // (`tool_not_owned:hoe` when the pack holds none), so the hoe is an unconditional requirement - declared the way
         // water_crop declares its can, and for the same reason: a planner cannot see a tool requirement the surface never
@@ -1140,7 +1141,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // surface until it passes its own native-local live gate, and the promotion to
         // LiveVerified is a separate catalog edit owned by the parent.
         E("talk_to_npc", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(TileA(null, null, "npc_talked", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"))), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
-        E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_started", "Farmer.doEmote"), FarmhandActionLifecycle.LiveVerified),
+        E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum, EmoteMeaning) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_started", "Farmer.doEmote"), FarmhandActionLifecycle.LiveVerified),
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(ContainerItemTarget(ChestStoreItemMeaning)), FarmhandActionLifecycle.LiveVerified, "chests"),
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(ContainerItemTarget(ChestRetrieveItemMeaning)), FarmhandActionLifecycle.LiveVerified, "chests"),
@@ -1886,19 +1887,46 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// natural one.
     /// </summary>
     public const string TransitionSourceTileMeaning = "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
+
+    /// <summary>
+    /// What `emote` means on the gesture that shows it: the two engine guards, and the balloons the GAME sends.
+    ///
+    /// <para>
+    /// MEASURED `round99` (turn 109, `UndergroundMine1` at `2500`): `express_emote(note)` came back `emote_busy` with
+    /// `emoting=true;current_emote=24`, and 24 is the SLEEPY balloon `Game1` sends the avatar itself at 24:00 and 25:00
+    /// (<c>Game1.cs:5962</c>, <c>:5967</c>) - a balloon the caller never sent, at a minute nothing on the surface
+    /// mentioned. The refusal was right and the turn was wasted anyway. <c>Farmer.doEmote</c> is
+    /// `if (!Game1.eventUp && !isEmoting)` and keeps no pending gesture (<c>Farmer.cs:9046-9055</c>), so a request that
+    /// meets either guard is a NO-OP rather than a queued gesture; both guards are facts the caller can read for itself
+    /// (`snapshot.actorDispositionKind` is `event` during a cutscene), so they belong where the word is chosen - on the
+    /// argument's own meaning, which `plan_shape` prints - and not only on the refusal.
+    /// </para>
+    /// </summary>
+    public const string EmoteMeaning = "The emote word from the closed set. The Mod refuses rather than queues, because `Farmer.doEmote` keeps no pending gesture: `cutscene_active` while a cutscene holds the actor (`snapshot.actorDispositionKind` is `event`), and `emote_busy` while a balloon is still playing, which reports `retry_window_ms` and clears by itself. The game also emotes the avatar ITSELF at 24:00 and 25:00 (the sleepy balloon), so a gesture sent in those two minutes waits about two seconds for a balloon this tool never sent.";
     private static FarmhandActionDescriptor Target() => TileA(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
     /// <summary>
     /// A location transition whose coordinates name the door/warp SOURCE tile.
     ///
-    /// `enterExit` is true only for `enter_exit`, and the distinction is measured rather than stylistic: `execute`
-    /// resolves the warp from the coordinates and drives the transition itself, so `travel` reaches
-    /// `travel_completed` from wherever the actor stands - 15 receipts in the 2026-10-30 run, none refused for distance.
-    /// `enter_exit` additionally goes through the native door action, which needs the actor ADJACENT to the door tile
-    /// (`door_out_of_range source=64,14;door=64,14` while it stood at `60,26`). Declaring an approach for a
-    /// self-walking action is a false precondition: it tells the caller to do work the action will do.
+    /// The two transition actions differ in ONE thing, and it is the native entry: `enter_exit` additionally goes
+    /// through the game's own door action (`GameLocation.checkAction`'s Warp family), while `travel` calls
+    /// `Game1.player.warpFarmer` itself. It is NOT a difference in reach - both run through
+    /// <c>RequestLocalDoorTransition</c>, whose gate is <c>Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1,
+    /// Game1.player)</c>, and the only thing `doorOwned` decides is which word the same refusal carries
+    /// (`door_out_of_range` or `warp_out_of_range`).
+    ///
+    /// <para>
+    /// SO BOTH DECLARE THE REACH THE HANDLER ENFORCES. `travel` declared nothing until round99, and the sentence that
+    /// justified it - "`travel` reaches `travel_completed` from wherever the actor stands" - was false of the code
+    /// beneath it: the shared gate refuses a wander from two tiles away with `warp_out_of_range`, because the body of
+    /// this Mod may not teleport across a map it could walk. Declaring nothing published
+    /// `approach_requirement_undeclared` (a value the caller cannot tell from "no constraint"), so the range existed
+    /// only in the refusal - and the Host's own walk insertion reads this number
+    /// (`body-program-script.ts#approachTilesOf`, which falls back to `0` when the surface states none) to decide
+    /// whether the step before a transition already stands close enough.
+    /// </para>
     /// </summary>
-    private static FarmhandActionDescriptor Transition(bool entersDoor) => new(
+    private static FarmhandActionDescriptor Transition() => new(
         new[]
         {
             new FarmhandActionArgument("x", "integer", null, TransitionSourceTileMeaning, FarmhandTileSpace.CurrentMap),
@@ -1914,7 +1942,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // action using x/y keeps the default 0: an off-map tile is never a walk target.
         Acceptance = new FarmhandExecutionAcceptanceFacts(
             MinimumTileCoordinate: FarmhandWarpCoordinateRange.MinimumSourceCoordinate),
-        Approach = entersDoor ? FarmhandActionApproachRequirement.Adjacent : null,
+        Approach = FarmhandActionApproachRequirement.Adjacent,
     };
 
     private static FarmhandActionDescriptor TargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => TileA(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));

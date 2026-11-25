@@ -24,11 +24,12 @@ namespace GameBuddy.Stardew.Core.Policy;
 ///
 /// <para>
 /// WHAT IS DECLARED HERE AND WHAT IS NOT. A row states the two facts and nothing else. WHICH actions have a row is a
-/// claim too: exactly the forty-eight whose tool is a projection of the descriptor (`STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS`
-/// in the Host), so the two sets are held equal by `FarmhandActionPresentationCoverageTests` and an action that joins one
-/// without the other fails by name. The other fifty-eight actions carry NO row, and that absence is the statement rather
-/// than an empty list: their tool is still written in its own mount block, and the unit that deletes those mounts is the
-/// unit that adds their rows.
+/// claim too: exactly the ninety-seven whose tool is a projection of the descriptor (`STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS`
+/// in the Host), so the two sets are held equal by `FarmhandActionPresentationTests` and an action that joins one
+/// without the other fails by name. The other nine actions carry NO row, and that absence is the statement rather than
+/// an empty list: three of them mount no Game Action tool at all, and six still write their schema in their own mount
+/// block because it needs a declaration this surface does not publish yet (a typed selector, a closed vocabulary, one
+/// pinned item id or an accepted-input pattern).
 /// </para>
 ///
 /// <para>
@@ -214,7 +215,142 @@ public static class FarmhandActionPresentationCatalog
                 ["debris", "tool"]),
             ["open_geode"] = new FarmhandActionPresentation(
                 @"Open a geode",
-                ["inventory_slot", "geode"])
+                ["inventory_slot", "geode"]),
+            // The same two facts for the actions whose tool was still written in its own mount block: their label was
+            // the Host's copy of the action's name, and their kinds were the Host adapter table's copy. The mounts are
+            // gone (`game-tools.ts` projects the declaration for them now), so these rows are the only declaration left.
+            ["use_raft"] = new FarmhandActionPresentation(
+                @"Launch Stardew Raft",
+                ["raft", "water_tile"]),
+            ["mount_transport"] = new FarmhandActionPresentation(
+                @"Mount a Native Horse",
+                ["horse"]),
+            ["enter_mine"] = new FarmhandActionPresentation(
+                @"Enter the Mine",
+                ["mine_entrance"]),
+            ["enter_exit"] = new FarmhandActionPresentation(
+                @"Enter or Exit Stardew Location",
+                ["door", "building_entrance"]),
+            ["pickup_forage"] = new FarmhandActionPresentation(
+                @"Pick Up Stardew Forage",
+                ["forage"]),
+            ["pickup_item"] = new FarmhandActionPresentation(
+                @"Pick Up Stardew Item Drop",
+                ["item_drop"]),
+            ["refill_watering_can"] = new FarmhandActionPresentation(
+                @"Refill Stardew Watering Can",
+                ["watering_can", "water_source", "inventory_slot"]),
+            ["plant_seed"] = new FarmhandActionPresentation(
+                @"Plant Stardew Seed",
+                ["soil_tile", "inventory_slot"]),
+            ["harvest_bush"] = new FarmhandActionPresentation(
+                @"Harvest Stardew Berry Bush",
+                ["bush", "forage"]),
+            ["fish_here"] = new FarmhandActionPresentation(
+                @"Fish Stardew Water Tile",
+                ["water_source"]),
+            ["fertilize_tile"] = new FarmhandActionPresentation(
+                @"Fertilize Stardew Soil",
+                ["soil_tile", "inventory_slot"]),
+            ["machine_inspect"] = new FarmhandActionPresentation(
+                @"Inspect Stardew Machine",
+                ["machine"]),
+            ["machine_collect_output"] = new FarmhandActionPresentation(
+                @"Collect Machine Output",
+                ["machine", "inventory"]),
+            ["collect_animal_product"] = new FarmhandActionPresentation(
+                @"Collect Stardew Animal Product",
+                ["animal", "animal_product", "tool", "inventory"]),
+            ["feed_animal"] = new FarmhandActionPresentation(
+                @"Place Hay in Stardew Trough",
+                ["feed_trough", "inventory_slot"]),
+            ["use_item"] = new FarmhandActionPresentation(
+                @"Consume Held Stardew Food Item",
+                ["inventory_slot", "food"]),
+            ["chop_tree"] = new FarmhandActionPresentation(
+                @"Chop Stardew Tree",
+                ["tree_source", "tool"]),
+            ["dig_artifact_spot"] = new FarmhandActionPresentation(
+                @"Dig Stardew Artifact Spot",
+                ["artifact_spot", "tool"]),
+            ["clear_hoedirt"] = new FarmhandActionPresentation(
+                @"Clear Stardew HoeDirt",
+                ["soil_tile", "tool"]),
+            ["break_rock"] = new FarmhandActionPresentation(
+                @"Break Stardew Rock",
+                ["rock_source", "tool"]),
+            ["clear_debris"] = new FarmhandActionPresentation(
+                @"Clear Stardew Debris",
+                ["debris", "tool"]),
+            ["npc_relationship"] = new FarmhandActionPresentation(
+                @"Inspect NPC Relationship",
+                ["npc"]),
+            ["water_pet_bowl"] = new FarmhandActionPresentation(
+                @"Water the Pet Bowl",
+                ["pet_bowl", "watering_can"]),
+            ["water_slime_hutch_trough"] = new FarmhandActionPresentation(
+                @"Water a Slime Hutch Trough",
+                ["slime_hutch_trough", "watering_can"]),
+            ["chest_store"] = new FarmhandActionPresentation(
+                @"Store Item in Chest",
+                ["chest", "inventory_slot"]),
+            ["chest_retrieve"] = new FarmhandActionPresentation(
+                @"Take Item From Chest",
+                ["chest", "inventory"]),
+            ["chop_stump"] = new FarmhandActionPresentation(
+                @"Chop Tree Stump",
+                ["tree_stump", "tool"]),
+            ["plant_sapling"] = new FarmhandActionPresentation(
+                @"Plant Tree Sapling",
+                ["farm_tile", "inventory_slot"]),
+            ["cut_weeds"] = new FarmhandActionPresentation(
+                @"Cut Weeds",
+                ["weed", "tool"]),
+            ["cut_grass"] = new FarmhandActionPresentation(
+                @"Cut Grass",
+                ["grass", "tool"]),
+            ["clear_cask"] = new FarmhandActionPresentation(
+                @"Clear Cask",
+                ["cask", "tool"]),
+            ["dress_mannequin"] = new FarmhandActionPresentation(
+                @"Dress Mannequin",
+                ["mannequin", "inventory_slot"]),
+            ["set_sign_display"] = new FarmhandActionPresentation(
+                @"Set Sign Display",
+                ["sign", "inventory_slot"]),
+            ["deposit_silo_hay"] = new FarmhandActionPresentation(
+                @"Deposit Silo Hay",
+                ["silo", "inventory_slot"]),
+            ["toggle_tool_light"] = new FarmhandActionPresentation(
+                @"Toggle Tool Light",
+                ["tool"]),
+            ["scythe_crop"] = new FarmhandActionPresentation(
+                @"Scythe Crop",
+                ["crop", "tool"]),
+            ["harvest_fruit_tree"] = new FarmhandActionPresentation(
+                @"Harvest Stardew Fruit Tree",
+                ["fruit_tree", "forage"]),
+            ["shake_tree"] = new FarmhandActionPresentation(
+                @"Shake Stardew Tree",
+                ["tree", "forage"]),
+            ["take_pedestal_item"] = new FarmhandActionPresentation(
+                @"Take Stardew Pedestal Item",
+                ["pedestal", "inventory"]),
+            ["toggle_fence_gate"] = new FarmhandActionPresentation(
+                @"Toggle Stardew Fence Gate",
+                ["fence_gate"]),
+            ["craft_item"] = new FarmhandActionPresentation(
+                @"Craft Item",
+                ["recipe", "crafting"]),
+            ["cook_recipe"] = new FarmhandActionPresentation(
+                @"Cook Recipe",
+                ["recipe", "cooking"]),
+            ["collect_crab_pot_output"] = new FarmhandActionPresentation(
+                @"Collect Crab Pot Output",
+                ["crab_pot"]),
+            ["ship_item"] = new FarmhandActionPresentation(
+                @"Ship Item",
+                ["shipping_bin", "inventory_slot"]),
         };
 
         foreach (KeyValuePair<string, FarmhandActionPresentation> row in byActionId)

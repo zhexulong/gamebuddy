@@ -96,21 +96,26 @@ public sealed record FarmhandActionDescriptorProjection(
     /// Published because the same two facts were written in the HOST, keyed by action id, and a consumer that has to build
     /// a tool out of a declaration instead of out of a name it recognizes needs them on the declaration itself
     /// (<see cref="FarmhandActionPresentation"/> states which actions carry them). Omitted when null, like the members
-    /// above, so the fifty-eight actions whose tool text is still written in its own mount block keep the exact wire shape
+    /// above, so the nine actions whose tool is still written in its own mount block keep the exact wire shape
     /// they had before - and so the absence says "no label published" rather than shipping an empty string, which the
     /// artifact's reader refuses.
     /// </para>
+    ///
+    /// <para>
+    /// THE BOUNDARY: this descriptor and the hello_ack wire carry the FACTS an action owns - its name, the kinds of thing
+    /// it acts on, its argument schema and the bounds on those arguments - and no SENTENCE a model reads. Every
+    /// description of a tool lives in the Host (`game-tools.ts`), so a string that describes the model's experience of the
+    /// tool is never published from here.
+    /// </para>
     /// </summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null,
-    /// <summary>The sentence a model reads about this action, or null when the action publishes none (see <see cref="Label"/>).</summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null,
     /// <summary>
     /// The kinds of thing this action acts on (`world_object`, `modal`, `pet`), or null when the action publishes none.
     ///
     /// <para>
     /// These words were the Host adapter table's alone: they are what `stardew_search_interactions` matches a caller's
     /// own words against and what the plan gate reads to answer whether an action only runs while a modal is open - two
-    /// readers outside the game answering from a copy. Omitted when null, like `Label` and `Description`.
+    /// readers outside the game answering from a copy. Omitted when null, like `Label`.
     /// </para>
     /// </summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? TargetKinds = null
@@ -319,7 +324,6 @@ public static class FarmhandActionSurfacePublication
                     effects.None)
                 : null,
             Label: presentation?.Label,
-            Description: presentation?.Description,
             TargetKinds: presentation?.TargetKinds);
     }
 

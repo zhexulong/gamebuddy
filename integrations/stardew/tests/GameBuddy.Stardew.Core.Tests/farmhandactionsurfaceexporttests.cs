@@ -147,6 +147,16 @@ public sealed class FarmhandActionSurfaceExportTests
             // class: the reason a row has none is the declaration an empty list would otherwise be silent about, so its
             // absence is a defect rather than a shape.
             declared.Add("effects");
+            // What the action is called and the kinds it acts on, from the Mod's own declaration
+            // (`FarmhandActionPresentationCatalog`). Published together or not at all - an action with no row states that by
+            // omitting both, which is why they are added as ONE conditional block rather than two. There is no
+            // `description` member: the sentence a model reads about a tool is the Host's (`game-tools.ts`), and this
+            // record publishes facts.
+            if (action.TryGetProperty("label", out _))
+            {
+                declared.Add("label");
+                declared.Add("targetKinds");
+            }
             action.EnumerateObject().Select(property => property.Name).Should().Equal(declared);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");

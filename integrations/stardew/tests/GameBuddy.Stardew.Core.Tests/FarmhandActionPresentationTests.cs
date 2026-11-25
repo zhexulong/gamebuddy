@@ -18,8 +18,9 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// </para>
 ///
 /// <para>
-/// AN ACTION WITH NO ROW IS A STATEMENT, NOT A HOLE. Fifty-eight registrations carry none today: their tool is still
-/// written in its own mount block on the Host side, and the unit that deletes those mounts adds their rows. This test
+/// AN ACTION WITH NO ROW IS A STATEMENT, NOT A HOLE. Nine registrations carry none today: six still write their schema
+/// in their own mount block on the Host side, and three mount no Game Action tool at all. The unit that deletes one of
+/// those mounts adds its row. This test
 /// counts both sides so that a row disappearing and a row arriving are both visible in the run's own output.
 /// </para>
 ///
