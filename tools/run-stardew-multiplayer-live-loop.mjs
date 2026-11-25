@@ -22,7 +22,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -34,6 +34,25 @@ import { armGateProfiles, parseDriverResult } from "./run-stardew-multiplayer-ga
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DRIVER = join(REPOSITORY_ROOT, "tools", "run-stardew-shared-world-action.ps1");
 const LOOP_RUNNER = "run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs";
+/**
+ * THE PAIRED COMPANION RUN, and the driver table row that names the world it arms.
+ *
+ * `run-stardew-native-local-player-paired-companion-live-run.mjs` stages two bodies on one shared world: the Host player
+ * through the fixture's own record-stream lane and the companion through her own model turn. It cannot be started like
+ * the loop runner, for two reasons that are both FACTS ABOUT ITS WORLD rather than preferences:
+ *   * the world it needs is `native_paired_companion_v1`, which only the driver's own `$ACTION_SETUP` table names - so
+ *     the loop passes `-Action` for this runner and lets the table stay the single authority for the scenario;
+ *   * two of its four slices drive the Host player, so the driver must be given the script and records paths. They are
+ *     allocated under the trace root, because the trace is the deliverable and the report can then name them.
+ */
+const PAIRED_RUNNER = "run-stardew-native-local-player-paired-companion-live-run.mjs";
+const PAIRED_DRIVER_ACTION = "paired_companion";
+/**
+ * Where the two runners put their own record, and what shape it has. `paired-report.json` carries the four slice
+ * verdicts; `loop-report.json` carries the tail instrumentation. A run writes exactly one of them.
+ */
+const LOOP_REPORT_FILE = "loop-report.json";
+const PAIRED_REPORT_FILE = "paired-report.json";
 const DEFAULT_RELEASE_DIR = join(REPOSITORY_ROOT, "integrations", "stardew", "bin", "Release", "net6.0");
 /**
  * `send_multiplayer_chat` is the ONLY action the loop needs the AI profile to opt
@@ -103,6 +122,13 @@ export function parseLoopArgs(argv = process.argv.slice(2)) {
     throw new Error("invalid_multiplayer_loop_timeout_seconds");
   const releaseDir = values.get("--release-dir") ?? DEFAULT_RELEASE_DIR;
   if (!isAbsolute(releaseDir)) throw new Error("invalid_multiplayer_loop_release_dir");
+  const runner = values.get("--runner") ?? LOOP_RUNNER;
+  const scenario = values.get("--scenario") ?? LOOP_SCENARIO;
+  // THE PAIRED RUN NAMES ITS WORLD IN THE DRIVER'S TABLE. Accepting `--scenario` here as well would be a second
+  // spelling of one fact, and the driver overrides the profile's value from the table anyway - so a flag that looked
+  // honoured and was not is refused by name instead.
+  if (isPairedRunner(runner) && scenario.length > 0)
+    throw new Error("multiplayer_loop_paired_scenario_comes_from_the_driver_table");
 
   return Object.freeze({
     gamePath,
@@ -110,14 +136,22 @@ export function parseLoopArgs(argv = process.argv.slice(2)) {
     saveName,
     plan,
     durationSeconds,
-    scenario: values.get("--scenario") ?? LOOP_SCENARIO,
-    runner: values.get("--runner") ?? LOOP_RUNNER,
+    scenario,
+    runner,
     releaseDir,
     profileRoot: values.get("--profile-root") ?? null,
     runRoot: values.get("--run-root") ?? null,
     traceRoot: values.get("--trace-root") ?? null,
     timeoutSeconds,
   });
+}
+
+/**
+ * Whether this request is the paired companion run. `--runner` is a FILE NAME the driver resolves against its own
+ * directory, so the comparison is on the last path segment.
+ */
+export function isPairedRunner(runner) {
+  return typeof runner === "string" && runner.split(/[\\/]/u).pop() === PAIRED_RUNNER;
 }
 
 /**
@@ -272,6 +306,85 @@ export function deriveLoopVerdict({ timedOut, exitCode, driverState, loopResult 
   return { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_observation_unmeasured" };
 }
 
+/**
+ * The paired run's verdict, from the record it wrote itself.
+ *
+ * IT IS NOT `deriveLoopVerdict` WITH EXTRA FIELDS. The two runners state different facts: the loop record measures an
+ * unobserved tail, and the paired record states four SLICE verdicts it already derived from its own readings. So this
+ * reads her producer's verdict - and refuses to accept it when it disagrees with its own slices, because a report that
+ * says `passed` beside a slice that says `not_measured` is exactly the "a verdict that ignores a third of the session"
+ * defect this entry already had to fix once.
+ */
+export function derivePairedVerdict({ timedOut, exitCode, driverState, pairedReport }) {
+  if (timedOut === true) return { state: "blocked", reasonCode: "multiplayer_loop_timeout" };
+  if (driverState !== "action_passed" || exitCode !== 0)
+    return { state: "failed", reasonCode: `multiplayer_loop_failed:${driverState ?? "no_driver_result"}` };
+  if (pairedReport === null || pairedReport === undefined)
+    return { state: "blocked", reasonCode: "paired_runner_report_missing" };
+  const slices = Array.isArray(pairedReport.slices) ? pairedReport.slices : [];
+  if (slices.length === 0) return { state: "blocked", reasonCode: "paired_runner_report_has_no_slices" };
+  const notPassed = slices.find((entry) => entry?.state !== "passed") ?? null;
+  if (pairedReport.state === "passed")
+    return notPassed === null
+      ? { state: "passed", reasonCode: "paired_slices_passed" }
+      : {
+          state: "blocked",
+          reasonCode: `paired_runner_report_ignores_a_slice:${notPassed.slice}:${notPassed.reasonCode}`,
+        };
+  // WHICH SLICE, AND WHY. `reasonCode` alone would say "a slice did not pass" about a report of four, and the slice's
+  // own name plus its own reason is the whole of what a reader needs to open the right part of the trace.
+  const named = `${notPassed?.slice ?? "none"}:${notPassed?.reasonCode ?? pairedReport.reasonCode ?? "unknown"}`;
+  return pairedReport.state === "failed"
+    ? { state: "failed", reasonCode: `paired_slice_failed:${named}` }
+    : { state: "blocked", reasonCode: `paired_slice_not_measured:${named}` };
+}
+
+/** One JSON object from one report file, or null. A missing file and an unreadable one are both "no record here". */
+export function readRunnerReportFile(path) {
+  if (typeof path !== "string" || path.length === 0 || !existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed !== null && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every report file this entry can read, by the shape it carries and the runner that writes it. */
+export const RUNNER_REPORTS = Object.freeze([
+  Object.freeze({ kind: "paired", file: PAIRED_REPORT_FILE }),
+  Object.freeze({ kind: "loop", file: LOOP_REPORT_FILE }),
+]);
+
+/**
+ * THE RUNNER'S RECORD, from its file first - and the SHAPE it is - because the two runners state different facts.
+ *
+ * ONE READER, TWO SHAPES. The reading pipeline is IDENTICAL for both and is written once: the file first (a real
+ * session's Chinese text reached stdout as replacement characters and `JSON.parse` refused the line, so the file is the
+ * instrument), then the runner's own stdout, then the driver's captured `actionResult` for a runner whose output the
+ * console mangled. What is not shared is the MEANING, which stays with each shape's own verdict function.
+ */
+export function readRunnerReport({ traceRoot = null, stdout = "", fallbackText = "" } = {}) {
+  for (const { kind, file } of RUNNER_REPORTS) {
+    const fromFile = traceRoot === null ? null : readRunnerReportFile(join(traceRoot, file));
+    if (fromFile !== null) return { kind, report: fromFile, source: "file" };
+  }
+  const fromStdout = readRunnerReportText(stdout);
+  if (fromStdout.kind !== null) return { ...fromStdout, source: "stdout" };
+  const fromFallback = readRunnerReportText(fallbackText);
+  if (fromFallback.kind !== null) return { ...fromFallback, source: "driver_action_result" };
+  return { kind: null, report: null, source: null };
+}
+
+/** The shape a runner's own line carries, decided by the field only one of them has: `slices`. */
+function readRunnerReportText(text) {
+  const paired = parsePairedResult(text);
+  if (paired !== null) return { kind: "paired", report: paired };
+  const loop = parseLoopResult(text);
+  if (loop !== null) return { kind: "loop", report: loop };
+  return { kind: null, report: null };
+}
+
 export async function main(argv) {
   const request = parseLoopArgs(argv);
   if (process.platform !== "win32") throw new Error("multiplayer_loop_windows_only");
@@ -316,6 +429,12 @@ export async function main(argv) {
   const sessionDirectory = join(runRoot, "session");
   const probeRoot = join(runRoot, "probe");
   const resultFile = join(runRoot, "driver-result.json");
+  // THE PAIRED RUN'S HOST PLAYER LANE, allocated by this entry and written under the trace root, because the trace is the
+  // deliverable: the report can name both files and an operator reading the trace finds the script and the records beside
+  // it. Both are required together by the driver, which refuses one path alone.
+  const paired = isPairedRunner(request.runner);
+  const hostPlayerScript = paired ? join(traceRoot, "host-player-script.json") : null;
+  const hostPlayerScriptRecords = paired ? join(traceRoot, "host-player-script-records.jsonl") : null;
   // The Mod reads only these two variables; the game instances are started by the
   // driver, so the loop runner gets its plan and trace directory by environment.
   // THIS run's own streams. The driver redirects each role's console output into `$ProbeRoot/logs`, and the
@@ -370,6 +489,14 @@ export async function main(argv) {
     String(request.timeoutSeconds),
     "-ResultFile",
     resultFile,
+    // THE PAIRED WORLD IS NAMED IN THE DRIVER'S TABLE, so it is asked for by name: `-Action paired_companion` makes the
+    // driver arm `native_paired_companion_v1` from its own `$ACTION_SETUP` row (and keeps the scenario out of this
+    // entry's hands - `--scenario` is refused for this runner). The table also carries that row's policy opt-in, which
+    // for this run is "none": every action it dispatches is published or live-verified.
+    ...(paired ? ["-Action", PAIRED_DRIVER_ACTION] : []),
+    // The two-body lane. Without these S1 and S2 have no Host player to walk, wave or speak, and the paired world's
+    // placement handshake has no record stream - the run would arm a world and measure an empty world.
+    ...(paired ? ["-HostPlayerScript", hostPlayerScript, "-HostPlayerScriptRecords", hostPlayerScriptRecords] : []),
   ];
 
   const run = await runDriver({
@@ -386,32 +513,32 @@ export async function main(argv) {
   writeFileSync(join(runRoot, "driver.stdout.txt"), run.stdout, "utf8");
   writeFileSync(join(runRoot, "driver.stderr.txt"), run.stderr, "utf8");
   const driverResult = parseDriverResult(run.stdout);
-  // READ THE LOOP'S RECORD FROM ITS FILE FIRST, and only then from stdout.
-  //
-  // Measured: a real session's record could not be parsed out of the driver's stdout at all, because the child's Chinese
-  // text reached it as replacement characters (`�`) and `JSON.parse` refused the line. The entry therefore reported
-  // `loop: null` and `blocked/observation_unmeasured` for a session that had run fine -- and it would have done so for
-  // EVERY Chinese session, i.e. the ones that matter. Files do not go through the console's encoding, and the runner
-  // already writes this record beside its trace.
-  const loopReportPath = join(traceRoot, "loop-report.json");
-  const loopFromFile = existsSync(loopReportPath)
-    ? await readFile(loopReportPath, "utf8").then(
-        (text) => {
-          const parsed = JSON.parse(text);
-          return parsed !== null && typeof parsed === "object" ? parsed : null;
-        },
-        () => null,
-      )
-    : null;
-  const loopResult = loopFromFile ?? parseLoopResult(run.stdout) ?? parseLoopResult(driverResult?.actionResult ?? "");
-  // A verdict that ignores a third of the session is not a verdict, and a MISSING measurement is not "no gap": both
-  // rules live in `deriveLoopVerdict` so they are testable without a game.
-  const verdict = deriveLoopVerdict({
-    timedOut: run.timedOut,
-    exitCode: run.exitCode,
-    driverState: driverResult?.state,
-    loopResult,
+  // THE RUNNER'S RECORD, read from its file first and its shape named - see `readRunnerReport` for why the pipeline is
+  // shared and the verdicts are not. Measured: a real session's record could not be parsed out of the driver's stdout at
+  // all, because the child's Chinese text reached it as replacement characters (`�`) and `JSON.parse` refused the line,
+  // so the FILE is the instrument and stdout is the fallback.
+  const runnerReport = readRunnerReport({
+    traceRoot,
+    stdout: run.stdout,
+    fallbackText: driverResult?.actionResult ?? "",
   });
+  // A verdict that ignores a third of the session is not a verdict, and a MISSING measurement is not "no gap": both
+  // rules live in the verdict functions so they are testable without a game, and the paired run's four slices are its
+  // own record's to state.
+  const verdict =
+    runnerReport.kind === "paired"
+      ? derivePairedVerdict({
+          timedOut: run.timedOut,
+          exitCode: run.exitCode,
+          driverState: driverResult?.state,
+          pairedReport: runnerReport.report,
+        })
+      : deriveLoopVerdict({
+          timedOut: run.timedOut,
+          exitCode: run.exitCode,
+          driverState: driverResult?.state,
+          loopResult: runnerReport.kind === "loop" ? runnerReport.report : null,
+        });
   const { state } = verdict;
 
   const report = {
@@ -427,7 +554,8 @@ export async function main(argv) {
     // The files that EXIST, not a fixed wish-list: an audit found this naming six while four (positions.jsonl,
     // plan.jsonl, smapi/*) were absent in agent mode, which reads as "recorded but lost" instead of "not produced here".
     traceFiles: [
-      "loop-report.json",
+      ...RUNNER_REPORTS.filter(({ file }) => existsSync(join(traceRoot, file))).map(({ file }) => file),
+      ...(existsSync(join(traceRoot, "slices.jsonl")) ? ["slices.jsonl"] : []),
       "timeline.jsonl",
       ...(existsSync(join(traceRoot, "positions.jsonl")) ? ["positions.jsonl"] : []),
       ...(existsSync(join(traceRoot, "plan.jsonl")) ? ["plan.jsonl"] : []),
@@ -436,12 +564,18 @@ export async function main(argv) {
     artifact,
     driverExitCode: run.exitCode,
     driverState: driverResult?.state ?? null,
-    // Which source the entry read the loop's record from, because "the report is missing" and "the report is unreadable"
-    // are different failures and this one has already been both.
-    loopReportSource: loopFromFile === null ? "stdout" : "file",
+    // WHICH record the entry read, and from where: "the report is missing" and "the report is unreadable" are different
+    // failures and this one has already been both. `kind` is the shape (and therefore which verdict function read it).
+    runnerReportKind: runnerReport.kind,
+    runnerReportSource: runnerReport.source,
     driverPhase: driverResult?.phase ?? null,
     driverReason: driverResult?.reason ?? null,
-    loop: loopResult,
+    loop: runnerReport.kind === "loop" ? runnerReport.report : null,
+    paired: runnerReport.kind === "paired" ? runnerReport.report : null,
+    // The two-body lane's two files, named in the report so a reader can open the run's own script and records without
+    // reconstructing the trace root's layout; absent for every run that has no Host player lane.
+    hostPlayerScript: hostPlayerScript,
+    hostPlayerScriptRecords: hostPlayerScriptRecords,
     // The audit段 is filled by the reviewing action, not by this tool: a loop run is
     // not finished until a fresh-context auditing-runs reviewer has read the trace
     // (design §5, and handbook/live-run-patterns.md:12-28).
@@ -468,6 +602,27 @@ export function parseLoopResult(stdout) {
         return value;
     } catch {
       // Not the loop's record; keep looking.
+    }
+  }
+  return null;
+}
+
+/**
+ * The paired runner's own JSON line (`PAIRED_RESULT {...}`). Its `slices` are what distinguish it from the loop's record:
+ * the same line shape, stating four verdicts instead of a sampling measurement.
+ */
+export function parsePairedResult(stdout) {
+  const lines = cleanOutputLines(stdout);
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index].trim();
+    const at = line.indexOf("{");
+    if (at < 0) continue;
+    try {
+      const value = JSON.parse(line.slice(at));
+      if (value !== null && typeof value === "object" && typeof value.state === "string" && Array.isArray(value.slices))
+        return value;
+    } catch {
+      // Not the paired runner's record; keep looking.
     }
   }
   return null;

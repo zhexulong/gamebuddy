@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
@@ -994,10 +995,7 @@ internal sealed class HostPlayerScriptChannel
                 ["detail"] = detail,
                 ["atUnixMs"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };
-            string? directory = Path.GetDirectoryName(this.recordsPath);
-            if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
-            File.AppendAllText(this.recordsPath, JsonSerializer.Serialize(record) + Environment.NewLine);
+            FixtureRecordStream.TryAppendRecord(this.recordsPath, record);
         }
         catch (Exception error)
         {

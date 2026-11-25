@@ -61,7 +61,14 @@ param(
     # The Host is the *other* farmer in a co-op night. For the day to actually
     # roll over, its player must sleep too. Each process drives only its own
     # farmer through the same native lifecycle; neither marks the other ready.
-    [string]$HostSleepLifecycleEvidence = ""
+    [string]$HostSleepLifecycleEvidence = "",
+    # The Host player as a fixture-driven second farmer: a script file this driver
+    # arms into the Host process's config and the harness writes into, plus the
+    # records file the Host player's channel appends to. Both absolute, both
+    # required together. This is NOT a bridge: no socket, no consumer, no
+    # request/response - the Mod performs the steps on its own Game1.player.
+    [string]$HostPlayerScript = "",
+    [string]$HostPlayerScriptRecords = ""
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -103,6 +110,20 @@ $ACTION_SETUP = @{
     ship_item       = @{ scenario = "native_ship_item_v1"; experimental = $true }
     chest_retrieve  = @{ scenario = "native_chest_retrieve_v1"; experimental = $true }
     pet_animal      = @{ scenario = "native_pet_animal_v1"; experimental = $true }
+    # The paired run's attention slice puts a ripe crop on the farm for the Host
+    # player to stand beside, which is `native_harvest_crop_v1`'s world. It is a
+    # Host fixture arm and an experimental action on the AI side (the companion is
+    # asked to go over and may harvest), so it belongs in this table exactly like
+    # the rest.
+    harvest_crop    = @{ scenario = "native_harvest_crop_v1"; experimental = $true }
+    # The paired companion run (`tools/run-stardew-native-local-player-paired-companion-live-run.mjs`): ONE world
+    # carrying both farm facts S1 and S2 need, plus the Host player's script lane as the second body. The lane is
+    # armed by -HostPlayerScript/-HostPlayerScriptRecords, which this table cannot express and does not try to.
+    #
+    # NOT experimental: every action that run dispatches (harvest_crop, chest_retrieve, sleep) is published or
+    # live-verified, and naming one under ExperimentalActions makes the AI profile's whole policy invalid
+    # (`ActionPolicyEngine.ValidateActionPolicy`), which the client logs as a rejection and then never acts.
+    paired_companion = @{ scenario = "native_paired_companion_v1"; experimental = $false }
     # The cross-day lifecycle has two drivers, and the mapping differs because the
     # precondition differs:
     #
@@ -307,10 +328,55 @@ try {
             MinimumOnlineFarmers    = $SleepMinimumOnlineFarmers
         } -Force
     }
+    # The Host player as the fixture's second farmer. Her script and records live
+    # where the harness can reach them, and this driver is the one place that knows
+    # both paths are the same pair on both sides: it writes them into the Host
+    # config BEFORE that process starts and hands the same pair to the smoke script
+    # on its command line. A run given only one of them is refused rather than
+    # armed half-way.
+    $hostPlayerScriptConfigured = $false
+    if (-not [string]::IsNullOrWhiteSpace($HostPlayerScript) -or -not [string]::IsNullOrWhiteSpace($HostPlayerScriptRecords)) {
+        if ([string]::IsNullOrWhiteSpace($HostPlayerScript) -or [string]::IsNullOrWhiteSpace($HostPlayerScriptRecords)) {
+            throw "HostPlayerScript and HostPlayerScriptRecords must be given together: one path alone is an arm nobody can read or write."
+        }
+        foreach ($path in @($HostPlayerScript, $HostPlayerScriptRecords)) {
+            if (-not [System.IO.Path]::IsPathFullyQualified($path)) { throw "HostPlayerScript paths must be absolute: $path" }
+            $parent = Split-Path -Parent $path
+            if (-not [string]::IsNullOrWhiteSpace($parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+        }
+        $hostConfig.HostAutomation | Add-Member -NotePropertyName HostPlayerScript -NotePropertyValue @{
+            Enable       = $true
+            ScriptPath   = $HostPlayerScript
+            RecordsPath  = $HostPlayerScriptRecords
+            TimeoutSeconds = [Math]::Max(60, $TimeoutSeconds)
+        } -Force
+        $hostPlayerScriptConfigured = $true
+    }
     Write-Json $hostConfigPath $hostConfig
     Write-Json $hostSidecarPath $hostConfig
-
     $aiConfig = Read-Json $aiConfigPath
+    # THE COMPANION'S OWN SIDE OF THE FIXTURE'S RECORD STREAM. The paired world's placement handshake travels the
+    # stream the Host player's channel already appends to (`HostPlayerScript.RecordsPath`): the Host publishes the tile
+    # she must stand on, her process reads it, stands there through the engine's own warp, and reports the tile it
+    # reached. Her process is the only one that CAN move her - `Farmer.warpFarmer` warps `Game1.player` of the calling
+    # process - so it is the only one that can report it. Same existing config field, same two paths, same file: no
+    # second section and no second spelling of either path.
+    if ($hostPlayerScriptConfigured) {
+        if ($null -eq $aiConfig.PSObject.Properties['HostAutomation']) {
+            $aiConfig | Add-Member -NotePropertyName HostAutomation -NotePropertyValue ([pscustomobject]@{
+                Enable          = $false
+                FixtureScenario = ""
+                SaveName        = $SaveName
+                TimeoutSeconds  = [Math]::Max(60, $TimeoutSeconds)
+            }) -Force
+        }
+        $aiConfig.HostAutomation | Add-Member -NotePropertyName HostPlayerScript -NotePropertyValue @{
+            Enable         = $true
+            ScriptPath     = $HostPlayerScript
+            RecordsPath    = $HostPlayerScriptRecords
+            TimeoutSeconds = [Math]::Max(60, $TimeoutSeconds)
+        } -Force
+    }
     if ($null -ne $setup -and $setup.experimental) {
         $aiConfig.ExperimentalActions = @($Action)
     }
@@ -446,6 +512,15 @@ try {
         # It must exit non-zero on failure and speak JSON on stdout.
         $script:phase = "action_smoke"
         $actionArgs = @("--client-config", $aiConfigPath)
+        if ($hostPlayerScriptConfigured) {
+            # The same two paths the Host was armed with, so the harness writes the script the Host player's channel is
+            # already polling and reads the records it appends to. Passed on the command line rather than by an
+            # environment variable: an argument is visible in the run's own result, an inherited variable is not.
+            $actionArgs += @("--host-player-script", $HostPlayerScript, "--host-player-script-records", $HostPlayerScriptRecords)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($HostSleepLifecycleEvidence)) {
+            $actionArgs += @("--host-night-evidence", $HostSleepLifecycleEvidence)
+        }
         $smokeOutput = & node (Join-Path $PSScriptRoot $SmokeScript) @actionArgs 2>&1
         $smokeExit = $LASTEXITCODE
         $result.actionExitCode = $smokeExit

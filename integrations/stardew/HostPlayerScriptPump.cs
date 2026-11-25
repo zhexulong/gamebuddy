@@ -1,4 +1,5 @@
 using StardewModdingAPI;
+using StardewValley;
 
 namespace GameBuddy.Stardew;
 
@@ -26,7 +27,12 @@ internal sealed class HostPlayerScriptPump
         bool hostAutomationServerStarted,
         SleepAndAdvanceDayLifecycle? crossDayLifecycle)
     {
-        if (!this.armed && hostAutomationServerStarted)
+        // THE LAN MASTER'S BODY ONLY. `hostAutomationServerStarted` is false in every other process today, so this
+        // guard changes nothing about how the channel arms - but the same config field is now also written into the
+        // companion's profile (the paired world's placement handshake travels its record stream), and a fixture field
+        // that could drive the COMPANION's body through the HOST player's steps must be refused where it is armed
+        // rather than where it is read.
+        if (!this.armed && hostAutomationServerStarted && Game1.IsMasterGame)
         {
             this.channel = HostPlayerScriptChannel.TryStart(monitor, config);
             this.armed = this.channel is not null;
