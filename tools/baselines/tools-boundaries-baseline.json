@@ -310,6 +310,12 @@
     {
       "rule": "generic-tools-must-not-depend-on-game-tools",
       "severity": "warn",
+      "from": "tools/live-run/frontend/capture/w-game-launch.cjs",
+      "to": "tools/live-run/frontend/capture/smapi-log-attribution.cjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
       "from": "tools/live-run/game/fixture-scenario-registry.test.mjs",
       "to": "gates/stardew/check-stardew-live-runner-coverage.mjs"
     },

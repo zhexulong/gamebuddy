@@ -73,9 +73,11 @@ export function identifyRunGame({
       role: loaders.has(row.pid) ? GAME_LOADER_ROLE : GAME_CLIENT_ROLE,
     }));
   const claimed = new Set(rows.map((row) => row.pid));
+  // The start time travels with the pid: a pid alone is not an identity, and the quiet gate refuses by
+  // "pid, image name, started <time>" (`lib/machine-quiet.mjs`).
   const unclaimed = measured.rows
     .filter((row) => (LOADER_IMAGE.test(row.name) || CLIENT_IMAGE.test(row.name)) && !claimed.has(row.pid))
-    .map((row) => ({ pid: row.pid, name: row.name }));
+    .map((row) => ({ pid: row.pid, name: row.name, startTime: row.startTime }));
   return Object.freeze({ examined: measured.examined, rows, unclaimed });
 }
 

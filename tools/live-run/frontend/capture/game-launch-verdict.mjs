@@ -464,15 +464,23 @@ export function describeLaunchPlateau({ elapsedMs, unchangedForMs, state, game =
   return `PLATEAU: ${describeGameState(state)} unchanged for ${String(unchanged)}s (elapsed=${String(elapsed)}s); the launched game's own last line: ${describeGameLog(game)}`;
 }
 
-/** The launched game's last line as `{ line, writtenAtMs }`, or the fact that there was none to read. */
+/**
+ * The launched game's last line as `{ line, writtenAtMs, source }`, or the fact that there was none to read.
+ *
+ * `source` is which SMAPI file the line came out of, and the absence has two shapes that must not read alike:
+ * `null` game means this machine's log was not read at all, while a game with `line: null` means the log was
+ * read and nothing in it could be attributed to this run (`capture/smapi-log-attribution.cjs`).
+ */
 function describeGameLog(game) {
   if (game === null || game === undefined) return "no SMAPI log read";
-  const line = typeof game.line === "string" && game.line.length > 0 ? game.line : "no line";
+  const source = typeof game.source === "string" && game.source.length > 0 ? game.source : "SMAPI-latest.txt";
+  if (typeof game.line !== "string" || game.line.length === 0)
+    return `no line in ${source} is attributable to this run`;
   const writtenAt =
     typeof game.writtenAtMs === "number" && Number.isFinite(game.writtenAtMs)
       ? new Date(game.writtenAtMs).toISOString()
       : "with no mtime";
-  return `${JSON.stringify(line)} (SMAPI-latest.txt written ${writtenAt})`;
+  return `${JSON.stringify(game.line)} (${source} written ${writtenAt})`;
 }
 
 /* ------------------------------------------------------------------ the chain, rung by rung */

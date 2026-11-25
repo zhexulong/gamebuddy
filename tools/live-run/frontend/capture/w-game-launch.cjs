@@ -100,7 +100,7 @@
 //   game_launch_unavailable:<code>[:<cause>]
 //   turn_account_absent | turn_account_without_world_fact | turn_account_without_world_fact_member
 const path = require("node:path");
-const { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync } = require("node:fs");
+const { existsSync, readFileSync, readdirSync, statSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const {
@@ -146,6 +146,7 @@ const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
 const { describeRunRecords, readRunRecords } = require("./run-records.cjs");
 const { readInstallationPanel, registerInstallation } = require("./installation-registration.cjs");
 const { agentAwakeOf, describeTurnAccount, readTurnAccount } = require("./turn-account.cjs");
+const { createSmapiLogReading } = require("./smapi-log-attribution.cjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -465,6 +466,22 @@ function readRunWorldPolicy(launchStatePath) {
   }
 }
 
+/**
+ * Whether this run was started with `--allow-unquiet-machine` (`run.mjs` persists it in the run config, which
+ * is the sibling of the launch state every driver is handed).
+ *
+ * Absent means NO: the pre-launch gate is a refusal, and only an operator's explicit flag makes the driver
+ * open a game beside somebody else's - and then it prints what it accepted.
+ */
+function readRunAllowUnquiet(launchStatePath) {
+  if (launchStatePath === null) return false;
+  try {
+    return JSON.parse(readFileSync(path.join(path.dirname(launchStatePath), "run.json"), "utf8"))?.allowUnquietMachine === true;
+  } catch {
+    return false;
+  }
+}
+
 /** The run's own launch state, handed to every capture driver by the phase (`GB_SHOTS_LAUNCH_STATE`). */
 function readLaunchState() {
   const launchStatePath = process.env.GB_SHOTS_LAUNCH_STATE;
@@ -501,93 +518,7 @@ function runLaunchDriverPid(launchStatePath) {
 }
 
 /**
- * The tail of SMAPI's own log: `{ lines, writtenAtMs }`, or `null` when this machine has no such file.
- *
- * The Mod writes it (`%APPDATA%\StardewValley\ErrorLogs\SMAPI-latest.txt`), so a wait that stops moving can
- * be attributed to a game that is idle rather than to a Host still working. Read-only, bounded to the tail,
- * and the file's mtime travels with the lines because the log outlives the process that wrote it.
- */
-function smapiLogTail(budgetBytes = 262_144) {
-  const appData = process.env.APPDATA;
-  if (typeof appData !== "string" || appData.length === 0) return null;
-  const file = path.join(appData, "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
-  try {
-    const fd = openSync(file, "r");
-    try {
-      const size = fstatSync(fd).size;
-      const length = Math.max(0, Math.min(budgetBytes, size));
-      const buffer = Buffer.alloc(length);
-      const read = readSync(fd, buffer, 0, length, size - length);
-      const lines = buffer.toString("utf8", 0, read).split(/\r?\n/gu).filter((line) => line.trim().length > 0);
-      return { lines, writtenAtMs: statSync(file).mtimeMs };
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return null;
-  }
-}
-
-/** The launched game's own last word, read from the log's tail. `null` when there was no log to read. */
-function lastSmapiLine(budgetBytes = 16_384) {
-  const tail = smapiLogTail(budgetBytes);
-  if (tail === null) return null;
-  const salient =
-    [...tail.lines].reverse().find((line) => line.includes("GameBuddy")) ?? tail.lines[tail.lines.length - 1] ?? null;
-  return { line: salient, writtenAtMs: tail.writtenAtMs };
-}
-
-/**
- * The rungs of the chain the launched GAME is the only witness of, each as the line that proves it.
- *
- * The Host's own state route answers `launching/none` for a whole launch and cannot say whether a save
- * was loaded or a cabin was built; the game can, in its own words. Each pattern is the engine's or the
- * Mod's own sentence (`Context: loaded save` is SMAPI echoing the engine; the cabin line is
- * `ModEntry`'s own log of the native construction path), and the LAST match is the one that counts
- * because the log is append-only within one run.
- */
-const CHAIN_LOG_PATTERNS = Object.freeze([
-  { rung: CHAIN_STEPS.saveLoaded, pattern: /Context: loaded save '([^']+)'/u },
-  {
-    // Two sentences, one fact: the Mod's own answer for this world's Cabin. The first is a build on a free
-    // cabin pad; the second is a world whose own starting Cabin was already there, with the engine's own
-    // unclaimed native slot released so the companion can be provisioned into it (a fresh world always
-    // answers this way). Both leave a Cabin this companion may use, which is what the rung names.
-    rung: CHAIN_STEPS.cabinReady,
-    pattern:
-      /gave the companion world a native Cabin.*cabins_now=(\d+)|released the unclaimed native Farmhand slot .*provisioned into it/u,
-  },
-]);
-
-/**
- * What the game's own log proves about this launch, or why it proves nothing.
- *
- * Freshness is part of the proof: `SMAPI-latest.txt` is rewritten by each game start but it outlives
- * the process, so a tail written before this run's launch cannot be cited for it.
- */
-function gameLogChainFacts(launchBeganMs) {
-  const tail = smapiLogTail();
-  if (tail === null) return { read: false, reason: "no SMAPI log to read on this machine", facts: {} };
-  if (Number.isFinite(launchBeganMs) && tail.writtenAtMs < launchBeganMs)
-    return {
-      read: true,
-      writtenAtMs: tail.writtenAtMs,
-      reason: `SMAPI-latest.txt was last written ${new Date(tail.writtenAtMs).toISOString()}, before this launch`,
-      facts: {},
-    };
-  const facts = {};
-  for (const { rung, pattern } of CHAIN_LOG_PATTERNS) {
-    // `line` is the fragment the rung names; `raw` is the whole SMAPI line it was found on, which is what
-    // a reader of a DIFFERENT fact on that line needs (the launch locale lives at the end of the save-loaded
-    // line, outside the pattern). Measured 2026-11-16: reading the locale out of `line` found nothing, so the
-    // verdict said the run and the game agreed while the game was English.
-    const found = [...tail.lines].reverse().map((text) => ({ text, match: pattern.exec(text) })).find((entry) => entry.match !== null);
-    if (found !== undefined) facts[rung] = { line: found.match[0], captured: found.match[1] ?? null, raw: found.text };
-  }
-  return { read: true, writtenAtMs: tail.writtenAtMs, reason: null, facts };
-}
-
-/**
+ * The Mod's own published word for an attachment request, read from the run root it was written into.
  * The Mod's own published word for an attachment request, read from the run root it was written into.
  *
  * The response file lives at `<declaredDataRoot>/stardew-private-bootstrap/<bootstrap>/session/`
@@ -696,6 +627,22 @@ async function hostAnswers(port) {
   const record = stepRecorder(facts, say);
 
   /*
+   * THE GAME'S LOG, ATTRIBUTED TO THIS RUN BEFORE IT IS READ.
+   *
+   * `SMAPI-latest.txt` holds every game's lines on this machine (`capture/smapi-log-attribution.cjs`). The
+   * two things that bind a line to THIS run are the paths only it can produce - the stage root the Host
+   * passes as `--mods-path`, the data root under it - and the world name its own fixture claimed. The stage
+   * root comes from the launch state (`stageRoot`, written by `phases/launch.mjs`), not from counting
+   * directories up from the state path.
+   */
+  const ownWorldNames = [];
+  const smapiLog = createSmapiLogReading({
+    ownMarkers: [launch.state?.stageRoot, launch.state?.declaredDataRoot, launch.state?.runRoot],
+    ownWorldNames,
+    say,
+  });
+
+  /*
    * The chain, rung by rung: what the launch actually got through, when, and the fact that proved it.
    *
    * The driver's own cells (`record` above) say what it looked at; this says how far the PRODUCT got,
@@ -744,6 +691,10 @@ async function hostAnswers(port) {
 
   const conclude = async (browser, { verdict, code, exit }) => {
     sayCabins();
+    // The shared log, counted on every way out: `this_run` is what any rung above could rest on, and
+    // `other_run`/`unattributable` are the part of the file this run may NOT read as its own.
+    say("=== ITEM: the game's own log, attributed to this run ===");
+    for (const line of smapiLog.describe()) say(line);
     say("=== ITEM: the verdict ===");
     if (verdict === VERDICTS.notMeasured) {
       say(notMeasuredLine(code, facts.detail ?? ""));
@@ -1246,7 +1197,7 @@ async function hostAnswers(port) {
             elapsedMs: Date.now() - attachBegan,
             state: attached,
             problems: [...problems.entries()],
-            game: lastSmapiLine(),
+            game: smapiLog.last(),
           }),
         );
       }
@@ -1292,7 +1243,7 @@ async function hostAnswers(port) {
       elapsedMs: Date.now() - began,
       confirmMs: Date.now() - attachBegan,
       problems: [...problems.entries()],
-      gameLog: lastSmapiLine(),
+      gameLog: smapiLog.last(),
     };
   };
 
@@ -1366,8 +1317,13 @@ async function hostAnswers(port) {
           `the OS lists a running game: ${running.map((row) => `${row.name} pid ${String(row.pid)}`).join(", ")} (read with Get-Process -Name StardewModdingAPI,Stardew*)`,
         );
     }
-    /* 4. and 5. the game's own log: the save it loaded, and the Cabin the Mod gave her. */
-    const gameLog = gameLogChainFacts(launchBegan);
+    /*
+     * 4. and 5. the game's own log: the save it loaded, and the Cabin the Mod gave her - searched only over
+     * the lines this run's own markers bind to it (`capture/smapi-log-attribution.cjs`). A save line naming
+     * another game's world is NOT a rung: it is reported as the reason there is none.
+     */
+    smapiLog.refresh();
+    const gameLog = smapiLog.claim(launchBegan);
     for (const rung of [CHAIN_STEPS.saveLoaded, CHAIN_STEPS.cabinReady]) {
       const fact = gameLog.facts?.[rung] ?? null;
       if (fact === null || facts.chain.some((entry) => entry.name === rung)) continue;
@@ -1471,6 +1427,43 @@ async function hostAnswers(port) {
       "fixture_world_not_prepared",
       `this run could not claim a world of its own, so a launch it measured would be a launch into whatever world the previous run left behind: ${describeOwnWorld(fixtureWorld)}`,
     );
+  // The world name is the second thing that binds a SMAPI log line to this run: `Context: loaded save '<name>'`
+  // is this run's save only when `<name>` is the world this run claimed (`fixture-world.cjs`).
+  if (typeof fixtureWorld.farmName === "string" && fixtureWorld.farmName.length > 0)
+    ownWorldNames.push(fixtureWorld.farmName);
+
+  /*
+   * ---- 2d. THE MACHINE ITSELF, immediately before the product's own launch control is pressed. ----
+   *
+   * The launch phase refused a contaminated machine before it mounted anything (`lib/machine-quiet.mjs`), and
+   * this is the same gate at the moment that actually opens a game window: another lane's game can come up
+   * while this run is capturing, which is exactly what happened on 2026-11-26 - a sibling's live loop started
+   * 22 s before this driver pressed launch (`.tmp/lane-round33c.md` §4, §8.6). A driver that launches into
+   * that machine measures two games at once and then reports the result as a product verdict, so it refuses
+   * by name instead: `NOT-MEASURED: machine_not_quiet` with every pid, image name and OS start time it found.
+   */
+  const stageRoot =
+    typeof launch.state?.stageRoot === "string" && launch.state.stageRoot.length > 0
+      ? launch.state.stageRoot
+      : launch.path === null
+        ? null
+        : path.dirname(path.dirname(launch.path));
+  const quiet = await import(
+    pathToFileURL(path.join(REPO_ROOT, "tools", "live-run", "frontend", "lib", "machine-quiet.mjs")).href
+  ).then((module) => module.machineQuietReading({ stageRoot }));
+  for (const line of quiet.lines) say(line);
+  record("machine quiet", quiet);
+  if (quiet.state !== "quiet") {
+    if (readRunAllowUnquiet(launch.path) === false)
+      return await notMeasured(
+        browser,
+        "machine_not_quiet",
+        `another game is running on this machine, so a launch here would measure two games at once (SMAPI writes ONE log file for every game on the machine, and the product's save folder and game install are machine-wide): ${quiet.lines.join(" | ")}`,
+      );
+    say(
+      `LAUNCH ACCEPTED (--allow-unquiet-machine): this driver opens a game on a machine that is not quiet, accepting ${String(quiet.own.length + quiet.foreign.length)} Stardew process(es) named above; the game log it reads is attributed line by line and anything it cannot attribute is not used`,
+    );
+  }
 
   // ---- 3. the launch request. Everything above ran whatever the refusal below turns out to be. ----
   state = await page.evaluate(readGameState);
@@ -1531,7 +1524,7 @@ async function hostAnswers(port) {
           elapsedMs: Date.now() - launchBegan,
           state: launched,
           problems: [...problems.entries()],
-          game: lastSmapiLine(),
+          game: smapiLog.last(),
         }),
       );
     }
@@ -1547,7 +1540,7 @@ async function hostAnswers(port) {
         elapsedMs: launchElapsedMs,
         unchangedForMs,
         state: launched,
-        game: lastSmapiLine(),
+        game: smapiLog.last(),
       }),
     );
   const expectedGameLocale = typeof launch.state?.locale?.locale === "string" ? launch.state.locale.locale : null;
@@ -1565,7 +1558,7 @@ async function hostAnswers(port) {
     problems: [...problems.entries()],
     answers: [...answers],
     cabinReads: { ...cabinReads },
-    gameLog: lastSmapiLine(),
+    gameLog: smapiLog.last(),
     gameLogChainFacts: launchGameLog,
     gameLocale,
     hostAnswers: await hostAnswers(launch.state?.port),

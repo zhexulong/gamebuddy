@@ -20,7 +20,11 @@
 // Key flags: --commit (required for a full run), --out (deliverable set root), --stage (default
 // <out>.stage), --runtime (dir that DIRECTLY contains node.exe; else discovered), --game-dir,
 // --edge, --cdp-port, --wait-for-cdp=<seconds> (default 0: a held port is refused by name at once),
-// --force (re-run finished capture drivers), --driver=a,b (capture subset).
+// --force (re-run finished capture drivers), --driver=a,b (capture subset), --allow-unquiet-machine
+// (launch with another game already running on this machine: it prints every pid, name and start time it
+// accepts. Without it a machine holding any Stardew process refuses by name - `machine_not_quiet` - because
+// SMAPI writes ONE log file for every game on the machine and a launch measured through it is a reading of
+// two games, which is how ROUND33's product red was actually a contaminated measurement).
 //
 // Whatever way this process leaves - a phase that failed, a full run that finished, or an abnormal
 // exit - the run closes through one owner (`lib/run-owner.mjs`): every process the run started is
@@ -81,6 +85,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--check") values.check = true;
     else if (arg === "--force") values.force = true;
+    else if (arg === "--allow-unquiet-machine") values.allowUnquietMachine = true;
     else if (arg.startsWith("--driver=")) {
       values.drivers = (values.drivers ?? []).concat(
         arg
@@ -173,6 +178,9 @@ function prepareRun(paths, values) {
     // seat; `existing` enters the world the product already has, which is the ordinary second session of a
     // player's farm and the only way a run can measure a world an EARLIER run created.
     world: values.world === "existing" ? "existing" : "own",
+    // Persisted because the launch PHASE and the launch-chain DRIVER both refuse by name
+    // (`lib/machine-quiet.mjs`), and the driver reads the run config, not this process's argv.
+    allowUnquietMachine: values.allowUnquietMachine === true,
   };
   saveRunConfig(paths, run);
   mkdirSync(paths.logsDir, { recursive: true });

@@ -203,6 +203,13 @@ commit whose launcher lacks the exports the kit uses), never rewrites it, and
   after launch and after the run;
 - never deletes `%LOCALAPPDATA%\GameBuddy`;
 - **keeps the run root** `<out>.stage\root` until the report is accepted (cleanup never touches it);
+- refuses a **game already running on this machine** before it claims the port or spawns anything
+  (`machine_not_quiet: <pid> <name> started <time> (not this run)`, `lib/machine-quiet.mjs`): SMAPI keeps
+  ONE log file for every game on the machine and the product's save folder and game install are
+  machine-wide, so a launch beside another game is a reading of two games - which is exactly how ROUND33's
+  product-shaped red was a contaminated measurement. `--allow-unquiet-machine` launches anyway and prints
+  the contamination it accepts; the launch-chain driver asks the same question again at the moment it
+  presses the product's launch control, and refuses `NOT-MEASURED: machine_not_quiet`;
 - refuses a held CDP port **before** importing the launcher or spawning Edge, naming the holder's pid
   and run directory; `--wait-for-cdp=<seconds>` is an explicit budget the operator prints, never a
   default (the default was once an hour of silent waiting, which is how a sibling's orphan burned two
@@ -272,6 +279,8 @@ runs in one night where three died to the harness and the terminal said only `ph
 
 | refusal | means | what to do |
 |---|---|---|
+| `machine_not_quiet:<pid> <name> started <time> (not this run)` | a `Stardew Valley` / `StardewModdingAPI` process was already running when this run was about to launch (matched on image name `^Stardew`, refused with its OS creation time) | end that game at its own owner, or run with `--allow-unquiet-machine`, which prints every process it accepts; the shared SMAPI log is then attributed line by line and what cannot be attributed is not used |
+| `machine_not_quiet_unreadable` | the process table did not answer, so nothing shows the machine is quiet | no override matters here: a machine whose game processes cannot be read cannot be shown to be empty |
 | `cdp_port_held_by_pid:<pid>:<owning run dir>` | the CDP port is held, by the pid and run directory read from that process's own command line | stop the run at that directory (`taskkill /PID <pid> /T /F` when it is orphaned), then re-run; `--wait-for-cdp=<seconds>` waits for it instead, and prints the budget |
 | `previous_worktree_not_cleared:<path>` | this `--out`'s stage root still holds its previous run's worktree | pass a **fresh** `--out`; pin has no `--reuse`, it always re-creates the worktree |
 | `phase <name> failed (exit <n>) - <code>:<detail>` | the phase named its own refusal in its own log | open that log; the refusal is printed with it |

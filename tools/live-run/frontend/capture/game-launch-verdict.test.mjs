@@ -393,6 +393,36 @@ test("a launch wait prints the state, the refusals, and the launched game's own 
   );
 });
 
+test("a launch wait quotes the game's line only when that line is attributable to this run", () => {
+  /*
+   * `SMAPI-latest.txt` holds every game's lines on this machine, so the wait has two absences that must not
+   * read alike: "the log was not read at all" and "the log was read and nothing in it is this run's". On
+   * 2026-11-26 the second one was reported as the first game's own save name (`.tmp/lane-round33c.md` §6).
+   */
+  const unattributed = describeLaunchProgress({
+    elapsedMs: 8000,
+    state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" },
+    game: { line: null, writtenAtMs: 1_800_000_000_000, source: "SMAPI-latest.txt" },
+  });
+  assert.match(
+    unattributed,
+    /game="no line in SMAPI-latest\.txt is attributable to this run"|game=no line in SMAPI-latest\.txt is attributable to this run/u,
+  );
+  assert.match(unattributed, /no line in SMAPI-latest\.txt is attributable to this run/u);
+  assert.doesNotMatch(unattributed, /no line"/u);
+  // The file the line came from travels with it: `SMAPI-latest.player-2.txt` is a different session's file.
+  const secondPlayer = describeLaunchProgress({
+    elapsedMs: 9000,
+    state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" },
+    game: {
+      line: "[03:29:52 TRACE GameBuddy] cabins_now=1",
+      writtenAtMs: 1_800_000_000_000,
+      source: "SMAPI-latest.player-2.txt",
+    },
+  });
+  assert.match(secondPlayer, /\(SMAPI-latest\.player-2\.txt written 2027-01-15T08:00:00\.000Z\)$/u);
+});
+
 test("a plateau names the unchanged tuple, its age, and the game's last word", () => {
   const line = describeLaunchPlateau({
     elapsedMs: 130_000,

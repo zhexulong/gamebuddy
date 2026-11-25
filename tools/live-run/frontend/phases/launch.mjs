@@ -23,6 +23,12 @@ import { seedRunConnection } from "../lib/seed-connection.mjs";
 import { seedRunLocale } from "../lib/seed-locale.mjs";
 import { seedRunPreset } from "../lib/preset-seed.mjs";
 import { processRow } from "../lib/process-table.mjs";
+import {
+  MACHINE_NOT_QUIET,
+  MACHINE_NOT_QUIET_UNREADABLE,
+  describeQuietRefusal,
+  machineQuietReading,
+} from "../lib/machine-quiet.mjs";
 import { startWireCapture } from "../lib/wire-capture.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
@@ -186,6 +192,51 @@ async function main() {
   say("run root (KEPT, never removed):", paths.runRoot);
   say("cdp port:", cdpPort);
   say("cdp lock:", cdpPortLockDir(cdpPort));
+
+  /*
+   * THE MACHINE ITSELF, BEFORE ANYTHING OF THIS RUN IS LAUNCHED.
+   *
+   * A game already running on this machine makes every launch measurement a reading of two games at once:
+   * SMAPI writes ONE log file for every game on the machine, the product's save folder and game install are
+   * machine-wide, and `ROUND33` measured the result - three `StardewModdingAPI` processes in the launch
+   * chain's "a game process exists" rung, another lane's save name quoted as this run's loaded world, and a
+   * red (`cabin_handoff_no_cabin:state_unavailable`) that reads like a product defect (`.tmp/lane-round33c.md`
+   * §6). So this is a refusal by name, before the port is claimed and before a Host exists, and it names the
+   * pid, the image and the OS start time of every game process on this machine (`lib/machine-quiet.mjs`).
+   *
+   * `--allow-unquiet-machine` is the operator's override, and it prints the contamination it accepts: a gate
+   * that can be switched off silently is a comment.
+   */
+  const quiet = machineQuietReading({ stageRoot: paths.stageRoot });
+  for (const line of quiet.lines) say(line);
+  const allowUnquiet = run.allowUnquietMachine === true;
+  if (quiet.state !== "quiet") {
+    if (allowUnquiet === false) {
+      // The code travels beside the sentence: a reader that branches on the state file (`launch.json`)
+      // needs the refusal's own name, not a prefix of its prose.
+      const code = quiet.state === "unreadable" ? MACHINE_NOT_QUIET_UNREADABLE : MACHINE_NOT_QUIET;
+      const detail = describeQuietRefusal(quiet);
+      say(`LAUNCH REFUSED: ${detail}`);
+      await writeFile(
+        paths.launchStateFile,
+        JSON.stringify(
+          { kind: "launch_failed", code, tag: run.tag, commit: run.commit, cdpPort, detail, machineQuiet: quiet },
+          null,
+          1,
+        ),
+        "utf8",
+      );
+      say("DONE-LAUNCH-FAILED");
+      process.exit(2);
+    }
+    const accepted =
+      quiet.state === "unreadable"
+        ? "the process table could not answer, so how many games are running is unknown"
+        : `${String(quiet.own.length + quiet.foreign.length)} Stardew process(es) named above`;
+    say(
+      `LAUNCH ACCEPTED (--allow-unquiet-machine): this run launches on a machine that is not quiet, accepting ${accepted}; a game log it reads may carry another game's lines (\`capture/smapi-log-attribution.cjs\` counts them)`,
+    );
+  }
 
   // A run that skipped `pin`/`build` has no worktree to launch from, and a dynamic import of a path that does
   // not exist fails inside the spawn - which reads like a broken product rather than a skipped phase. `capture`
@@ -618,6 +669,21 @@ async function main() {
         childStartTime,
         browserPid: browser.pid ?? null,
         runRoot: paths.runRoot,
+        /*
+         * The stage root the run was started with, as the launch phase itself resolved it. A capture driver
+         * needs it to answer "is this Stardew process this run's own?" (`lib/run-game.mjs` claims a game by
+         * the `--mods-path` naming this root) and to refuse a machine that holds another lane's game
+         * (`lib/machine-quiet.mjs`); deriving it in the driver by counting directories from the state path is
+         * exactly the arithmetic this kit has already paid for once.
+         */
+        stageRoot: paths.stageRoot,
+        /*
+         * What the pre-launch quiet gate read (`lib/machine-quiet.mjs`): `quiet`, `contaminated` (with the
+         * pids named) or `unreadable`. `contaminated`/`unreadable` only appear here when the operator passed
+         * `--allow-unquiet-machine`, because every other path exits above.
+         */
+        machineQuiet: quiet,
+        allowUnquietMachine: allowUnquiet,
         manifestPath: paths.deploymentManifest,
         declaredDataRoot,
         artifactRoot: paths.artifact,
