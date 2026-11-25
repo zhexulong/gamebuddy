@@ -1172,6 +1172,7 @@ export async function createRuntimeWithFixedToolsCore(
       join(magicContextUserConfigDir, "cortexkit", "magic-context.jsonc"),
       JSON.stringify(
         {
+          embedding: { provider: "off" },
           ...(contentLanguage === undefined ? {} : { language: contentLanguage }),
           ...(magicContextHistorianEnabled
             ? {

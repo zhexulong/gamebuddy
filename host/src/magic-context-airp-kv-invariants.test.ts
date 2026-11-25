@@ -100,19 +100,19 @@ function textOf(message: AgentMessage | undefined): string {
     .join("");
 }
 
-function userTurn(text: string, timestamp = Date.now()): AgentMessage {
+function userTurn(text: string, timestamp = Date.now()) {
   return {
-    role: "user",
-    content: [{ type: "text", text }],
+    role: "user" as const,
+    content: [{ type: "text" as const, text }],
     timestamp,
   };
 }
 
-function assistantTextTurn(text: string, timestamp = Date.now()): AgentMessage {
+function assistantTextTurn(text: string, timestamp = Date.now()) {
   return {
-    role: "assistant",
-    content: [{ type: "text", text }],
-    api: "openai-responses",
+    role: "assistant" as const,
+    content: [{ type: "text" as const, text }],
+    api: "openai-responses" as const,
     provider: "fixture",
     model: "fixture-model",
     usage: {
@@ -123,7 +123,7 @@ function assistantTextTurn(text: string, timestamp = Date.now()): AgentMessage {
       totalTokens: 28,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
-    stopReason: "stop",
+    stopReason: "stop" as const,
     timestamp,
   };
 }
@@ -655,7 +655,9 @@ test("AIRP host-vendor boundary: written magic-context config, protected tools, 
   const { runtime } = await setupIsolatedRuntime("game", "boundary");
   try {
     const projectConfigPath = join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc");
+    const userConfigPath = join(runtime.paths.runtimeCwd, "config", "cortexkit", "magic-context.jsonc");
     assert.equal(existsSync(projectConfigPath), true);
+    assert.equal(existsSync(userConfigPath), true);
     const config = JSON.parse(await readFile(projectConfigPath, "utf8")) as {
       memory?: { domain?: string; enabled?: boolean; auto_promote?: boolean };
       system_prompt_injection?: { enabled?: boolean };
@@ -663,6 +665,14 @@ test("AIRP host-vendor boundary: written magic-context config, protected tools, 
       protected_tools?: Record<string, number>;
       temporal_awareness?: boolean;
     };
+    const userConfig = JSON.parse(await readFile(userConfigPath, "utf8")) as {
+      embedding?: { provider?: string };
+    };
+    assert.equal(
+      userConfig.embedding?.provider,
+      "off",
+      "user-scope config must declare embedding.provider='off' (project-security strips project-tier provider)",
+    );
 
     assert.equal(config.memory?.domain, MAGIC_CONTEXT_MEMORY_DOMAIN);
     assert.equal(MAGIC_CONTEXT_MEMORY_DOMAIN, "ongoing-interaction");
@@ -696,5 +706,156 @@ test("AIRP host-vendor boundary: written magic-context config, protected tools, 
     assert.doesNotMatch(ctxSearchParams, /git_commit/);
   } finally {
     disposeRuntimeBestEffort(runtime);
+  }
+});
+
+test("Layer 2 recorded game loop: cross-day vectorless CJK FTS5 <memory-recall>, mechanical turn skip, and player CRUD sovereignty", async () => {
+  const root = await canonicalTestRoot("mc-airp-crossday-");
+  pendingRootsForExitCleanup.push(root);
+  const continuityId = "continuity_airp_crossday_01";
+  const identity: CompanionIdentity = Object.freeze({
+    continuityId,
+    playerId: "player_crossday_01",
+    saveId: "save_crossday_01",
+    worldId: "world_crossday_01",
+    companionId: "companion_crossday_01",
+  });
+
+  // Day 1 session: store durable ongoing-interaction Chinese memories and close cleanly.
+  const day1 = await createCompanionRuntime(
+    identity,
+    root,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    undefined,
+    "game_day_1",
+    undefined,
+    "game",
+  );
+  let blueChestStateToken = "";
+  try {
+    day1.sessionManager.appendMessage(
+      userTurn(
+        "<world-state>06:00；第1天；农场</world-state>\n北边蓝箱子以后专放草莓种子和铱制洒水器。",
+        1_700_010_001_000,
+      ),
+    );
+    await day1.session.extensionRunner.emitContext(day1.sessionManager.buildSessionContext().messages);
+
+    const facade = createGameBuddyPlayerMemoryCrudFacade({
+      continuityId,
+      runtimeCwd: day1.paths.runtimeCwd,
+      profileId: DEFAULT_IDENTITY_PROFILE.profileId,
+      profileRevision: DEFAULT_IDENTITY_PROFILE.revision,
+    });
+    const blueChest = await facade.create({
+      continuityId,
+      profileId: DEFAULT_IDENTITY_PROFILE.profileId,
+      profileRevision: DEFAULT_IDENTITY_PROFILE.revision,
+      content: `北边蓝箱子专放草莓种子和铱制洒水器，绝对别拆。${"春季播种备忘与箱子位置补充细节记录。".repeat(25)}`,
+    });
+    blueChestStateToken = blueChest.stateToken;
+    const dbPath = findContextDbPath(day1.paths.runtimeCwd);
+    const projectPath = resolveGameBuddyMemoryProjectPath(day1.paths.runtimeCwd, continuityId);
+    withDb(dbPath, (db) => {
+      db.prepare("UPDATE memories SET importance = 1, verification_status = 'unverified' WHERE content = ?").run(
+        blueChest.content,
+      );
+      const now = 1_700_010_005_000;
+      const stmt = db.prepare(
+        `INSERT INTO memories (
+          project_path, category, content, normalized_hash, source_type,
+          seen_count, retrieval_count, first_seen_at, created_at, updated_at, last_seen_at,
+          status, verification_status, importance
+        ) VALUES (?, 'SEMANTIC_MEMORY', ?, ?, 'historian', 1, 0, ?, ?, ?, ?, 'active', 'verified', 95)`,
+      );
+      for (let i = 0; i < 80; i += 1) {
+        const content =
+          `Historical companion farm routine memory entry #${i}: keep tools dry and check greenhouse sprinklers daily. `.repeat(
+            15,
+          );
+        stmt.run(projectPath, content, sha256(`${i}:${content}`), now + i, now + i, now + i, now + i);
+      }
+    });
+  } finally {
+    disposeRuntimeBestEffort(day1);
+  }
+
+  // Day 2 fresh session on the same continuity: verify gating, CJK FTS5 recall for long-tail memory, m[0] invariance, and deletion sovereignty.
+  const day2 = await createCompanionRuntime(
+    identity,
+    root,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    undefined,
+    "game_day_2",
+    undefined,
+    "game",
+  );
+  try {
+    // 2A: Pure mechanical work settlement turn -> warms m[0] (top 45 entries fill budget, leaving low-importance #1 for on-demand recall) and skips <memory-recall>.
+    day2.sessionManager.appendMessage(
+      userTurn(
+        "<world-state>06:30；第2天；农场</world-state>\n<execution-result>stardew_plan_work settled: 3 nodes succeeded</execution-result>",
+        1_700_020_001_000,
+      ),
+    );
+    const pass2A = await day2.session.extensionRunner.emitContext(day2.sessionManager.buildSessionContext().messages);
+    const m0Day2Baseline = textOf(pass2A[0]);
+    const tail2A = textOf(pass2A.at(-1));
+    assert.equal(tail2A.includes("<memory-recall>"), false, "mechanical work turn must skip inline recall");
+    assert.equal(
+      m0Day2Baseline.includes("绝对别拆"),
+      false,
+      "low-importance long-tail memory should sit outside m[0] budget",
+    );
+    day2.sessionManager.appendMessage(assistantTextTurn("节点已执行完成，准备下一轮安排。", 1_700_020_002_000));
+
+    // 2B: Natural Chinese dialogue turn wrapped in <world-state> -> must inline <memory-recall> at tail & keep m[0] identical.
+    const day2Prompt = "<world-state>07:00；第2天；农场</world-state>\n我们现在先去北边蓝箱子拿草莓种子和洒水器吗？";
+    day2.sessionManager.appendMessage(userTurn(day2Prompt, 1_700_020_003_000));
+    const pass2B = await day2.session.extensionRunner.emitContext(day2.sessionManager.buildSessionContext().messages);
+    const tail2B = textOf(pass2B.at(-1));
+    assert.equal(
+      sha256(textOf(pass2B[0])),
+      sha256(m0Day2Baseline),
+      "inline <memory-recall> on user turn must never bust m[0]",
+    );
+    assert.ok(tail2B.includes(day2Prompt), "world-state and player text must remain unmodified");
+    assert.ok(tail2B.includes("<memory-recall>"), "dialogue turn must inline <memory-recall>");
+    assert.ok(tail2B.includes("草莓种子"), "recalled block must surface matching Chinese memory");
+    assert.ok(tail2B.endsWith("</memory-recall>"), "recall block must sit strictly at tail");
+
+    // 2C: Player deletes/archives the memory -> next Day 2 turn must no longer recall it.
+    day2.sessionManager.appendMessage(assistantTextTurn("好的，我陪你先去北边蓝箱子。", 1_700_020_004_000));
+    const facade = createGameBuddyPlayerMemoryCrudFacade({
+      continuityId,
+      runtimeCwd: day2.paths.runtimeCwd,
+      profileId: DEFAULT_IDENTITY_PROFILE.profileId,
+      profileRevision: DEFAULT_IDENTITY_PROFILE.revision,
+    });
+    await facade.archive({
+      continuityId,
+      profileId: DEFAULT_IDENTITY_PROFILE.profileId,
+      profileRevision: DEFAULT_IDENTITY_PROFILE.revision,
+      stateToken: blueChestStateToken,
+    });
+    day2.sessionManager.appendMessage(
+      userTurn(
+        "<world-state>08:00；第2天；农场</world-state>\n北边蓝箱子里还是专放草莓种子和洒水器对吧？",
+        1_700_020_005_000,
+      ),
+    );
+    const pass2C = await day2.session.extensionRunner.emitContext(day2.sessionManager.buildSessionContext().messages);
+    const tail2C = textOf(pass2C.at(-1));
+    assert.equal(tail2C.includes("绝对别拆"), false, "archived/deleted memory must stop recalling on subsequent turns");
+  } finally {
+    disposeRuntimeBestEffort(day2);
   }
 });
