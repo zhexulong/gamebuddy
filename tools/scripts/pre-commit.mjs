@@ -215,29 +215,39 @@ const checkStagedLineCeilings = (stagedTexts) => {
   process.exit(1);
 };
 
-const warnOnAddedSuppressions = () => {
+const rejectAddedSuppressions = () => {
+  let diff;
   try {
-    const diff = execFileSync("git", ["diff", "--cached", "-U0", "--no-color", "--ignore-submodules=all"], {
+    diff = execFileSync("git", ["diff", "--cached", "-U0", "--no-color", "--ignore-submodules=all"], {
       encoding: "utf8",
       maxBuffer: 1 << 26,
     });
-    const flagged = new Set();
-    let current = null;
-    for (const line of diff.split(/\r?\n/u)) {
-      if (line.startsWith("+++ b/")) {
-        current = line.slice("+++ b/".length);
-        continue;
-      }
-      if (!line.startsWith("+") || line.startsWith("+++")) continue;
-      if (current === null || current.startsWith("tools/scripts/pre-commit")) continue;
-      if (SUPPRESSION_RE.test(line.slice(1))) flagged.add(current);
-    }
-    if (flagged.size > 0) {
-      console.log(`pre-commit: note: newly added suppression directive(s) in ${[...flagged].join(", ")}`);
-    }
-  } catch {
-    // Diagnostic-only notice: never block if diff cannot be inspected.
+  } catch (error) {
+    console.error(`pre-commit: could not inspect the staged diff, so added suppressions cannot be ruled out\n${error.message}`);
+    process.exit(1);
   }
+  const flagged = new Map();
+  let current = null;
+  for (const line of diff.split(/\r?\n/u)) {
+    if (line.startsWith("+++ b/")) {
+      current = line.slice("+++ b/".length);
+      continue;
+    }
+    if (!line.startsWith("+") || line.startsWith("+++")) continue;
+    if (current === null || current.startsWith("tools/scripts/pre-commit")) continue;
+    if (!SUPPRESSION_RE.test(line.slice(1))) continue;
+    const existing = flagged.get(current) ?? [];
+    existing.push(line.slice(1).trim());
+    flagged.set(current, existing);
+  }
+  if (flagged.size === 0) return;
+  for (const [file, directives] of flagged) {
+    for (const directive of directives) console.error(`suppression_directive_added:${file}:${directive}`);
+  }
+  console.error(
+    "pre-commit: a new suppression directive is refused. State what the compiler cannot express here, or fix the code it silences; `@ts-expect-error` with the error text is the one form that stays honest, because it fails when the error goes away.",
+  );
+  process.exit(1);
 };
 
 const runBlockingStep = (label, args) => {
@@ -327,7 +337,7 @@ if (targets.length === 0) {
 }
 
 checkStagedLineCeilings(stagedTexts);
-warnOnAddedSuppressions();
+rejectAddedSuppressions();
 
 runBlockingStep("the test project typecheck", ["host/scripts/check-staged-test-typecheck.mjs"]);
 runBlockingStep("the lockfile freeze check", ["tools/scripts/check-lockfile-freeze.mjs"]);
