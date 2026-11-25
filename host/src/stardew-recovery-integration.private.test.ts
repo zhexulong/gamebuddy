@@ -825,10 +825,14 @@ async function prepareLaunchedPlayerHost(fixture: IntegrationFixture): Promise<v
       apiVersion: 1,
       idempotencyKey: "integration-setup-key-1",
     });
+    // The number the browser hands back is the one the product publishes: the installation registration issues it
+    // at the bind that took the pointer, so a successor lifecycle's attempt is 2, not 1. Reading it here is what
+    // keeps this launch consistent with the fact it is checked against.
+    const { generation } = fixture.coordinator.launchReadinessReader.readLaunchReadinessView();
     await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
       apiVersion: 1,
       idempotencyKey: "integration-launch-key-1",
-      expectedInstanceGeneration: 1,
+      expectedInstanceGeneration: generation,
     });
   });
 }

@@ -433,7 +433,10 @@ test("game.create after a clean disconnect attaches the first activation at gene
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "none",
       generation: 0,
-      connectionStatus: "none",
+      // A disconnect is the one ending that also says where the session went: the shared teardown's terminal word
+      // is `none`, which is what a session that was never connected publishes, so the route publishes
+      // `disconnected` itself (`stardew-production-lifecycle-coordinator.internal.ts`, `disconnectGame`).
+      connectionStatus: "disconnected",
     });
     // Producer: the full two-phase create, then the first activation reuses
     // the fresh-attach machinery (arm AI → launch → bridge → materialize →

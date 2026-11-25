@@ -28,7 +28,13 @@ function registrationAnswering(selection: StardewInstallationSelectionResult) {
     cancelInstallationSelection: unused,
     openInstallationPicker: unused,
   });
-  const coordinator = { activationOwner } as unknown as StardewProductionLifecycleCoordinator;
+  // The projection subscribes the coordinator's transition seam as it is built, so a coordinator without it is not
+  // a coordinator (`provider.ts`, `createStardewGamePresentationProjection`). This file never publishes a fact, so
+  // the subscription's only job is to exist.
+  const coordinator = {
+    activationOwner,
+    subscribeGameFacts: () => () => {},
+  } as unknown as StardewProductionLifecycleCoordinator;
   const discovery = createStardewGamePresentationProjection(coordinator).lifecycleActivationBindingSink.gameDiscovery;
   assert.ok(discovery, "the projection must expose the installation discovery binding");
   return discovery;

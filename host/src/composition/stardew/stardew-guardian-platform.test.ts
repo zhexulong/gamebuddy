@@ -980,6 +980,10 @@ test("finalizing a driven recovery reaches the terminal record and releases the 
       state: "ready",
       locator: "C:\\Games\\Stardew Valley",
       activeAttempt: { bootstrapCorrelation: "bootstrap-1" },
+      // The record carries the attempt generation the bind assigned (`stardew-installation-registration.internal.ts`
+      // validates the exact seven-member shape and requires this one to be a non-negative integer), and the bytes
+      // must equal the canonical serialization, so the member sits last, where the writer emits it.
+      instanceGeneration: 1,
     }),
     "utf8",
   );
