@@ -13,8 +13,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///
 /// The failure this replaces: a night's freeze was reconstructed from the SMAPI log, the stalled-tick file and
 /// the bridge's own log, and none of the three said how long the step before the freeze had been running. The
-/// exporter is therefore held to the format here - <c>ph: "X"</c>, microsecond <c>ts</c>/<c>dur</c>, nested
-/// spans from one process - and the publish span is held to the same receipt the marker line names.
+/// held to the format here - <c>ph: "X"</c> with microsecond <c>ts</c>/<c>dur</c> for an interval, and
+/// <c>ph: "i"</c> with no <c>dur</c> at all for a moment - and the publish span is held to the same receipt the
+/// marker line names.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class ModTraceExportTests
@@ -111,6 +112,91 @@ public sealed class ModTraceExportTests
         ReadRepositoryFile("integrations/stardew/ModEntry.Instrumentation.cs")
             .Should()
             .Contain("ModTrace.NoteTickGateHeld(reason);");
+    }
+
+    /// <summary>
+    /// The engine's lifecycle edges are INSTANT events, and the tick-gate span closes on the production lane.
+    ///
+    /// Measured 2026-11-26 (`.tmp/lane-whycrah.md` §4): a Player Host's only surviving per-run record is its trace,
+    /// and that trace held ONE event - `mod.tick.gate`, `dur = 11273932` µs, `inProgress = true` - because the only
+    /// call that ever closed the gate span sat inside the native-local fixture block, which a production lane never
+    /// enters. Read as written, the trace said a gate held for the run's whole life on a lane that was serving a
+    /// `ready` advertisement. A record that lies about the run's whole life is worse than no record, so:
+    ///
+    ///   - the four engine edges (SaveLoaded/Saving/Saved/ReturnedToTitle) are written as instants, which claim no
+    ///     duration and therefore cannot be read as a hold;
+    ///   - the gate span is closed where both lanes pass every gate they can enter, so a production tick closes the
+    ///     span an earlier tick opened.
+    /// </summary>
+    [Fact]
+    public void TheEngineLifecycleEdgesAreInstantEventsThatClaimNoDuration()
+    {
+        using TraceDirectory directory = new();
+        using ModTraceRecorder recorder = new(directory.Path, "lifecycle", monitor: null);
+        foreach (string spanName in ModTrace.LifecycleSpanNames)
+            ModTrace.NoteLifecycleEdge(spanName);
+        recorder.Flush();
+
+        JsonElement[] events = ReadEvents(recorder.FilePath);
+        foreach (string spanName in ModTrace.LifecycleSpanNames)
+        {
+            JsonElement edge = Find(events, spanName);
+            edge.GetProperty("ph").GetString().Should().Be("i", $"{spanName} marks a moment, not an interval");
+            edge.GetProperty("s").GetString().Should().Be("t", "the instant is scoped to the thread that saw the edge");
+            edge.TryGetProperty("dur", out _).Should().BeFalse("an instant event that carried a duration could be read as a hold");
+            edge.TryGetProperty("args", out JsonElement arguments).Should().BeTrue();
+            arguments.TryGetProperty("inProgress", out _).Should().BeFalse("a recorded edge is never in progress");
+            edge.GetProperty("pid").GetInt32().Should().Be(Environment.ProcessId);
+            edge.GetProperty("cat").GetString().Should().Be("mod", "it travels in the same envelope as every other span");
+        }
+    }
+
+    // source-invariant: the tick gate span must close BEFORE the fixture-only block, or a production Player Host
+    //                   lane - which never enters that block - leaves it open for the role's whole life.
+    // source-expiry: delete when the tick handler stops being source-only, i.e. when a headless runner can enter
+    //                `OnUpdateTicked`; the behavioural half is `TheEngineLifecycleEdgesAreInstantEventsThatClaimNoDuration`.
+    [Fact]
+    public void TheTickGateSpanClosesOnTheProductionLane()
+    {
+        string modEntry = ReadRepositoryFile("integrations/stardew/ModEntry.cs");
+        int tick = modEntry.IndexOf("private void OnUpdateTicked(", StringComparison.Ordinal);
+        tick.Should().BeGreaterThan(0, "the tick handler is what this invariant is about");
+        // The last shared gate (the armed world-creation bootstrap), the close, and the fixture-only block it used to
+        // live in. The three positions, in the tick handler, are the whole invariant.
+        int sharedGate = modEntry.IndexOf("this.worldCreationBootstrap is { IsArmed: true }", tick, StringComparison.Ordinal);
+        int close = modEntry.IndexOf("ModTrace.NoteTickGatePassed();", tick, StringComparison.Ordinal);
+        int fixtureLane = modEntry.IndexOf("if (this.config.NativeLocalPlayerFixture?.Enable == true)", tick, StringComparison.Ordinal);
+        sharedGate.Should().BeGreaterThan(tick);
+        close.Should().BeGreaterThan(tick);
+        fixtureLane.Should().BeGreaterThan(tick);
+        close.Should().BeGreaterThan(sharedGate, "the close follows the last gate both lanes can enter");
+        close.Should().BeLessThan(
+            fixtureLane,
+            "a close inside the fixture block is the defect: a production Player Host never executes it and the span then claims a hold for the run's whole life");
+        modEntry
+            .IndexOf("ModTrace.NoteTickGatePassed();", close + 1, StringComparison.Ordinal)
+            .Should()
+            .Be(-1, "one close: a second one can drift back inside the fixture block and outlive the lane that needed it");
+    }
+
+    // source-invariant: each of the engine's four lifecycle events is recorded by the handler the engine calls, so a
+    //                   run's trace says WHEN its world was loaded, saved, saved-to-disk and left.
+    // source-expiry: delete when the four handlers are constructible in a headless runner (they read `Game1` and
+    //                SMAPI's event args), the same reason `FixtureTickGateLivenessTests` reads its population.
+    [Fact]
+    public void EveryEngineLifecycleEdgeIsRecordedAtItsHandler()
+    {
+        string modEntry = ReadRepositoryFile("integrations/stardew/ModEntry.cs");
+        // By the MEMBER each handler passes (`nameof`), so the pin cannot drift from the declaration it names.
+        foreach (
+            string member in new[]
+            {
+                nameof(ModTrace.SaveLoadedSpanName),
+                nameof(ModTrace.SavingSpanName),
+                nameof(ModTrace.SavedSpanName),
+                nameof(ModTrace.ReturnedToTitleSpanName),
+            })
+            modEntry.Should().Contain($"ModTrace.NoteLifecycleEdge(ModTrace.{member});", $"{member} has no handler emitting it");
     }
 
     private static JsonElement[] ReadEvents(string path)

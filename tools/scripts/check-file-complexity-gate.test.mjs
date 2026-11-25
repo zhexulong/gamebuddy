@@ -98,7 +98,7 @@ const commit = (root) => {
 };
 
 /** 一个 git 工作树：样本由 git 自己回答，所以 fixture 必须是一个仓库。 */
-const fixture = ({ files = {}, baseline = {} } = {}) => {
+const fixture = ({ files = {}, baseline = {}, reasons = null } = {}) => {
   const root = mkdtempSync(join(tmpdir(), "gb-complexity-ratchet-"));
   for (const [file, path] of Object.entries({ "src/keep.ts": 10, ...files })) {
     mkdirSync(dirname(join(root, file)), { recursive: true });
@@ -107,7 +107,7 @@ const fixture = ({ files = {}, baseline = {} } = {}) => {
   mkdirSync(dirname(join(root, ...BASELINE)), { recursive: true });
   writeFileSync(
     join(root, ...BASELINE),
-    `${JSON.stringify({ note: "fixture", revision: "0000000", sizes: baseline }, null, 2)}\n`,
+    `${JSON.stringify({ note: "fixture", revision: "0000000", sizes: baseline, ...(reasons === null ? {} : { reasons }) }, null, 2)}\n`,
   );
   execFileSync("git", ["init", "--initial-branch=main"], { cwd: root, windowsHide: true, stdio: "ignore" });
   commit(root);
@@ -158,6 +158,31 @@ test("planted.B: --update 记下它之后通过，再长一行就红在 baseline
       `planted.B: recorded 3000 -> 3001 -> ${cleanOutputLines(grown.stderr).find((line) => line.startsWith("baselined_file_grew"))}\n`,
     );
   });
+});
+
+test("planted.H: 重新记录保住仍被记录的那一行的算法，行消失时理由一起过期", () => {
+  withFixture(
+    (root) => {
+      assert.equal(runGate(root).status, 1, "planted 的文件超过上限且没登记");
+      assert.equal(runGate(root, "--update").status, 0);
+      const written = JSON.parse(readFileSync(join(root, ...BASELINE), "utf8"));
+      assert.equal(written.sizes["src/giant.mjs"], 3000, "行数由量到的树写，不是由旧记录写");
+      assert.deepEqual(
+        written.reasons,
+        { "src/giant.mjs": "3000 = 2900 + 100: planted growth" },
+        "这一行的算法跟着这一行走，而记录被删掉的那一行不能留下一条没人看的理由",
+      );
+    },
+    {
+      files: { "src/giant.mjs": 3000 },
+      // `src/gone.mjs` 不存在于树中，所以它的记录（和理由）在重新记录时一起过期。
+      baseline: { "src/giant.mjs": 2900, "src/gone.mjs": 3000 },
+      reasons: {
+        "src/giant.mjs": "3000 = 2900 + 100: planted growth",
+        "src/gone.mjs": "3000 = 2900 + 100: the file this fixture does not hold",
+      },
+    },
+  );
 });
 
 test("planted.C: 已登记的文件瘦身回到上限之内，基准条目必须删掉（stale，exit 1）", () => {

@@ -794,6 +794,9 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        // The engine's edge, recorded before anything below can refuse it: a run that declines this world must still
+        // say that the engine loaded one (`ModTrace.NoteLifecycleEdge`).
+        ModTrace.NoteLifecycleEdge(ModTrace.SaveLoadedSpanName);
         // Configuration rejection is terminal for this load.
         if (this.provisioningConfigurationRejected)
             return;
@@ -1375,6 +1378,13 @@ public sealed partial class ModEntry : Mod
                 return;
             }
         }
+        // THIS TICK IS PAST EVERY GATE BOTH LANES HAVE, and this is the one point they share. A gate span is closed
+        // here, before the work it was excluding: the formal Player Host lane never enters the fixture block below, so
+        // a close placed only inside it left the span open for the whole life of a production role and kept the last
+        // reason for a hold nobody observed (measured 2026-11-26, `.tmp/lane-whycrah.md` §4: one event,
+        // `dur=11273932` µs, `inProgress=true`, on a lane that was serving a `ready` advertisement). A fixture gate
+        // entered below re-opens the span itself, so this still measures the hold and not the passing tick.
+        ModTrace.NoteTickGatePassed();
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             Volatile.Write(ref this.tickWatchdogPhase, "fixture_init");
@@ -1454,9 +1464,6 @@ public sealed partial class ModEntry : Mod
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
             string? stalledReport = Interlocked.Exchange(ref this.pendingStalledTickReport, null);
         if (stalledReport is not null) this.Monitor.Log(stalledReport, LogLevel.Warn);
-        // This tick is past every gate, so a gate span opened by an earlier tick ends here - before the work it was
-        // excluding from the timeline.
-        ModTrace.NoteTickGatePassed();
 
             this.LogStageOnce("observe_bridge_generation");
         this.ObserveBridgeGeneration(nativeLocalState);
@@ -1930,6 +1937,10 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaving(object? sender, SavingEventArgs e)
     {
+        // The save's first edge. A game that ends inside its own save leaves this instant and no `Saved`, which is
+        // the shape a save that never finished reads as - and the shape a dead Player Host could only be guessed at
+        // before this edge existed (`.tmp/lane-whycrah.md` §3.3).
+        ModTrace.NoteLifecycleEdge(ModTrace.SavingSpanName);
         this.hostFarmhandProvisioner?.OnSaving();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
@@ -1940,6 +1951,7 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaved(object? sender, SavedEventArgs e)
     {
+        ModTrace.NoteLifecycleEdge(ModTrace.SavedSpanName);
         this.sleepLifecycle?.ObserveSaved();
         if (this.TryGetAiState(out ScreenEmbodimentState savedState))
             savedState.Executions!.ObserveDayAdvanceSaved();
@@ -1951,6 +1963,9 @@ public sealed partial class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        // The traverse out of a world: without it a trace cannot tell a session that was left from one that was
+        // killed, which is the whole difference a crashed Player Host turns on.
+        ModTrace.NoteLifecycleEdge(ModTrace.ReturnedToTitleSpanName);
         this.salientEventFilter.Reset();
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.companionSessionHosting?.End();

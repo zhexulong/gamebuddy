@@ -107,6 +107,9 @@ internal sealed class ModTraceRecorder : IDisposable
                 Name = activity.OperationName,
                 StartMicroseconds = ToMicroseconds(activity.StartTimeUtc),
                 ThreadId = Environment.CurrentManagedThreadId,
+                // Decided at START, from the producer's own declaration: an instant span is stopped in the same
+                // call that opened it, and a flush landing between the two must not write it as still running.
+                Instant = ModTrace.IsInstantSpan(activity.OperationName),
                 Live = activity,
             };
             this.spans.Add(span);
@@ -153,9 +156,15 @@ internal sealed class ModTraceRecorder : IDisposable
             {
                 writer.WriteStartObject();
                 writer.WriteString("name", span.Name);
-                writer.WriteString("ph", "X");
+                // An INSTANT event carries no duration at all (`ph: "i"`): it marks the moment a lifecycle edge
+                // happened, so no reader can take it for something that was still running when the process ended
+                // - which is the reading a never-closed span invites (`mod.tick.gate`, `.tmp/lane-whycrah.md` §4).
+                writer.WriteString("ph", span.Instant ? "i" : "X");
                 writer.WriteNumber("ts", span.StartMicroseconds);
-                writer.WriteNumber("dur", span.DurationMicroseconds ?? nowMicroseconds - span.StartMicroseconds);
+                if (span.Instant)
+                    writer.WriteString("s", "t");
+                else
+                    writer.WriteNumber("dur", span.DurationMicroseconds ?? nowMicroseconds - span.StartMicroseconds);
                 writer.WriteNumber("pid", Environment.ProcessId);
                 writer.WriteNumber("tid", span.ThreadId);
                 writer.WriteString("cat", "mod");
@@ -167,7 +176,7 @@ internal sealed class ModTraceRecorder : IDisposable
                     : span.Arguments;
                 foreach (KeyValuePair<string, object?> argument in arguments)
                     WriteArgument(writer, argument.Key, argument.Value);
-                if (span.DurationMicroseconds is null)
+                if (!span.Instant && span.DurationMicroseconds is null)
                     writer.WriteBoolean("inProgress", true);
                 writer.WriteEndObject();
                 writer.WriteEndObject();
@@ -213,6 +222,7 @@ internal sealed class ModTraceRecorder : IDisposable
         internal long StartMicroseconds;
         internal long? DurationMicroseconds;
         internal int ThreadId;
+        internal bool Instant;
         internal Activity? Live;
         internal Dictionary<string, object?> Arguments = new(StringComparer.Ordinal);
     }

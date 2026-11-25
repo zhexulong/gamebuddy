@@ -44,6 +44,10 @@
  *   node tools/scripts/check-file-complexity-gate.mjs --update     # 单独提交里重新记录基准
  *   node tools/scripts/check-file-complexity-gate.mjs --root <dir> # 门禁自己的 fixture（必须是一个 git 工作树）
  *
+ * `reasons`：一条记录可以带自己的算法（`sizes` 里的数字从哪里来：`HEAD 的值 + 本次改动`），写在记录里而不是只写在
+ * 提交信息里，因为读这个数字的下一双眼睛看的是文件。`--update` 会保住仍然被记录的那些理由（行消失则理由一起过期），
+ * 否则一次重新记录就把“为什么是这个数字”抹掉了，剩下的只是一个没人能审的数字。
+ *
  * red-proof: inject  一个 351 行的 `.py` 新文件（上限 300）进 git 工作树 ->
  *                    `file_over_ceiling:src/wide.py:351:300`、`files examined 9 · over ceiling 1 · baselined 0`，exit 1；
  *                    同一工作树在加这个文件之前打印「复杂度棘轮通过」，exit 0（tools/scripts/check-file-complexity-gate.mjs）
@@ -175,6 +179,22 @@ export function verdict({ recorded, sizes, ceilings = CEILINGS_BY_EXTENSION }) {
   };
 }
 
+/** `reasons` 里仍然被记录的那些行，作为要写进基准的字段（没有就什么也不加）。 */
+function reasonsOf(reasons, recorded) {
+  const kept = Object.fromEntries(Object.entries(reasons).filter(([file]) => file in recorded));
+  return Object.keys(kept).length === 0 ? {} : { reasons: kept };
+}
+
+/** 记录里一行自己的算法（`reasons`），或 `{}`：旧记录没有它就什么也不用保留。 */
+function recordedReasons(path) {
+  try {
+    const reasons = JSON.parse(readFileSync(path, "utf8")).reasons;
+    return reasons !== null && typeof reasons === "object" && !Array.isArray(reasons) ? reasons : {};
+  } catch {
+    return {};
+  }
+}
+
 /** 上限还在、树里已经没有这种文件的扩展名。 */
 export function expired({ extensions, ceilings = CEILINGS_BY_EXTENSION }) {
   return [...ceilings].filter(([extension]) => !extensions.has(extension)).map(([extension]) => extension);
@@ -204,6 +224,9 @@ function main(argv) {
         windowsHide: true,
       }).trim(),
       sizes: recorded,
+      // 一行自己的算法必须跟着这一行走：`--update` 重写 `sizes`，如果它顺手抹掉 `reasons`，"为什么是这个
+      // 数字"就只剩提交信息里的一句，而下次重新记录的人看不到它。仍然被记录的行保留，行消失则理由一起过期。
+      ...reasonsOf(recordedReasons(baselineFor(root)), recorded),
     };
     writeFileSync(baselineFor(root), `${JSON.stringify(baseline, null, 2)}\n`);
     process.stdout.write(
