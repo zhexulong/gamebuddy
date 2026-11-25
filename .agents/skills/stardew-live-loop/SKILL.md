@@ -8,8 +8,16 @@ description: How to iterate on the Stardew game path — turn a live failure int
 One loop, in order. Skipping a step has always cost more than the step.
 
 ```
-named failure → slice (≤60 s) → fix with a red proof → gate for the class → ladder → long run (measures her, not the action)
+source-gap census → slice (≤60 s) → fix + gate + perf → ladder → A/B & eval → game live run + analysis
 ```
+
+## 0. Source-gap discovery (find missing affordances & drifted constants)
+
+Before inventing new actions or radii, audit against the decompiled game source (`ref/external/StardewValleyDecompiled/`):
+
+- `pnpm census:engine-affordances` (`gates/stardew/check-engine-affordance-census.mjs`) — engine affordances vs. exposed Mod/Catalog capabilities.
+- `gates/stardew/check-stardew-invented-gates.mjs` — verifies admission radii/bounds match engine constants or declare why.
+- Seam & closure audits: `pnpm audit:stardew-decision-closure`, `pnpm audit:stardew-discovery-channels`, `pnpm audit:stardew-state-coverage`, `pnpm audit:stardew-action-seam-terminals`.
 
 ## 1. A failure code in a long run is a slice you did not write
 
@@ -63,10 +71,11 @@ A gate is not a test with a wider name:
   the gate fire, over injecting the defect you had in mind.
 - **Print the population, and refuse to pass on zero.** `"0 violations"` means nothing without `"examined N"`.
   Zero population is `blocked` with the reason, never green.
-- **Report the rules it can red on.** `prelive` l0 runs `checkGateFalsifiers`: a `tools/check-*.mjs` must print a
-  self-verification report (one entry per rule) in its own default run, or be declared in `GATES_WITHOUT_FALSIFIER`
+- **Report the rules it can red on.** `prelive` l0 runs `checkGateFalsifiers`: gates under `gates/` must print a
+  self-verification report (one entry per rule) in their own default run, or be declared in `GATES_WITHOUT_FALSIFIER`
   with a reason. A gate nobody can audit is a gate nobody should trust.
-- **An exemption must expire**, and a gate nobody calls is not a gate: it is reachable from `node tools/prelive.mjs`.
+- **An exemption must expire**, and a gate nobody calls is not a gate: it is reachable from `pnpm prelive` (`node tools/prelive.mjs --no-game`).
+- **Check perf & cost budgets** when touching hot paths, tick loops, journals, or action pace: `tools/perf/run-benchmarks.mjs`, `tools/perf/report-run-cost.mjs`, `tools/perf/action-pace.test.mjs`, `tools/perf/turn-waste.test.mjs`, `tools/perf/budget.test.mjs`.
 
 Gates that exist because of one defect today: `check-plan-legal-fixpoint` (a permitted pair must actually run both
 steps), `check-stardew-invented-gates` (a radius that gates admission must be the engine's number or say why),
@@ -74,30 +83,38 @@ steps), `check-stardew-invented-gates` (a radius that gates admission must be th
 `check-planner-guidance-observation-tools` (an observation tool the planner's text never names is one nobody calls),
 plus the drift gates for the modal-clearing projection and the loop family ids.
 
-## 5. The ladder, before any long run
+## 5. The ladder, before any A/B or long run
 
 ```bash
 dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release     # 0 warnings 0 errors
 pnpm --dir host build:test                                              # dist-test must be newer than src
-node tools/prelive.mjs --no-game                                        # l0 gates, then the static ladder
+pnpm prelive                                                            # l0 gates + check:head-build + static ladder
 ```
+
+When adding or modifying an action runner, also run `pnpm audit:stardew-native-local-runner-contract` and `pnpm test:stardew-native-local-runner-fixture-contract`.
 
 A build is not 0/0 only because `GameBuddy.Setup` needs a signing certificate — for a solution-wide build that is
 expected; build the Mod project.
 
 The freshness gate refusing you (`live_run_artifact_stale`, `live_run_mod_stale`) is the gate working: build, then run.
 
-## 6. The long run measures her decisions, not the machinery
+## 6. Controlled eval & A/B before full game runs
 
-A multi-day run is the only instrument for: what she chose across a day (breadth), whether a night crossed, whether the
-settlement that tells her what happened actually arrived, how long a silence lasted, what she forgot and could not
-recall. It is the wrong instrument for "does this action work".
+- **Offline/stubbed eval & A/B**: `pnpm eval` (`tools/eval.mjs`), `tools/ab-historian-voice.mjs`, `tools/run-stardew-native-local-player-machine-ab-smoke.mjs`.
+- **Live agent A/B**: `tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs`.
+- **Rule out input drift first**: diff `input-manifest.json` between two runs with `node tools/compare-run-inputs.mjs <runA> <runB>` before attributing behavioural differences.
+- **Composition / Chat / Frontend live checks** (seconds, stubbed provider): `pnpm run:post-history-live`, `pnpm run:chat-live-audit`, `pnpm run:frontend`, `pnpm run:memory-live`.
 
-Freeze the criteria **before** the run, write what each number must be, and list explicitly what may not be read as a
-pass afterwards (second-launch willingness, human blind rating, a second session ≥24 h apart).
+## 7. Game live run & post-run analysis (measures her, not the action)
 
-## 7. Never
-- Never print a number without its population, its source, its method and its window. `26 of 26 toolCall parts (session.jsonl, structured parse, 09:01–09:21)` is a reading; `26 calls` is a rumour. The constructor is `tools/lib/reading.mjs` and the gate is `tools/audit-run-reading-shape.mjs`.
+A multi-day run (`pnpm run:stardew-companion-live`, `tools/start-farmhand-launcher.ps1`) is the only instrument for: what she chose across a day (breadth), whether a night crossed, whether the settlement that tells her what happened actually arrived, how long a silence lasted, what she forgot and could not recall. It is the wrong instrument for "does this action work".
+
+- Freeze the criteria **before** the run, write what each number must be, and list explicitly what may not be read as a pass afterwards (second-launch willingness, human blind rating, a second session ≥24 h apart).
+- Score and inspect runs with `tools/live-run/analysis/` (`action-breadth.mjs`, `airp-scorecard.mjs`, `long-session-metrics.mjs`, `plan-work-timing.mjs`, `session-reading.mjs`, `round3-verdict.mjs`) and `tools/perf/report-run-cost.mjs`.
+- Any new failure code in a long run loops back to **§1–§2** (stop by exact PID, ≤60 s slice, fix + gate).
+
+## 8. Never
+- Never print a number without its population, its source, its method and its window. `26 of 26 toolCall parts (session.jsonl, structured parse, 09:01–09:21)` is a reading; `26 calls` is a rumour. The constructor is `tools/lib/reading.mjs` and the gate is `gates/data/audit-run-reading-shape.mjs`.
 - Never key a comparison on position, order or serialisation form. A hash, an id, a baseline index and a dedupe identity come from content: the same run, diffed against itself, must print no change. Four readings today invented one — an anonymous lambda keyed by line number (`<anonymous@407>` became `@432` after 25 lines were inserted above it, reported as "grew" when nothing grew), a clone group keyed by its representative site, a wire payload whose member order came from reflection (same world, different bytes, a flaky snapshot test), a complexity score stored in a byte (255 was a ceiling, so four unrelated functions tied as "the worst"). Where content-keying is impossible, the reading carries the marker saying it is a floor or an approximation.
 - Never resolve two disagreeing methods by preference: a `disagree` reading blocks the verdict.
 - Never explain behaviour before proving the mechanism was available — count the refusals beside the calls (AGENTS.md, attribution discipline).
