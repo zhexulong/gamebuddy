@@ -547,7 +547,9 @@
     "check:policy-change-is-learned-by-polling": "node gates/stardew/check-policy-change-is-learned-by-polling.mjs",
     "test:policy-change-is-learned-by-polling": "node --test gates/stardew/check-policy-change-is-learned-by-polling.test.mjs",
     "check:tools-boundaries-ratchet": "node gates/arch/check-tools-boundaries.mjs",
-    "test:tools-boundaries-ratchet": "node --test gates/arch/check-tools-boundaries.test.mjs"
+    "test:tools-boundaries-ratchet": "node --test gates/arch/check-tools-boundaries.test.mjs",
+    "audit:stardew-handler-actor-guard": "node gates/stardew/audit-stardew-handler-actor-guard.mjs",
+    "check:dist-runtime-exports": "node gates/product/check-dist-runtime-exports.mjs"
   },
   "gateRedProofs": {
     "check:dialogue-web-boundaries": "external depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src — a residual module importing a surface is `error no-module-to-surface` naming that module and the surface it reaches, exit 1",

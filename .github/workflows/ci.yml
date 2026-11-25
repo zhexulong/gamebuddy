@@ -75,6 +75,7 @@ jobs:
       # now, and the install above is the one after the build.
       - run: pnpm install --frozen-lockfile
       - run: node tools/check-vendor-build-artifacts.mjs
+      - run: pnpm check:dist-runtime-exports
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
       # Knip reachability runs ahead of format:check and lint, so the formatter that held the
@@ -122,6 +123,7 @@ jobs:
       - run: pnpm check:host-module-graph
       - run: pnpm check:tools-boundaries-ratchet
       - run: pnpm test:tools-boundaries-ratchet
+      - run: pnpm audit:stardew-handler-actor-guard
       - run: pnpm check:dialogue-web-boundaries
       - run: pnpm test:dialogue-web-boundaries
       - run: pnpm check:host-production-import-boundary
@@ -338,6 +340,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # See the `host` job: the gate reads the installed copy, which the install above creates.
       - run: node tools/check-vendor-build-artifacts.mjs
+      - run: pnpm check:dist-runtime-exports
       # The two gates that need it. `pnpm build:test` under host is the locked entry (`build-test-artifact`),
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
       - run: pnpm --dir host build:test

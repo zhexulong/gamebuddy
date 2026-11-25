@@ -278,11 +278,9 @@ export const EXEMPTIONS = Object.freeze([
   {
     path: "gates/stardew/audit-stardew-handler-actor-guard.mjs",
     reason:
-      "arguments: reads `integrations/stardew/` out of a git revision (`git ls-tree -r <rev>`, `git show <rev>:<file>`), " +
-      "so it measures a commit's tree, not the worktree the ladder is about to run",
-    runsIn: "on-demand",
-    expires:
-      "expires when it reads the worktree instead of a git revision, so a rung can judge the tree it is about to run",
+      "elsewhere: reads `integrations/stardew/` out of HEAD (`git ls-tree -r HEAD`) to audit handler actor guards, " +
+      "runs on every push in the CI gates job",
+    runsIn: "pnpm audit:stardew-handler-actor-guard",
   },
   {
     path: "gates/stardew/audit-stardew-native-local-runner-contract.mjs",
@@ -529,11 +527,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "gates/product/check-dist-runtime-exports.mjs",
     reason:
       "installed: imports `vendor/magic-context/packages/pi-plugin/dist` (a build output), which nothing in the " +
-      "ladder assembles · measured 0 violations, every dist runtime export matching the Host contract, exit 0 with the " +
-      "dist present at 449f0fb0",
-    runsIn: "on-demand",
-    expires:
-      "expires when the ladder assembles vendor/magic-context/packages/pi-plugin/dist, the build output this gate imports",
+      "ladder assembles; runs in CI after build-magic-context",
+    runsIn: "pnpm check:dist-runtime-exports",
   },
   {
     path: "gates/product/check-draft-declaration-coverage.mjs",
