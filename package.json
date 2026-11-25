@@ -463,6 +463,7 @@
     "suite:tools-utilities": "node --test gates/registry.test.mjs gates/stardew/check-action-coverage.test.mjs gates/data/check-crab-pot-output-fixture-contract.test.mjs gates/product/check-host-production-import-boundary.test.mjs gates/data/check-live-run-verdict-guards.test.mjs gates/product/check-snapshot-field-rendering.test.mjs gates/product/check-stale-line-age.test.mjs gates/stardew/check-terminal-idle-publication.test.mjs tools/compare-live-run-findings.test.mjs tools/draft-smoke-contract.test.mjs tools/generate-sbom.test.mjs tools/journey-walker.test.mjs tools/lib/native-local-runner-primitives-corpus.test.mjs tools/record-tavern-ui-operation-evidence.test.mjs tools/roll-aggregate.test.mjs tools/run-game-operational-gate.test.mjs tools/run-tavern-release-live-gate.test.mjs",
     "check:head-self-contained": "node gates/arch/check-head-self-contained.mjs",
     "test:head-build": "node --test gates/arch/check-head-build.test.mjs",
+    "test:head-test-population": "node --test gates/arch/head-test-population.test.mjs",
     "test:head-self-contained": "node --test gates/arch/check-head-self-contained.test.mjs",
     "check:release-generation-self-contained": "node gates/product/check-release-generation-self-contained.mjs",
     "test:release-generation-self-contained": "node --test gates/product/check-release-generation-self-contained.test.mjs",

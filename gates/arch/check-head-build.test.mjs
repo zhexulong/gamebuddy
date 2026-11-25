@@ -23,15 +23,34 @@
  * red-proof: inject  a layer the environment cannot run -> `head_build_mod_skipped:` on the pair as `mod=not_measured`
  *                    and exit 0 ("not measured is a word, not a zero"), and both layers skipped -> `head_build_nothing_measured`,
  *                    exit 2 ("a run that measured no layer is blocked")
+ * red-proof: history  the commit's own test is red on its own bytes -> `head_tests files=2 passed=1 failed=1 [file: …]`
+ *                    and exit 1: measured at `cc3469a8`, whose two layers were `host=0 mod=0` and whose
+ *                    `host/src/hello-ack-refusal-naming.test.ts` ran 1 of its 2 tests red
+ * red-proof: inject  a derived test file that exits non-zero -> `[file: <path>]` on the `head_tests` line and exit 1
+ * red-proof: inject  a derived test file the commit's project did not emit -> `head_tests_skipped:`, and a layer that ran
+ *                    no file at all -> `head_tests_nothing_measured`, exit 2 (never a pass)
+ * red-proof: inject  a test child killed by its own deadline -> `head_tests_file_timeout:<path>:<ms>`, the file counted red
+ * red-proof: inject  a commit that touches no test file -> `head_tests population=0 reason=<derived: the commit touched no
+ *                    test file>`, exit 0
+ * red-proof: inject  a `git diff-tree` that fails -> `head_tests_blocked: head_tests_population_underivable`, exit 2
+ * red-proof: inject  an unbound reclaimer in a child's output -> `head_tests_skipped:` (the invocation refused, not the
+ *                    commit), and the same output with the pair bound -> a red file
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { renderReport, runHeadBuild, worktreeBlockedReason } from "./check-head-build.mjs";
+import {
+  headTestsLines,
+  measureHeadTests,
+  renderReport,
+  runHeadBuild,
+  runTestFile,
+  worktreeBlockedReason,
+} from "./check-head-build.mjs";
 
 const roots = [];
 
@@ -139,7 +158,6 @@ test("both layers green is the only reading that passes", () => {
   assert.match(rendered.lines.join("\n"), /head_build: passed - both layers compiled the commit/u);
   assert.equal(existsSync(worktree), false);
 });
-
 test("a green host layer beside a red Mod layer is not one green reading", () => {
   const root = makeRepository();
   const { report, rendered, worktree, pair } = run({
@@ -300,4 +318,184 @@ test("a run that measured no layer is blocked", () => {
   assert.equal(report.status, "blocked");
   assert.equal(report.code, "head_build_nothing_measured");
   assert.equal(rendered.exitCode, 2);
+});
+
+//
+// The third reading: the commit's own tests
+//
+
+/**
+ * The files a commit needs for the tests reading to reach a child: the Host test project, the compiler it runs, and one
+ * test file. Nothing is emitted into `dist-test` here - the compile step's stub writes what it "emitted", which is what a
+ * real one does, and keeps a build output out of the committed file list.
+ */
+function headTestRepository({ files = { "host/src/hello.test.ts": "import test from 'node:test';\n" } } = {}) {
+  const root = makeRepository({
+    // The fixture carries the same ignore the real tree does, because the gate junctions `host/node_modules` in AFTER a
+    // commit is checked out and the cleanliness proof then has to still see the commit's own bytes.
+    ".gitignore": "node_modules/\ndist-test/\n",
+    "host/tsconfig.test.json": "{}\n",
+    ...files,
+  });
+  // The compiler is this checkout's dependency tree rather than a file of the commit, and the gate junctioning it in is the
+  // production arrangement: written here AFTER the commit, so it is the source checkout's `host/node_modules` that the
+  // worktree sees, exactly as a real run sees this repo's.
+  mkdirSync(join(root, "host", "node_modules", "typescript", "lib"), { recursive: true });
+  writeFileSync(
+    join(root, "host", "node_modules", "typescript", "lib", "tsc.js"),
+    "// the compiler this checkout has\n",
+  );
+  return root;
+}
+
+/**
+ * The two children `measureHeadTests` spawns, replaced: the TypeScript compiler and Node's test runner are boundaries this
+ * suite does not own. Everything the gate does AROUND them - the derivation, the emitted-file check, the counting, the
+ * skipped/reclassified rows and the verdict - is the code under test.
+ */
+function testChildren({
+  compileExit = 0,
+  emit = ["host/dist-test/hello.test.js"],
+  child = { exit: 0, output: "" },
+} = {}) {
+  return (command, args, options) => {
+    if (args.includes("--project")) {
+      for (const relative of emit) {
+        mkdirSync(dirname(join(options.cwd, relative)), { recursive: true });
+        writeFileSync(join(options.cwd, relative), "// emitted\n");
+      }
+      return { status: compileExit, pid: undefined, stdout: "", stderr: "", error: null };
+    }
+    if (child.output !== "" && typeof options.stdio?.[1] === "number") writeSync(options.stdio[1], child.output);
+    return {
+      status: child.exit,
+      pid: undefined,
+      stdout: "",
+      stderr: "",
+      error: child.error ?? null,
+    };
+  };
+}
+
+/** One `measureHeadTests` reading over a fixture repository and its stubbed children. */
+function headTests(root, { run: runner = testChildren(), rev = "HEAD", git = gitRunnerFor(root) } = {}) {
+  return measureHeadTests({ worktree: root, root, rev, git, run: runner });
+}
+
+test("a commit whose own test is red is a red reading, and it names the file", () => {
+  const root = headTestRepository();
+  const reading = headTests(root, {
+    run: testChildren({ child: { exit: 1, output: "ℹ tests 2\nℹ pass 1\nℹ fail 1\n" } }),
+  });
+  assert.equal(reading.outcome, "failed");
+  assert.equal(reading.files, 1);
+  assert.equal(reading.passed, 0);
+  assert.equal(reading.failed, 1);
+  assert.equal(reading.rows[0].counts.fail, 1);
+  assert.equal(headTestsLines(reading)[0], "head_tests files=1 passed=0 failed=1 [file: host/src/hello.test.ts]");
+});
+
+test("a commit whose own test passes is one file, one exit code, no failure", () => {
+  const root = headTestRepository();
+  const reading = headTests(root, {
+    run: testChildren({ child: { exit: 0, output: "ℹ tests 3\nℹ pass 3\nℹ fail 0\n" } }),
+  });
+  assert.equal(reading.outcome, "passed");
+  assert.match(headTestsLines(reading)[0], /^head_tests files=1 passed=1 failed=0$/u);
+});
+
+test("a commit that touched no test file is a population of zero, and that is a reading rather than a gap", () => {
+  const root = makeRepository({ "documentation/notes.md": "# nothing a test names\n" });
+  const reading = headTests(root);
+  assert.equal(reading.outcome, "empty");
+  assert.deepEqual(headTestsLines(reading), [
+    "head_tests population=0 reason=<derived: the commit touched no test file> examined=1",
+  ]);
+});
+
+test("a file list git cannot produce is blocked, never a zero", () => {
+  const root = headTestRepository();
+  const reading = headTests(root, {
+    git: () => ({ status: 128, stdout: "", stderr: "fatal: bad object", error: null }),
+  });
+  assert.equal(reading.outcome, "blocked");
+  assert.equal(reading.code, "head_tests_population_underivable");
+  const lines = headTestsLines(reading);
+  assert.match(lines[0], /^head_tests_blocked: head_tests_population_underivable - /u);
+});
+
+test("a derived test the commit's project did not emit is skipped by name, and a layer that ran nothing is blocked", () => {
+  const root = headTestRepository();
+  const reading = headTests(root, { run: testChildren({ emit: [] }) });
+  assert.equal(reading.files, 0);
+  assert.equal(reading.outcome, "blocked");
+  assert.equal(reading.code, "head_tests_nothing_measured");
+  const lines = headTestsLines(reading);
+  assert.match(lines[0], /^head_tests_blocked: head_tests_nothing_measured - /u);
+  assert.match(
+    lines.join("\n"),
+    /head_tests_skipped: host\/src\/hello\.test\.ts the commit's own test project did not emit it, so nothing could run/u,
+  );
+});
+
+test("a test child killed by its own deadline is named and counted red, never skipped", () => {
+  const root = headTestRepository();
+  const reading = headTests(root, {
+    run: testChildren({ child: { exit: null, output: "", error: { code: "ETIMEDOUT" } } }),
+  });
+  assert.equal(reading.outcome, "failed");
+  assert.equal(reading.rows[0].exitCode, null);
+  assert.match(reading.rows[0].reason, /^head_tests_file_timeout:host\/src\/hello\.test\.ts:\d+ms$/u);
+  assert.match(headTestsLines(reading).join("\n"), /exit=none \d+ms head_tests_file_timeout:/u);
+});
+
+test("an unbound reclaimer names the invocation, not the commit", () => {
+  const root = scratch("head-build-tests");
+  const test = { path: "host/src/hello.test.ts", runner: "ts" };
+  const unbound = { exit: 1, output: "Error: windows_reclaimer_unavailable\n" };
+  const skipped = runTestFile({
+    worktree: root,
+    test,
+    index: 0,
+    run: testChildren({ child: unbound }),
+    preloadBound: false,
+  });
+  assert.equal(skipped.outcome, "skipped");
+  assert.match(skipped.reason, /^windows_reclaimer_unavailable/u);
+  const bound = runTestFile({
+    worktree: root,
+    test,
+    index: 1,
+    run: testChildren({ child: unbound }),
+    preloadBound: true,
+  });
+  assert.equal(bound.outcome, "failed");
+  assert.equal(bound.exitCode, 1);
+});
+
+test("a red test of the commit's own fails the run its two layers passed", () => {
+  const root = headTestRepository();
+  const children = testChildren({ child: { exit: 1, output: "ℹ tests 2\nℹ pass 1\nℹ fail 1\n" } });
+  const { report, rendered, worktree } = run({
+    root,
+    layers: [GREEN("host"), GREEN("mod")],
+    run: (command, args, options) =>
+      args[0] === "-e" ? spawnSync(command, args, options) : children(command, args, options),
+  });
+  assert.equal(report.status, "failed");
+  const text = rendered.lines.join("\n");
+  assert.match(text, /host=0 mod=0 errors=0/u);
+  assert.match(text, /head_tests files=1 passed=0 failed=1 \[file: host\/src\/hello\.test\.ts\]/u);
+  assert.match(text, /a commit that compiles is not a commit whose own tests pass/u);
+  assert.equal(rendered.exitCode, 1);
+  assert.equal(existsSync(worktree), false);
+});
+
+test("the report says so when no test file was derived", () => {
+  const root = makeRepository({ "documentation/notes.md": "# nothing a test names\n" });
+  const { rendered } = run({ root, layers: [GREEN("host"), GREEN("mod")] });
+  const text = rendered.lines.join("\n");
+  assert.match(text, /head_tests population=0 reason=<derived: the commit touched no test file> examined=1/u);
+  assert.match(text, /no test file was derived from it, so no test of it was run/u);
+  assert.equal(rendered.exitCode, 0);
 });

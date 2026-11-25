@@ -47,6 +47,17 @@
  *                             (red) and 20.7 s for a green Mod, so ~35 s - the reason it is this rung rather than an
  *                             L0 member. `--skip-compile` skips it, with that flag's own meaning, and the run then says
  *                             `not measured: --skip-compile` instead of passing quietly. See `committedBuildRung`.
+ *
+ *                             IT ALSO RUNS THE COMMIT'S OWN TESTS (the `head_tests` reading inside the same gate, added
+ *                             2026-11-25): a commit that compiled was never a commit whose tests passed, and
+ *                             `cc3469a8` is the measurement - `host=0 mod=0 errors=0`, and one of its own test files ran
+ *                             1 of 2 red until a game launch found it. FOLDED INTO THIS RUNG rather than given one of its
+ *                             own, and the numbers decide that: the tests reading spends the worktree, the cleanliness
+ *                             proof and the host compile this rung already paid for, and it adds ONE emit of the Host test
+ *                             project (13.8-16.4 s measured) plus one child per derived file. A separate `l2c` would run
+ *                             the whole gate twice for the same commit - two worktrees, two `tsc` runs, two Mod builds,
+ *                             ~35 s of pure duplication - to gain nothing a reader of one report cannot see. So `l2b`
+ *                             prints the tests lines with the compile lines and its verdict already carries both.
  *   L3  runner shape        - a one-shot `observeFresh({actionable:true})` may not be the basis of an assertion
  *   L4  action preflight    - only with `--action <id> --game`; delegates to `tools/preflight-live-run.mjs`
  *
@@ -77,7 +88,8 @@
  * USAGE:
  *   node tools/prelive.mjs --list                         # the schedule: every rung, its members, every unscheduled gate
  *   node tools/prelive.mjs --no-game                       # L0 + L0b + L1 + L1b + L2 + L2b + L3 (L0b, L2 and L2b are the slow rungs)
- *   node tools/prelive.mjs --no-game --skip-compile        # the same, without either compile (L2's Host artifact and L2b)
+ *   node tools/prelive.mjs --no-game --skip-compile        # the same, without either compile (L2's Host artifact and L2b,
+ *                                                        # and with L2b its tests reading - emission is a compile)
  *   node tools/prelive.mjs --action <id>                    # the same, then `l4_skipped: needs --game`
  *   node tools/prelive.mjs --action <id> --game             # the same, then L4 for that action
  *   node tools/prelive.mjs --record-shrinks                # L3's baseline, lowered/removed and never grown
@@ -96,12 +108,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARTEFACT_PRODUCERS, inputsMovedSince } from "../gates/data/check-generated-artifact-reproducibility.mjs";
 import { readDeclarations } from "../gates/registry.mjs";
-import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
-import { L0B_GATES, L0_GATES, PRELUDE_RUNGS } from "./prelive-rungs.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
+import { L0_GATES, L0B_GATES, PRELUDE_RUNGS } from "./prelive-rungs.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
   STARDEW_PUBLISHED_ACTION_GATES,
@@ -793,15 +805,21 @@ const HEAD_BUILD_GATE = "gates/arch/check-head-build.mjs";
 const HEAD_BUILD_TIMEOUT_MS = 15 * 60_000;
 
 /**
- * L2b: HEAD itself, both layers, from committed bytes.
+ * L2b: HEAD itself, both layers, from committed bytes, and the commit's own tests.
  *
  * The three outcomes are treated differently on purpose:
- *   passed        exit 0 with no skip marker: both layers compiled the commit;
+ *   passed        exit 0 with no skip marker: both layers compiled the commit and its own tests passed (or the commit
+ *                 touched no test file, which the report says in that many words);
  *   not measured  exit 0 carrying a `*_skipped:` line (no game folder, no compiler here). The rung passes and the REPORT
  *                 prints `not measured: <reason>`, because an environment gap is not a verdict about the commit and must
  *                 not be read as one in either direction;
- *   blocked       the gate could not take a reading at all (exit 2: no git, an unresolvable ref, an unclean worktree).
- *                 `runLadder` treats it as the first red rung, so a checkout that cannot measure never looks green.
+ *   blocked       the gate could not take a reading at all (exit 2: no git, an unresolvable ref, an unclean worktree, a
+ *                 test population it could not derive). `runLadder` treats it as the first red rung, so a checkout that
+ *                 cannot measure never looks green.
+ *
+ * A FAILED rung now names which half failed, because the gate's exit code cannot say it on its own: `redTestFiles` is the
+ * `head_tests_file:` rows the gate printed with a non-zero exit, and the rung's line counts them instead of restating a
+ * compile verdict they do not come from.
  */
 export function committedBuildRung({
   skipCompile = false,
@@ -825,6 +843,12 @@ export function committedBuildRung({
     ms,
     exitCode,
     pair: lines.find((line) => line.startsWith("head_build ref=")) ?? "",
+    // The commit's own tests, as the gate printed them: the rung does not re-derive a verdict from the exit code alone,
+    // because "failed" there can be a layer that did not compile or a test file of the commit that did not pass.
+    tests: lines.find((line) => line.startsWith("head_tests ")) ?? "",
+    redTestFiles: lines
+      .filter((line) => line.startsWith("head_tests_file:") && !line.includes(" exit=0 "))
+      .map((line) => line.slice("head_tests_file:".length).split(" ")[0]),
     markers,
     lines,
     status: exitCode === 0 ? (markers.length === 0 ? "passed" : "not_measured") : exitCode === 2 ? "blocked" : "failed",
@@ -1431,7 +1455,19 @@ function committedBuildLines(rung) {
         "counted apart from a pass rather than becoming one",
     );
   else if (committed.status === "blocked") lines.push("  l2b: BLOCKED - no reading was taken, which is not a verdict");
-  else lines.push(`  l2b: ${committed.status} in ${committed.ms}ms`);
+  else if (committed.status === "failed")
+    lines.push(
+      `  l2b: failed in ${committed.ms}ms - ` +
+        (committed.redTestFiles.length === 0
+          ? "a working tree that compiles is not evidence about this commit"
+          : `${committed.redTestFiles.length} of the commit's own test file(s) are red on its own bytes: ` +
+            `${committed.redTestFiles.slice(0, 5).join(", ")}` +
+            `${committed.redTestFiles.length > 5 ? `, and ${committed.redTestFiles.length - 5} more` : ""}`),
+    );
+  else
+    lines.push(
+      `  l2b: ${committed.status} in ${committed.ms}ms${committed.tests === "" ? "" : ` - ${committed.tests}`}`,
+    );
   return lines;
 }
 

@@ -40,6 +40,32 @@
  *              classifications and exclusions are the commit's own bytes. Its `*_excluded:` lines are printed with it:
  *              a layer that measured a narrower population than the tree says so in this gate's output.
  *
+ * THE THIRD READING, added 2026-11-25: THE COMMIT'S OWN TESTS. Both layers above compiling is not the commit's tests
+ * passing, and nothing in this tree ran a commit's tests on its own bytes. Measured at `cc3469a8`: `host=0 mod=0
+ * errors=0` from the two layers above, and `host/src/hello-ack-refusal-naming.test.ts` - which imports the `protocol.ts`
+ * the commit changed - ran 2 tests of which 1 passed and 1 failed. The commit shipped a test at 1/2 on its own bytes and
+ * the first reading that noticed was a game launch. So a third reading runs the tests the commit's own file list derives,
+ * inside the same worktree:
+ *
+ *   head_tests files=<n> passed=<n> failed=<n>   the derivation is `gates/arch/head-test-population.mjs` - a changed test
+ *                                               file runs itself, a changed module runs the suites named for it, and a
+ *                                               changed TypeScript module runs the suites that import it. That last rule
+ *                                               is what finds the red above: no test is named for `protocol.ts`, and 105
+ *                                               of the commit's suites import it.
+ *
+ * It is a THIRD READING rather than a second gate: the worktree, the cleanliness proof, the deadline and the cleanup are
+ * the ones above, and the commit is compiled once for the tests (`host/tsconfig.test.json`, into the worktree's own
+ * `host/dist-test`). Each test file is one child, its own exit code and its own deadline, so a red file names itself
+ * instead of hiding inside a suite total.
+ *
+ * THE WORKING TREE IS THE COMMIT'S, SO NOBODY ELSE'S BYTES ARE MEASURED - and three things are not the commit's bytes and
+ * say so rather than pretending: the compiler and dependency tree are junctioned from this checkout (as above); the
+ * native helper pairs the Host suite's preload VERIFIES (`host/native/<name>/.dist`) are hard-linked from this checkout,
+ * because a junction is refused by the pair's own reparse-point check - so they are build outputs of this machine, not
+ * files of the commit; and the test project's TYPE errors are allowed to emit (`--noEmitOnError false`) because this
+ * tree's test project type-checks red by design (`host/scripts/test-typecheck-baseline.json` records the count), and
+ * refusing to emit would hide a red test behind a type error the tree already tolerated.
+ *
  * THE PAIR IS THE VERDICT, and it is one line so that neither layer's green can be read as the tree's:
  *
  *   head_build ref=<sha> host=<exit> mod=<exit> errors=<n>
@@ -68,6 +94,14 @@
  * `--skip-compile` skips it with that flag's own meaning ("do not pay a compile"). Every run says which of the two it
  * did: a skipped rung prints `not measured: --skip-compile`.
  *
+ * THE THIRD READING'S COST is the commit's, not a constant: nothing is compiled or run when the commit touched no file a test
+ * names (measured at `ebbd09fa`, whose one `knife.json`-shaped change derived `population=0`: 0 s), while a commit that
+ * touches `host/src/protocol.ts` derives that file's 105 importing suites - one 13.8-19.1 s emit of the Host test project
+ * plus one child per file, 177 s measured for the 105. That is why the reading is FOLDED INTO this rung: the worktree, the
+ * cleanliness proof and the host compile are already paid for here, and a second rung would compile the same commit twice.
+ * A file that hits its five-minute deadline is `head_tests_file_timeout:` and counts as red, so a slow tree cannot read as
+ * a green one.
+ *
  * WHAT WOULD MAKE THIS VACUOUS, and what stops each - the list is the gate:
  *
  *   * reading the working tree (the defect itself): a detached worktree at the resolved sha, plus the two proofs above;
@@ -87,6 +121,15 @@
  *     (`head_build_worktree_left`) with exit 2 rather than swallowed. A HARD kill (TerminateProcess, `kill -9`) cannot
  *     run any JavaScript and is the one case this cannot cover; each run owns a pid-named path and refuses to reuse an
  *     existing one, so a leftover from such a kill can never be measured by the next run.
+ *   * the tests reading read as a subset of the pair: `head_tests` is its own line with its own counts, a red file is named
+ *     on that line and again per file, and a commit that derived no test prints the reason it derived none instead of
+ *     silence;
+ *   * a skipped test read as a passed one: `head_tests_skipped:` is its own word and is NOT counted in `files=`; a derived
+ *     population whose every file was skipped is `head_tests_nothing_measured` (exit 2), because a suite that ran nothing
+ *     agrees with itself;
+ *   * a population derived from the WORKING TREE: the file list is `git diff-tree <rev>` and the tests, their import
+ *     specifiers and their bytes are read from the worktree this gate proved is the commit - so a lane's uncommitted test
+ *     cannot enter the population it is being judged by.
  *
  * NOT MEASURED is its own word, on its own line, and it is what an environment gap prints:
  *
@@ -147,19 +190,53 @@ export const gateDeclaration = {
 };
 
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
+import {
+  commitChangedPaths,
+  deriveHeadTestPopulation,
+  listTestFiles,
+  readCommitFile,
+} from "./head-test-population.mjs";
 
 const REPOSITORY_ROOT = findRepositoryRoot(import.meta.url);
 
 /** The two layers' own inputs, declared here so a moved project is one edit and the header cannot drift from the code. */
 export const HOST_TYPESCRIPT = "host/node_modules/typescript/lib/tsc.js";
 export const HOST_PROJECT = "host/tsconfig.json";
+
+/**
+ * The Host's own suite: the project its tests are compiled from, the preload every compiled test runs under, and the
+ * build outputs that preload verifies against this checkout.
+ *
+ * `noEmitOnError` is why the compile below passes `--noEmitOnError false` rather than taking the project's own word: this
+ * tree's test project does NOT type-check clean, deliberately - `host/scripts/test-typecheck-baseline.json` records the
+ * count as debt - so the project as declared would emit nothing at most commits, and this layer would report
+ * `head_tests_skipped:` for every test of a commit whose tests are what it was asked about.
+ */
+export const HOST_TEST_PROJECT = "host/tsconfig.test.json";
+export const HOST_TEST_BOOTSTRAP = "host/scripts/compiled-test-bootstrap.mjs";
+export const NATIVE_HELPER_ROOT = "host/native";
+
+/** One test file gets five minutes; a file still running then is named as failed, never counted as a pass. */
+export const TEST_FILE_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * The Mod side's ONE compile authority, which this gate runs rather than restating.
@@ -301,6 +378,40 @@ function firstLine(outcome) {
 }
 
 /**
+ * One child whose output goes to a FILE, not a pipe, and that is load-bearing: `spawnSync` waits for its pipes to close,
+ * so a build whose grandchildren inherit them keeps this call alive long after the deadline killed the process it
+ * started. Measured 2026-11-25: the C# layer at `1fbfac9b` outlived its ten-minute deadline by four minutes that way, and
+ * left two `check-csharp-compile` processes behind. A file has no such reader to wait for.
+ *
+ * One function, because the compile layers and the test children below need the same guarantee and a second copy of it is
+ * the copy that forgets the file.
+ */
+export function runToLog({ command, args, cwd, run = spawnSync, timeoutMs, logPath }) {
+  const descriptor = openSync(logPath, "w");
+  const startedAt = Date.now();
+  let outcome;
+  try {
+    outcome = run(command, args, {
+      cwd,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      stdio: ["ignore", descriptor, descriptor],
+    });
+  } finally {
+    closeSync(descriptor);
+  }
+  const ms = Date.now() - startedAt;
+  let captured = "";
+  try {
+    captured = readFileSync(logPath, "utf8");
+  } finally {
+    rmSync(logPath, { force: true });
+  }
+  return { outcome, ms, lines: cleanOutputLines(captured).filter((line) => line !== "") };
+}
+
+/**
  * One layer, run once.
  *
  * `outcome` has three values and they are not two: `not_measured` is the environment refusing (no compiler, no game
@@ -320,33 +431,14 @@ export function runLayer({ layer, root, run = spawnSync, timeoutMs = LAYER_TIMEO
       tail: [],
       reason: skipReason,
     };
-  // The child's output goes to a FILE, not a pipe, and that is load-bearing: `spawnSync` waits for its pipes to close, so a
-  // build whose grandchildren inherit them keeps this call alive long after the deadline killed the process it started.
-  // Measured 2026-11-25: the C# layer at `1fbfac9b` outlived its ten-minute deadline by four minutes that way, and left
-  // two `check-csharp-compile` processes behind. A file has no such reader to wait for.
-  const logPath = join(logDirectory, `head-build-${layer.name}-${process.pid}.log`);
-  const descriptor = openSync(logPath, "w");
-  const startedAt = Date.now();
-  let outcome;
-  try {
-    outcome = run(layer.command, layer.args, {
-      cwd: root,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: timeoutMs,
-      stdio: ["ignore", descriptor, descriptor],
-    });
-  } finally {
-    closeSync(descriptor);
-  }
-  const ms = Date.now() - startedAt;
-  let captured = "";
-  try {
-    captured = readFileSync(logPath, "utf8");
-  } finally {
-    rmSync(logPath, { force: true });
-  }
-  const lines = cleanOutputLines(captured).filter((line) => line !== "");
+  const { outcome, ms, lines } = runToLog({
+    command: layer.command,
+    args: layer.args,
+    cwd: root,
+    run,
+    timeoutMs,
+    logPath: join(logDirectory, `head-build-${layer.name}-${process.pid}.log`),
+  });
   // One diagnostic per fact: MSBuild prints each C# error once per failing project and once again in its summary, so the
   // same line arrives twice and `errors=` would then count four for two. The text carries file, line and code, so two
   // identical lines are one diagnostic reported twice rather than two findings.
@@ -375,6 +467,283 @@ function readLayers({ layers, root, run, timeoutMs }) {
   return layers.map((layer) => runLayer({ layer, root, run, timeoutMs }));
 }
 
+//
+// The third reading - the commit's own tests
+//
+
+/** Where one TypeScript test's compiled file sits: the project emits `src/<x>.test.ts` as `dist-test/<x>.test.js`. */
+export function compiledTestPath({ worktree, testPath }) {
+  return join(worktree, "host", "dist-test", testPath.replace(/^host\/src\//u, "").replace(/\.ts$/u, ".js"));
+}
+
+/**
+ * The native helper pairs the Host suite's preload VERIFIES, taken from this checkout.
+ *
+ * A junction cannot serve them: `verifyFixedPair` walks the pair's every ancestor and refuses a reparse point, which is
+ * the check that makes the pair trustworthy, so `host/native/<name>/.dist` is HARD-LINKED instead - measured 2026-11-25,
+ * ten files and 435 MB in 38 ms, because a link copies no bytes. A link that the volume refuses falls back to a copy, and
+ * the reading says which it did: these are build outputs of this machine, not files of the commit.
+ */
+export function linkNativeHelperPairs({ worktree, root = REPOSITORY_ROOT }) {
+  const source = join(root, NATIVE_HELPER_ROOT);
+  const reading = { linked: 0, copied: 0, failed: [] };
+  if (!existsSync(source)) return reading;
+  const walk = (relative) => {
+    for (const entry of readdirSync(join(source, relative), { withFileTypes: true })) {
+      const child = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(child);
+        continue;
+      }
+      const target = join(worktree, NATIVE_HELPER_ROOT, child);
+      mkdirSync(dirname(target), { recursive: true });
+      try {
+        linkSync(join(source, child), target);
+        reading.linked += 1;
+      } catch {
+        try {
+          copyFileSync(join(source, child), target);
+          reading.copied += 1;
+        } catch (error) {
+          reading.failed.push(`${child} (${error instanceof Error ? error.message : String(error)})`);
+        }
+      }
+    }
+  };
+  for (const name of readdirSync(source)) if (existsSync(join(source, name, ".dist"))) walk(`${name}/.dist`);
+  return reading;
+}
+
+/**
+ * The commit's tests, compiled by the commit's own project into the commit's own worktree.
+ *
+ * `--noEmitOnError false` is the one flag that is not the project's own word, and the reason is in the header: this tree's
+ * test project type-checks red by design, so the project as declared would emit nothing and the layer would answer every
+ * commit with `head_tests_skipped:`. Emission is all this step needs; the compile layer above already reported the
+ * production sources' type health, and this step's exit code and diagnostic count are printed beside it.
+ */
+export function compileHostTests({ worktree, run = spawnSync, timeoutMs = LAYER_TIMEOUT_MS, logDirectory = tmpdir() }) {
+  if (!existsSync(join(worktree, HOST_TYPESCRIPT)))
+    return { outcome: "not_measured", reason: `${HOST_TYPESCRIPT} is not in this checkout` };
+  const { outcome, ms, lines } = runToLog({
+    command: process.execPath,
+    args: [HOST_TYPESCRIPT, "--project", HOST_TEST_PROJECT, "--noEmitOnError", "false"],
+    cwd: worktree,
+    run,
+    timeoutMs,
+    logPath: join(logDirectory, `head-tests-compile-${process.pid}.log`),
+  });
+  const diagnostics = lines.filter((line) => HOST_DIAGNOSTIC.test(line)).length;
+  if (outcome.error?.code === "ETIMEDOUT") {
+    killTree(outcome.pid);
+    return {
+      outcome: "failed",
+      ms,
+      diagnostics,
+      reason: `head_tests_compile_timeout:${timeoutMs}ms`,
+      tail: lines.slice(-3),
+    };
+  }
+  const exitCode = typeof outcome.status === "number" ? outcome.status : 1;
+  return { outcome: exitCode === 0 ? "passed" : "failed", exitCode, ms, diagnostics, tail: lines.slice(-3) };
+}
+
+/** The counts one test child printed, or `null` when its output holds none: the exit code is the verdict either way. */
+export function testCounts(lines) {
+  const count = (label) => {
+    const match = new RegExp(`^ℹ ${label} (\\d+)$`, "mu").exec(lines.join("\n"));
+    return match === null ? null : Number(match[1]);
+  };
+  const tests = count("tests");
+  return tests === null ? null : { tests, pass: count("pass") ?? 0, fail: count("fail") ?? 0 };
+}
+
+/**
+ * The first test the child's own reporter marked red, so a failed file names a test and not only an exit code.
+ *
+ * The child's line is quoted rather than re-derived: `✖` is Node's report of the test that failed, and a second reading of
+ * what a red test means would be a second authority for the same fact.
+ */
+export function firstFailure(lines) {
+  const line = lines.find((entry) => /^\s*✖ /u.test(entry));
+  if (line === undefined) return null;
+  const named = line.trim();
+  return named.length > 160 ? `${named.slice(0, 160)}…` : named;
+}
+
+/**
+ * One test file, as one child.
+ *
+ * A compiled Host test runs under the suite's own preload, from the Host root, one file per child - the invocation
+ * `host/scripts/run-tests.mjs` gives its children, so what runs here is the suite's own runner and not a second reading
+ * of it. A `node --test` script (a `.test.mjs`) runs the way its own package script runs it, with no preload at all.
+ *
+ * The `windows_reclaimer_unavailable` classification exists because a bare worktree has no native helper pair until
+ * `linkNativeHelperPairs` puts one there, and when it could not, the module that says so names the reason: that is the
+ * INVOCATION refusing, not the commit, so the file is named as skipped rather than reported red.
+ */
+export function runTestFile({
+  worktree,
+  test,
+  index,
+  run = spawnSync,
+  fileTimeoutMs = TEST_FILE_TIMEOUT_MS,
+  logDirectory = tmpdir(),
+  preloadBound = false,
+}) {
+  const compiled = test.runner === "ts";
+  const args = compiled
+    ? [
+        "--import",
+        pathToFileURL(join(worktree, HOST_TEST_BOOTSTRAP)).href,
+        "--test",
+        "--test-concurrency=1",
+        compiledTestPath({ worktree, testPath: test.path }),
+      ]
+    : ["--test", test.path];
+  const { outcome, ms, lines } = runToLog({
+    command: process.execPath,
+    args,
+    cwd: compiled ? join(worktree, "host") : worktree,
+    run,
+    timeoutMs: fileTimeoutMs,
+    logPath: join(logDirectory, `head-tests-${process.pid}-${index}.log`),
+  });
+  const counts = testCounts(lines);
+  const tail = lines.slice(-3);
+  const failure = firstFailure(lines);
+  if (outcome.error?.code === "ETIMEDOUT") {
+    killTree(outcome.pid);
+    return {
+      path: test.path,
+      outcome: "failed",
+      exitCode: null,
+      ms,
+      counts,
+      tail,
+      failure,
+      reason: `head_tests_file_timeout:${test.path}:${fileTimeoutMs}ms`,
+    };
+  }
+  const exitCode = typeof outcome.status === "number" ? outcome.status : 1;
+  if (exitCode === 0) return { path: test.path, outcome: "passed", exitCode, ms, counts, tail, failure: null };
+  if (!preloadBound && /windows_(?:stale_lock_)?reclaimer_unavailable/u.test(lines.join("\n")))
+    return {
+      path: test.path,
+      outcome: "skipped",
+      exitCode,
+      ms,
+      counts,
+      tail,
+      failure: null,
+      reason:
+        "windows_reclaimer_unavailable - this checkout has no verified native helper pair to bind, so the invocation refused rather than the commit",
+    };
+  return { path: test.path, outcome: "failed", exitCode, ms, counts, tail, failure };
+}
+
+/**
+ * The reading the third layer takes: derive the commit's tests, compile them with the commit's own project, run each one
+ * in its own child, and answer with counts rather than with a verdict - the caller's `verdictFor` is the one place the
+ * whole run is judged.
+ *
+ * `empty` is a READING, not a gap: a commit that touched no test and no file any test imports has no tests to run, and
+ * the line says so with the count it examined. `blocked` is the different thing - the derivation could not be taken at
+ * all (no git, an unreadable file list), which never becomes a zero.
+ */
+export function measureHeadTests({
+  worktree,
+  root = REPOSITORY_ROOT,
+  rev,
+  git = gitRunner({ root }),
+  run = spawnSync,
+  timeoutMs = LAYER_TIMEOUT_MS,
+  fileTimeoutMs = TEST_FILE_TIMEOUT_MS,
+  logDirectory = tmpdir(),
+  now = Date.now,
+} = {}) {
+  const changed = commitChangedPaths({ git, rev });
+  if (changed.blocked !== undefined)
+    return {
+      outcome: "blocked",
+      ...changed.blocked,
+      files: 0,
+      passed: 0,
+      failed: 0,
+      skipped: [],
+      unmapped: [],
+      rows: [],
+      compile: null,
+      native: null,
+      ms: 0,
+    };
+  const population = deriveHeadTestPopulation({
+    changedPaths: changed.paths,
+    listTests: () => listTestFiles({ root: worktree }),
+    read: (path) => readCommitFile({ worktree, path }),
+  });
+  const base = {
+    examined: population.examined,
+    files: 0,
+    passed: 0,
+    failed: 0,
+    skipped: [],
+    unmapped: population.unmapped,
+    rows: [],
+    compile: null,
+    native: null,
+    ms: 0,
+  };
+  if (population.tests.length === 0) return { ...base, outcome: "empty" };
+  const startedAt = now();
+  const compiled = population.tests.filter((test) => test.runner === "ts");
+  if (compiled.length > 0) {
+    base.compile = compileHostTests({ worktree, run, timeoutMs, logDirectory });
+    // No compiler in this checkout is `not_measured`, not a population of files that silently ran nothing.
+    if (base.compile.outcome === "not_measured")
+      return { ...base, outcome: "not_measured", reason: base.compile.reason };
+    base.native = linkNativeHelperPairs({ worktree, root });
+  }
+  const preloadBound = (base.native?.linked ?? 0) + (base.native?.copied ?? 0) > 0;
+  let deadline = null;
+  for (const [index, test] of population.tests.entries()) {
+    if (now() - startedAt >= timeoutMs) {
+      deadline = `head_tests_deadline:${timeoutMs}ms:${population.tests.length - index} file(s) not run`;
+      break;
+    }
+    if (test.runner === "ts" && !existsSync(compiledTestPath({ worktree, testPath: test.path }))) {
+      base.skipped.push({
+        path: test.path,
+        reason: "the commit's own test project did not emit it, so nothing could run",
+      });
+      continue;
+    }
+    const row = runTestFile({ worktree, test, index, run, fileTimeoutMs, logDirectory, preloadBound });
+    if (row.outcome === "skipped") base.skipped.push({ path: row.path, reason: row.reason });
+    else {
+      base.rows.push(row);
+      base.files += 1;
+      if (row.outcome === "passed") base.passed += 1;
+      else base.failed += 1;
+    }
+  }
+  base.ms = now() - startedAt;
+  // THREE ZEROS, TOLD APART. A population of zero was answered above (`empty`, with the count it examined); a population
+  // that was derived and ran nothing is `blocked`, because every file it named was skipped for a reason and a suite that
+  // measured nothing agrees with itself; a run with real files is `passed` or `failed` by what those files' exits said.
+  if (base.files === 0 && base.skipped.length > 0)
+    return {
+      ...base,
+      outcome: "blocked",
+      code: "head_tests_nothing_measured",
+      detail: `${base.skipped.length} derived test file(s) could not run here: ${base.skipped
+        .map((row) => `${row.path} (${row.reason})`)
+        .join(" · ")}`,
+    };
+  const outcome = deadline !== null || base.failed > 0 ? "failed" : "passed";
+  return { ...base, outcome, ...(deadline === null ? {} : { reason: deadline }) };
+}
+
 /** The pair, with `not_measured` written as that word rather than as a zero. */
 function verdictOf(layers, name) {
   const layer = layers.find((entry) => entry.name === name);
@@ -390,23 +759,41 @@ export function junctionPlan({ worktree, root = REPOSITORY_ROOT }) {
   ].filter((entry) => existsSync(entry.target));
 }
 
-/** The verdict, from the two layer readings: any failure is a failure, and no layer verdict at all is blocked. */
-function verdictFor(read, errors) {
+/**
+ * The verdict, from the three readings: a layer that did not compile or a test of the commit's own that did not pass is a
+ * failure, a derivation that could not be taken is blocked, and no layer verdict at all is blocked.
+ *
+ * The tests reading is the third because it is the one that would otherwise be read as covered by the pair: `head=0 mod=0`
+ * beside no test reading is exactly what `cc3469a8` printed.
+ */
+function verdictFor(read, errors, tests) {
   const measured = read.filter((layer) => layer.outcome !== "not_measured");
-  if (read.some((layer) => layer.outcome === "failed")) return { status: "failed", layers: read, errors };
+  if (read.some((layer) => layer.outcome === "failed")) return { status: "failed", layers: read, errors, tests };
+  if (tests?.outcome === "blocked")
+    return { status: "blocked", layers: read, errors, tests, code: tests.code, detail: tests.detail };
+  if (tests?.outcome === "failed") return { status: "failed", layers: read, errors, tests };
   if (measured.length === 0)
     return {
       status: "blocked",
       layers: read,
       errors,
+      tests,
       code: "head_build_nothing_measured",
       detail: `no layer produced a verdict: ${read.map((layer) => `${layer.name}: ${layer.reason}`).join(" · ")}`,
     };
-  return { status: "passed", layers: read, errors };
+  return { status: "passed", layers: read, errors, tests };
 }
 
-/** One reading inside a worktree that already exists: add it, prove it is the commit, run both layers there. */
-function measureCommit({ git, run, layers, timeoutMs, root, worktree, revision, rev }) {
+/**
+ * One reading inside a worktree that already exists: add it, prove it is the commit, run both layers there, then run the
+ * commit's own tests in the same worktree - the worktree, its proof, and its cleanup are spent once.
+ *
+ * A host layer that did not compile skips the tests reading with that reason instead of paying a second compile for a
+ * population that cannot exist: the project the tests are compiled from is that layer's project plus the test files, so
+ * the reading would be `head_tests_skipped:` for every file. That is `not_measured`, not a pass, and the run is already
+ * failed.
+ */
+function measureCommit({ git, run, layers, timeoutMs, fileTimeoutMs, root, worktree, revision, rev }) {
   const added = git(["worktree", "add", "--detach", worktree, revision], root);
   if (added.status !== 0)
     return blockedReading(rev, "head_build_worktree_add_failed", `${firstLine(added)} (path ${worktree})`);
@@ -418,7 +805,24 @@ function measureCommit({ git, run, layers, timeoutMs, root, worktree, revision, 
   if (refused !== null) return blockedReading(rev, refused.blocked.code, refused.blocked.detail);
   const read = readLayers({ layers: layers ?? buildLayers(), root: worktree, run, timeoutMs });
   const errors = read.reduce((total, layer) => total + layer.diagnostics.length, 0);
-  return { ...verdictFor(read, errors), rev, revision, worktree };
+  const host = read.find((layer) => layer.name === "host");
+  const tests =
+    host?.outcome === "failed"
+      ? {
+          outcome: "not_measured",
+          reason: "the host layer did not compile the commit, so none of its tests can run",
+          files: 0,
+          passed: 0,
+          failed: 0,
+          skipped: [],
+          unmapped: [],
+          rows: [],
+          compile: null,
+          native: null,
+          ms: 0,
+        }
+      : measureHeadTests({ worktree, root, rev, git, run, timeoutMs, fileTimeoutMs });
+  return { ...verdictFor(read, errors, tests), rev, revision, worktree };
 }
 
 /**
@@ -436,6 +840,7 @@ export function runHeadBuild({
   container = process.env.GAMEBUDDY_HEAD_BUILD_DIR ?? tmpdir(),
   layers = null,
   timeoutMs = LAYER_TIMEOUT_MS,
+  fileTimeoutMs = TEST_FILE_TIMEOUT_MS,
   root = REPOSITORY_ROOT,
   git = gitRunner({ root }),
   run = spawnSync,
@@ -455,7 +860,17 @@ export function runHeadBuild({
   let reading = null;
   let leftover = null;
   try {
-    reading = measureCommit({ git, run, layers, timeoutMs, root, worktree: path, revision: resolved.sha, rev });
+    reading = measureCommit({
+      git,
+      run,
+      layers,
+      timeoutMs,
+      fileTimeoutMs,
+      root,
+      worktree: path,
+      revision: resolved.sha,
+      rev,
+    });
   } catch (error) {
     reading = blockedReading(rev, "head_build_threw", error instanceof Error ? error.message : String(error));
   } finally {
@@ -525,21 +940,80 @@ export function renderReport(report) {
     for (const line of layer.notCovered) lines.push(`  ! ${line}`);
   }
   if (report.status === "blocked") {
+    lines.push(...headTestsLines(report.tests));
     lines.push(`head_build_blocked: ${report.code} - ${report.detail}`);
     return { lines, exitCode: 2 };
   }
+  lines.push(...headTestsLines(report.tests));
   if (report.status === "failed") {
-    lines.push("head_build: failed - a working tree that compiles is not evidence about this commit");
+    // One sentence per cause: a compile failure and a red test are different verdicts about one commit, and a reader who
+    // sees only the first would think the tests had been run and passed.
+    if (report.layers.some((layer) => layer.outcome === "failed"))
+      lines.push("head_build: failed - a working tree that compiles is not evidence about this commit");
+    if (report.tests?.outcome === "failed")
+      lines.push(
+        "head_build: failed - a commit that compiles is not a commit whose own tests pass, and nothing else ran " +
+          "these on its own bytes",
+      );
     return { lines, exitCode: 1 };
   }
   const skipped = report.layers.filter((layer) => layer.outcome === "not_measured").length;
+  const compile = skipped === 0 ? "both layers compiled the commit" : "the compile layers measured here agreed";
+  const tested =
+    report.tests?.outcome === "passed"
+      ? " and its own tests passed"
+      : report.tests?.outcome === "empty"
+        ? "; no test file was derived from it, so no test of it was run"
+        : `; the tests reading was NOT measured (${report.tests?.reason ?? "no reason recorded"})`;
   lines.push(
-    skipped === 0
-      ? "head_build: passed - both layers compiled the commit"
-      : `head_build: passed for ${report.layers.length - skipped} of ${report.layers.length} layer(s); ` +
-          `${skipped} NOT measured here, so this is not a whole-tree green`,
+    `head_build: passed - ${compile}${tested}` +
+      (skipped === 0 ? "" : ` - ${skipped} compile layer(s) NOT measured here, so this is not a whole-tree green`),
   );
   return { lines, exitCode: 0 };
+}
+
+/**
+ * The third reading's own lines: the counts first, then every file's own exit code, then what could not be run.
+ *
+ * `files=` counts the files that RAN, so a skip can never be read as one of them: a population that was derived but ran
+ * nothing prints `files=0 passed=0 failed=0` beside its `head_tests_skipped:` lines, and a population of zero prints its
+ * own `population=0` sentence with the reason it is zero - the two zeros this tree insists on telling apart.
+ */
+export function headTestsLines(tests) {
+  if (tests === undefined || tests === null) return [];
+  if (tests.outcome === "not_measured") return [`head_tests: not measured - ${tests.reason}`];
+  if (tests.outcome === "empty")
+    return [`head_tests population=0 reason=<derived: the commit touched no test file> examined=${tests.examined}`];
+  const skipped = [...tests.skipped, ...tests.unmapped].map((row) => `head_tests_skipped: ${row.path} ${row.reason}`);
+  if (tests.outcome === "blocked") return [`head_tests_blocked: ${tests.code} - ${tests.detail}`, ...skipped];
+  const failed = tests.rows.filter((row) => row.outcome === "failed").map((row) => row.path);
+  const lines = [
+    `head_tests files=${tests.files} passed=${tests.passed} failed=${tests.failed}` +
+      (failed.length === 0 ? "" : ` [file: ${failed.join(", ")}]`),
+  ];
+  if (tests.compile !== null)
+    lines.push(
+      tests.compile.outcome === "not_measured"
+        ? `head_tests_compile_skipped: ${tests.compile.reason}`
+        : `head_tests_compile exit=${tests.compile.exitCode ?? "none"} ${tests.compile.ms}ms ` +
+            `diagnostics=${tests.compile.diagnostics}${tests.compile.reason === undefined ? "" : ` (${tests.compile.reason})`}`,
+    );
+  if (tests.native !== null)
+    lines.push(
+      `head_tests_native_pairs: linked=${tests.native.linked} copied=${tests.native.copied}` +
+        `${tests.native.failed.length === 0 ? "" : ` failed=${tests.native.failed.length}`} - this checkout's build ` +
+        "outputs, not the commit's bytes",
+    );
+  for (const row of tests.rows)
+    lines.push(
+      `head_tests_file:${row.path} exit=${row.exitCode ?? "none"} ${row.ms}ms` +
+        (row.counts === null ? "" : ` tests=${row.counts.tests} pass=${row.counts.pass} fail=${row.counts.fail}`) +
+        (row.reason === undefined ? "" : ` ${row.reason}`) +
+        (row.failure === null || row.failure === undefined ? "" : ` - ${row.failure}`),
+    );
+  for (const row of tests.skipped) lines.push(`head_tests_skipped: ${row.path} ${row.reason}`);
+  for (const row of tests.unmapped) lines.push(`head_tests_skipped: ${row.path} ${row.reason}`);
+  return lines;
 }
 
 export function parseArguments(argv) {
