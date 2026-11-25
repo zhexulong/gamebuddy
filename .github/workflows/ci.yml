@@ -120,6 +120,8 @@ jobs:
       - run: pnpm lint:eslint
       - run: pnpm lint:ast-grep
       - run: pnpm check:host-module-graph
+      - run: pnpm check:tools-boundaries-ratchet
+      - run: pnpm test:tools-boundaries-ratchet
       - run: pnpm check:dialogue-web-boundaries
       - run: pnpm test:dialogue-web-boundaries
       - run: pnpm check:host-production-import-boundary

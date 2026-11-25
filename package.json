@@ -33,7 +33,7 @@
     "build:voice-protocol": "pnpm --dir vendor/pi-koe run build:protocol",
     "check:action-deadline-agreement": "node gates/stardew/check-action-deadline-agreement.mjs",
     "check:agent-overrides": "node tools/scripts/check-agent-overrides.mjs",
-    "check:architecture": "pnpm check:publint && pnpm report:clones && pnpm check:knip && pnpm check:host-module-graph && pnpm check:host-production-import-boundary",
+    "check:architecture": "pnpm check:publint && pnpm report:clones && pnpm check:knip && pnpm check:host-module-graph && pnpm check:host-production-import-boundary && pnpm check:tools-boundaries-ratchet",
     "check:armed-destructive-actions": "node tools/check-armed-destructive-actions.mjs",
     "check:build-artifact-producers": "node gates/arch/check-build-artifact-producers.mjs",
     "check:sbom": "node tools/generate-sbom.mjs --verify",
@@ -545,7 +545,9 @@
     "check:gate-premises": "node gates/meta/check-gate-premises.mjs",
     "test:gate-premises": "node --test gates/meta/check-gate-premises.test.mjs",
     "check:policy-change-is-learned-by-polling": "node gates/stardew/check-policy-change-is-learned-by-polling.mjs",
-    "test:policy-change-is-learned-by-polling": "node --test gates/stardew/check-policy-change-is-learned-by-polling.test.mjs"
+    "test:policy-change-is-learned-by-polling": "node --test gates/stardew/check-policy-change-is-learned-by-polling.test.mjs",
+    "check:tools-boundaries-ratchet": "node gates/arch/check-tools-boundaries.mjs",
+    "test:tools-boundaries-ratchet": "node --test gates/arch/check-tools-boundaries.test.mjs"
   },
   "gateRedProofs": {
     "check:dialogue-web-boundaries": "external depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src — a residual module importing a surface is `error no-module-to-surface` naming that module and the surface it reaches, exit 1",

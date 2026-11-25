@@ -1,0 +1,827 @@
+{
+  "schema": "tools-boundaries-baseline/v1",
+  "entries": [
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/_ladder-live-orchestrator.mjs",
+      "to": "tools/lib/stardew-bridge-pipe.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/_ladder-live-orchestrator.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/.soft-suite.tmp.test.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/.soft-suite.tmp.test.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/.soft-suite.tmp.test.mjs",
+      "to": "tools/resolve-stardew-action-gate-runner.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/assertions/clear_fish_pond.test.mjs",
+      "to": "tools/lib/stardew-action-smoke-contract.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/draft-smoke-contract.mjs",
+      "to": "tools/lib/stardew-action-smoke-contract.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/draft-smoke-contract.test.mjs",
+      "to": "tools/lib/stardew-action-smoke-contract.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/action-breadth.mjs",
+      "to": "gates/stardew/audit-stardew-discovery-channels.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/action-breadth.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/action-pace.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/body-hold-leak.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/evidence-bundle.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/evidence-bundle.test.mjs",
+      "to": "tools/run-stardew-multiplayer-live-loop.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/harness-conformance.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/harness-conformance.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/harness-conformance.mjs",
+      "to": "tools/resolve-stardew-action-gate-runner.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/harness-conformance.mjs",
+      "to": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/live-run-preflight.mjs",
+      "to": "tools/lib/stardew-bridge-pipe.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/multiday-daily-tasks.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/multiday-task-families.test.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/native-local-runner-primitives-corpus.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/native-local-runner-primitives.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/native-local-runner-scaffold.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/task-purpose.mjs",
+      "to": "gates/stardew/audit-stardew-clearing-vocabulary.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/task-purpose.mjs",
+      "to": "host/dist-test/stardew-completion-contracts.js"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/task-purpose.test.mjs",
+      "to": "gates/stardew/audit-stardew-clearing-vocabulary.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/task-purpose.test.mjs",
+      "to": "gates/stardew/check-stardew-postcondition-delta.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/task-purpose.test.mjs",
+      "to": "gates/stardew/check-stardew-snapshot-family-bounds.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/lib/task-purpose.test.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "gates/stardew/audit-stardew-discovery-channels.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-fixture-roots.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-lane-scope.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/lib/stardew-receipt-evidence.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/resolve-stardew-action-gate-runner.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.mjs",
+      "to": "tools/run-stardew-native-local-player-equip-tool-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.test.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.test.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-action.test.mjs",
+      "to": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-fixture-roots.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-lane-scope.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-program.mjs",
+      "to": "tools/lib/stardew-receipt-evidence.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/analysis/action-breadth.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/fixture-scenario-registry.test.mjs",
+      "to": "gates/stardew/check-stardew-live-runner-coverage.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/fixture-scenario-registry.test.mjs",
+      "to": "tools/lib/stardew-action-gate-route.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/fixture-scenario-registry.test.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/launch-ladder-live.mjs",
+      "to": "tools/lib/stardew-fixture-roots.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/launch-ladder-live.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/launch-ladder-live.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/program-outcome-journal-fallback.test.mjs",
+      "to": "tools/lib/stardew-body-program-journal.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/run-single-step.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/task-pool-feasibility.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/game/task-pool-unpublished-region.test.mjs",
+      "to": "tools/live-run/game/run-stardew-native-local-agent-ab-live.support.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/interaction-value-gate.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/round-verdict.test.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/double-navigate.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/harness.mjs",
+      "to": "tools/lib/stardew-fixture-roots.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/harness.mjs",
+      "to": "tools/lib/stardew-lane-scope.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/harness.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/harness.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/harness.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/harness.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/outdoor-sleep.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/patch-3x20.mjs",
+      "to": "gates/stardew/audit-stardew-clearing-vocabulary.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/patch-3x20.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/live-run/slices/patch-3x20.mjs",
+      "to": "tools/lib/stardew-receipt-evidence.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/migrate-runner-to-template.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/migrate-runner-to-template.mjs",
+      "to": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/migrate-runner-to-template.test.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/migrate-runner-to-template.test.mjs",
+      "to": "tools/run-stardew-native-local-player-cook-recipe-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/migrate-runner-to-template.test.mjs",
+      "to": "tools/run-stardew-native-local-player-crab-pot-collect-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/migrate-runner-to-template.test.mjs",
+      "to": "tools/run-stardew-native-local-player-craft-item-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.mjs",
+      "to": "tools/lib/stardew-fixture-roots.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.mjs",
+      "to": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.test.mjs",
+      "to": "tools/lib/stardew-published-action-registry.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.test.mjs",
+      "to": "tools/resolve-stardew-action-gate-runner.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/prelive.test.mjs",
+      "to": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/probe-single-query.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-action-smoke-contract.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-fixture-roots.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-lane-scope.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-live-run.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-mod-folder.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-native-local-player-fixture.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.mjs",
+      "to": "tools/lib/stardew-receipt-evidence.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/lib/stardew-action-smoke-contract.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/lib/stardew-native-smoke-harness-v1.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/run-stardew-native-local-player-accept-special-order-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/run-stardew-native-local-player-claim-museum-reward-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/run-stardew-native-local-player-craft-item-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/run-stardew-native-local-player-deposit-silo-hay-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/run-stardew-native-local-player-pet-animal-smoke.mjs"
+    },
+    {
+      "rule": "generic-tools-must-not-depend-on-game-tools",
+      "severity": "warn",
+      "from": "tools/run-native-action-slice.test.mjs",
+      "to": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "rule": "no-tools-circular-dependencies",
+      "severity": "error",
+      "from": "tools/lib/stardew-action-gate-route.mjs",
+      "to": "tools/lib/stardew-action-smoke-contract.mjs"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/harvest-stardew-receipts.mjs",
+      "to": "host/dist-test/stardew-receipt-corpus.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/lib/task-purpose.mjs",
+      "to": "host/dist-test/game-world-vocabulary.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/lib/task-purpose.mjs",
+      "to": "host/dist-test/stardew-completion-contracts.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/lib/task-purpose.test.mjs",
+      "to": "host/dist-test/game-world-vocabulary.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/multiday-day-note.test.mjs",
+      "to": "host/dist-test/fact-brief.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/program-node-outcomes.mjs",
+      "to": "host/dist-test/program-status-wait.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/action-registry.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/companion-speech-dehydration.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/deployment-manifest.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/local-stardew-bridge.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/path-lock.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/runtime-identity.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/stardew-game-integration-adapter.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/stardew-integration-launcher.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/voice-gateway-client.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+      "to": "host/dist-test/windows-stale-lock-reclaimer/index.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/live-run/game/run-stardew-native-local-agent-ab-live.support.mjs",
+      "to": "host/dist-test/action-registry.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-destination-search-operation.mjs",
+      "to": "host/dist-test/protocol.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-destination-search-operation.mjs",
+      "to": "host/dist-test/strict-bridge-json.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-navigation-multisource-characterization.test.mjs",
+      "to": "host/dist-test/protocol.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-navigation-operation.mjs",
+      "to": "host/dist-test/protocol.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-navigation-operation.mjs",
+      "to": "host/dist-test/stardew-game-integration-adapter.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-navigation-operation.test.mjs",
+      "to": "host/dist-test/protocol.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-world-map-operation.mjs",
+      "to": "host/dist-test/protocol.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/replay-stardew-world-map-operation.mjs",
+      "to": "host/dist-test/strict-bridge-json.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/run-live-chat-card-e2e.mjs",
+      "to": "host/dist-test/game-surface-prompt-floor.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/run-live-chat-card-e2e.mjs",
+      "to": "host/dist-test/identity-profile.js"
+    },
+    {
+      "rule": "tools-must-not-import-disposable-host-test-artifacts",
+      "severity": "error",
+      "from": "tools/run-live-chat-card-e2e.mjs",
+      "to": "host/dist-test/st-card-import.js"
+    },
+    {
+      "rule": "tools-must-not-import-host-production-sources",
+      "severity": "error",
+      "from": "tools/lib/stardew-player-probe-driver.test.mjs",
+      "to": "host/src/protocol.ts"
+    }
+  ]
+}
