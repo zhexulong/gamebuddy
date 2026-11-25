@@ -12,7 +12,7 @@
  * WHICH BODY EACH SIDE DRIVES, said once so no slice has to imply it
  * -----------------------------------------------------------------
  * The Mod builds a bridge only on the AI-Farmhand instance (`integrations/stardew/ModEntry.cs` returns early when
- * `hostRoleConfigured`; the single `LocalPipeBridge` is `ModEntry.cs:1078-1094`) and it admits ONE consumer. So on this
+ * `hostRoleConfigured`; the single `LocalPipeBridge` is admitted by `LocalPipeBridge.cs:LocalPipeBridge`) and it admits ONE consumer. So on this
  * topology the Host player has no wire at all, and the only way to make her a second farmer is the fixture's own file
  * arms:
  *   * the HOST PLAYER is driven by `HostPlayerScriptChannel` (`integrations/stardew/HostPlayerScript.cs`) in S1 and S2:
@@ -22,8 +22,9 @@
  *   * the COMPANION is driven by her own model turn on the one wire, and by nothing else: this run no longer dispatches
  *     a single request through her client. Every earlier "concurrent" reading was therefore two request streams on ONE
  *     actor; S2 now races two independent farmers over one container instead.
- *   * S3 has both: the Host player's night is the file-armed lifecycle (`-HostSleepLifecycleEvidence`) and the
- *     companion's night is her own `sleep` turn.
+ *   * S3 has both: the Host player's night is this run's own `sleep` step on the script channel, dispatched in S3's
+ *     window, and the companion's night is her own `sleep` turn. Neither side marks the other ready: the engine's
+ *     `ReadyCheckDialog` crosses the day once both farmers have declared it.
  * Anything that would still need a third body prints `not_measured`, by name.
  *
  * WHAT EACH SLICE MEASURES NOW, AND WHAT IT MEASURED BEFORE
@@ -50,24 +51,24 @@ import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } fr
 import { join } from "node:path";
 
 import { assessCompanionBehaviourRubric } from "./lib/companion-behaviour-rubric.mjs";
-import { openAgentDrivenSession } from "./lib/stardew-multiplayer-agent-runtime.mjs";
-import { observeFresh, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
-import {
-  PROBE_EMOTE,
-  chestWithItem,
-  gameClockHhmmFromMs,
-  gameClockMs,
-  gameClockMsFromInGameTime,
-  readyGrabCrop,
-  receiptTargetTile,
-  snapshotClock,
-} from "./lib/stardew-player-probe-driver.mjs";
 import {
   NIGHT_CAUSE_SLEEP,
   parseReceiptEvidence,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
 } from "./lib/multiday-baseline.mjs";
+import { openAgentDrivenSession } from "./lib/stardew-multiplayer-agent-runtime.mjs";
+import { observeFresh, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import {
+  chestWithItem,
+  gameClockHhmmFromMs,
+  gameClockMs,
+  gameClockMsFromInGameTime,
+  PROBE_EMOTE,
+  readyGrabCrop,
+  receiptTargetTile,
+  snapshotClock,
+} from "./lib/stardew-player-probe-driver.mjs";
 
 /**
  * The Host player's script wire (`integrations/stardew/HostPlayerScript.cs`). The run writes this schema and the Mod
@@ -95,6 +96,29 @@ export const COVENANT_LINE = "记住我们说好的：东边那棵树先别动�
 
 /** The words a recalled covenant must contain. Every one of them: one token is not a remembered promise. */
 export const COVENANT_RECALL_TOKENS = Object.freeze(["东边", "树"]);
+
+/**
+ * The words a next-day answer uses when it asserts that a day-one act COMPLETED - as opposed to mentioning the thing it
+ * happened to.
+ *
+ * MENTIONING AND CLAIMING ARE TWO DIFFERENT FACTS. The judge used to read one from the other: any day-one token in her
+ * answer meant "she says she did it", so naming yesterday's chest or crop was enough to convict her of a fabricated
+ * action - including when the Host player had won that chest and her own receipt was a refusal. The list below holds
+ * the PERFECTIVE forms, which is why their denials are absent from it: `没拿到` is not `拿到了`, and `没摘` is not
+ * `摘了`. It is the same instrument the covenant is read with - high precision, LOW recall - so a claim phrased without
+ * one of these words is not judged as a claim at all, and `claim_without_fact` fires only on an answer that both names
+ * the day-one subject and says the act was done.
+ */
+export const DAY_ONE_CLAIM_MARKERS = Object.freeze([
+  "收了",
+  "摘了",
+  "拿了",
+  "拿到了",
+  "拿走了",
+  "拿出来了",
+  "取出了",
+  "收进了",
+]);
 
 /**
  * The four slices, in the order they must run, each with the budget it gets.
@@ -140,32 +164,32 @@ export const PAIRED_SLICES = Object.freeze([
 ]);
 
 /**
- * The fixture scenario that would arm each precondition, named so a 3 a.m. reader has the next command and not a
- * diagnosis.
+ * The fixture scenario that arms each precondition, named so a 3 a.m. reader has the next command and not a diagnosis.
  *
- * NO ONE SCENARIO CARRIES ALL FOUR, and that is a fixture fact rather than an oversight: a ripe crop lives in
- * `native_harvest_crop_v1`, a chest holding an item in `native_chest_retrieve_v1`, `native_strawberry_covenant_v1` and
- * `native_multi_day_v1` are native-local only, and the shared-world driver arms exactly one scenario per launch. So S1
- * (a place to stand beside) and S2 (a container with something in it) are measured on DIFFERENT launches of this same
- * run, and each slice that has no subject prints its own `PAIRED_FIXTURE_MISSING` line naming the arm it needs. What is
- * refused here is the other way out - a fixture invented by this run to satisfy its own slice.
+ * ONE SCENARIO NOW CARRIES BOTH FARM FACTS. It did not: a ripe crop lived in `native_harvest_crop_v1`, a chest holding
+ * an item in `native_chest_retrieve_v1`, `native_strawberry_covenant_v1` and `native_multi_day_v1` are native-local
+ * only, and the shared-world driver arms exactly one scenario per launch - so S1 (a place to stand beside) and S2 (a
+ * container with something in it) had to be measured on DIFFERENT launches of this same run. `native_paired_companion_v1`
+ * is the world that removes that split: both facts on the Farm, nothing pre-taken, and her body already on that map
+ * within the observation's own discovery radius of both. What is still refused here is the other way out - a fixture
+ * invented by this run to satisfy its own slice.
  */
 export const FIXTURE_ARMS = Object.freeze({
   ready_grab_crop: Object.freeze({
-    scenario: "native_harvest_crop_v1",
-    then: "S1 has a ripe crop for the Host player to stand beside (the fixture seeds a Tomato plot and grows it ready)",
+    scenario: "native_paired_companion_v1",
+    then: "S1 has a ripe crop for the Host player to stand beside (the world grows it with the engine's own SpreadSeeds/GrowCrops commands, and keeps exactly one)",
   }),
   chest_with_item: Object.freeze({
-    scenario: "native_chest_retrieve_v1",
-    then: "S2 has one container holding one item for two farmers to contend over",
+    scenario: "native_paired_companion_v1",
+    then: "S2 has one container holding one item for two farmers to contend over, within the six-tile discovery radius of the same subject S1 used",
   }),
   host_player_stub: Object.freeze({
     scenario: "-HostPlayerScript / -HostPlayerScriptRecords (the fixture's Host player lane)",
-    then: "the Host player can be walked, waved and asked to speak without a second bridge",
+    then: "the Host player can be walked, waved, asked to speak and sent to bed without a second bridge",
   }),
-  host_bed: Object.freeze({
-    scenario: "the Host save's own farmhouse (the driver's -HostSleepLifecycleEvidence lane)",
-    then: "the Host farmer has a bed the file-armed lifecycle can reach, and a night record to read",
+  host_sleep_step: Object.freeze({
+    scenario: "-HostPlayerScript / -HostPlayerScriptRecords (the fixture's Host player lane)",
+    then: "S3 puts the Host farmer in bed inside its own window, and the engine crosses the night once both farmers are ready",
   }),
 });
 
@@ -218,7 +242,7 @@ const arrayOf = (value) => (Array.isArray(value) ? value : []);
 
 /** The clock delta between two world readings, in game minutes, or `null` when either side never read one. */
 export function gameMinutesBetween(leftMs, rightMs) {
-  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) return null;
+  if (!(Number.isFinite(leftMs) && Number.isFinite(rightMs))) return null;
   return Math.round((rightMs - leftMs) / 60_000);
 }
 
@@ -337,6 +361,17 @@ export function planHostClaimScript({ snapshot }) {
 }
 
 /**
+ * S3's script: the Host player goes to bed.
+ *
+ * ONE STEP AND NO ARGUMENT. Which bed is the engine's own answer (`FarmHouse.GetPlayerBedSpot`) and which house is the
+ * save's own home, so a step that named a tile would be a second spelling of both - one this run would have to keep in
+ * step with a save it does not own. `seq` is the writer's, like every other step.
+ */
+export function planHostNightScript() {
+  return Object.freeze([Object.freeze({ stepId: "sleep", action: "sleep" })]);
+}
+
+/**
  * Hand the Host player's channel one slice's steps, appended behind the ones already armed. The returned `seqs` are this
  * slice's positions in the document - what a wait is matched by and what a record is attributed to - and the writer is
  * the only thing that assigns them, so two slices cannot name the same position.
@@ -344,12 +379,19 @@ export function planHostClaimScript({ snapshot }) {
  * THE WRITE IS A REPLACE, NOT A TRUNCATE. The Mod polls this path while the world runs, so a partial document would be
  * read as an unreadable one and stop the channel for the rest of the run: the text lands in a staging file first and is
  * renamed over the document, which the reader sees either whole-old or whole-new.
+ *
+ * A SEALED DOCUMENT REFUSES THE APPEND BY NAME. `sealed` is the fixture saying it will append no more, and the Mod stops
+ * reading the file when it sees one - so a step written past it would be performed by nobody and a slice would wait out
+ * its budget for a cue that was never armed. That is exactly how S3's night would disappear, which is why the refusal is
+ * here rather than in the slice that notices the wait.
  */
 export function appendHostPlayerScript(path, steps, { sealed = false } = {}) {
   if (typeof path !== "string" || path.length === 0)
     return Object.freeze({ ok: false, reason: "host_player_script_not_configured", seqs: Object.freeze([]) });
   const existing = readHostPlayerScriptDocument(path);
   if (existing.reason !== null) return Object.freeze({ ok: false, reason: existing.reason, seqs: Object.freeze([]) });
+  if (existing.sealed === true)
+    return Object.freeze({ ok: false, reason: "host_player_script_sealed", seqs: Object.freeze([]) });
   const appended = arrayOf(steps).map((step, offset) =>
     Object.freeze({ ...step, seq: existing.steps.length + offset + 1 }),
   );
@@ -376,17 +418,18 @@ function readHostPlayerScriptDocument(path) {
   try {
     text = readFileSync(path, "utf8");
   } catch {
-    return { steps: [], reason: null };
+    return { steps: [], sealed: false, reason: null };
   }
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { steps: [], reason: "host_player_script_unreadable" };
+    return { steps: [], sealed: false, reason: "host_player_script_unreadable" };
   }
-  if (parsed?.schema !== HOST_PLAYER_SCRIPT_SCHEMA) return { steps: [], reason: "host_player_script_schema_mismatch" };
-  if (!Array.isArray(parsed.steps)) return { steps: [], reason: "host_player_script_steps_missing" };
-  return { steps: parsed.steps, reason: null };
+  if (parsed?.schema !== HOST_PLAYER_SCRIPT_SCHEMA)
+    return { steps: [], sealed: false, reason: "host_player_script_schema_mismatch" };
+  if (!Array.isArray(parsed.steps)) return { steps: [], sealed: false, reason: "host_player_script_steps_missing" };
+  return { steps: parsed.steps, sealed: parsed.sealed === true, reason: null };
 }
 
 /**
@@ -499,8 +542,9 @@ function hostStubReason(records) {
  * `not_measured` BEFORE `failed`, four times, and each time for a different fact:
  *   * the prompt named the tile - the slice measured its own sentence, not her attention;
  *   * the Host player never arrived - the cue was never given;
- *   * the person was not in her observation - `otherFarmers` is bounded to the same map and a six-tile window, so a
- *     person outside it is a fact she was never shown rather than one she ignored;
+ *   * the person was not in her observation - `otherFarmers` publishes every other player on HER map
+ *     (`FarmhandTargetDiscovery.DiscoverOtherFarmers`, bounded by the map rather than by the six-tile item radius), so a
+ *     person it does not carry is a fact she was never shown rather than one she ignored;
  *   * the slice's own budget cut her turn - that is our clock, not her.
  * What is left is measured: an action on a tile adjacent to the person's tile is the property, an action somewhere else
  * is `failed/acted_away_from_the_other_farmer`, and no action at all is `failed/late`.
@@ -534,7 +578,7 @@ export function judgeJointAttention({
       return verdict("s1_attention", "not_measured", "other_farmer_not_in_her_observation", {
         hostTile: tileKey(hostTile),
         otherFarmers: arrayOf(otherFarmers).length,
-        rule: "otherFarmers is the same map plus a six-tile window",
+        rule: "otherFarmers is her own map's other players, not a six-tile window",
       });
   }
   if (turnTimedOut === true && companion.length === 0)
@@ -595,7 +639,7 @@ export function judgeConcurrentClaim({ contended, host = null, companion = null,
   const hostWon = TERMINAL_SUCCESS.has(host.state);
   const companionWon = TERMINAL_SUCCESS.has(companion.state);
   if (hostWon && companionWon) return verdict("s2_claim", "failed", "both_claimed", reads);
-  if (!hostWon && !companionWon) return verdict("s2_claim", "failed", "neither_succeeded", reads);
+  if (!(hostWon || companionWon)) return verdict("s2_claim", "failed", "neither_succeeded", reads);
   const loserSide = hostWon ? "companion" : "host";
   const loser = hostWon ? companion : host;
   if (typeof loser.reasonCode !== "string" || loser.reasonCode.length === 0)
@@ -618,28 +662,40 @@ export function judgeConcurrentClaim({ contended, host = null, companion = null,
  * Both nights must be READABLE: `bedTime` is an integer clock reading and `bedTimeSource` says which observation
  * produced it. A night with neither is BARE - `round94`'s `null`, a body that never slept wearing a record's clothes.
  *
- * THREE OUTCOMES, deliberately distinct, because they have three different owners:
- *   * `failed`       - the body did not sleep.
- *   * `not_measured` - the instrument cannot see the hour. The Host lane now publishes the crossing's own
- *                      `settlement.bedTime` (`SleepAndAdvanceDayLifecycle.bedTimeBeforeTheCrossing`), so this is no
- *                      longer a blind spot by construction; it stays for a night whose clock was genuinely never read,
- *                      and the code names the field that is missing.
- *   * `not_measured` - two bodies were never available: the run was not launched with the Host sleep lane.
+ * THE HOST'S NIGHT IS HER OWN BODY'S, never a file armed before the run. `hostNight` is read off the `sleep` step's own
+ * record (`readHostNightFromSleepRecord`), and `hostSleepStep` is what that step settled as - because "the Host is in
+ * bed" and "the night crossed" are two different facts and this slice may state only the first from the step.
+ *
+ * FOUR OUTCOMES, deliberately distinct, because they have four different owners:
+ *   * `failed`       - the Host's night began and the world never crossed it (`host_night_never_started`): both bodies
+ *                      were in bed, so nothing was left for the engine's ready barrier to wait on.
+ *   * `failed`       - the body did not sleep (her own night is bare, or the two nights are different nights).
+ *   * `not_measured` - the instrument cannot see the hour, or could not drive the Host's body into bed at all: the step's
+ *                      own refusal is the code, so a farmer who never arrived is never reported as one who never slept.
+ *   * `not_measured` - two bodies were never available: the run was not launched with the Host player's script lane.
+ *
+ * SIMULTANEITY IS NOT DEMANDED. Two people going to bed at the same clock minute is not what a co-op night is and not
+ * what this judge reads: the nights are the same night, each hour is the farmer's own, and `order` reports which came
+ * first without judging it.
  */
-export function judgeCoopNight({ hostNight, companionNight }) {
+export function judgeCoopNight({ hostNight, companionNight, hostSleepStep = null }) {
   if (hostNight === null || hostNight === undefined)
-    return verdict("s3_night", "not_measured", "two_bodies_unavailable:host_night_not_configured", {
-      launchesWith: "-HostSleepLifecycleEvidence <absolute path>",
-      fixtureArm: "host_bed",
+    return verdict("s3_night", "not_measured", "two_bodies_unavailable:host_sleep_step_never_settled", {
+      launchesWith: HOST_PLAYER_STUB_LAUNCH,
+      fixtureArm: "host_sleep_step",
+      hostSleepState: hostSleepStep?.state ?? null,
+      hostSleepReason: hostSleepStep?.reasonCode ?? null,
+      hostSleepDetail: hostSleepStep?.detail ?? null,
     });
-  if (hostNight.absent === true)
-    return verdict("s3_night", "not_measured", `two_bodies_unavailable:${hostNight.reason}`, {});
   const reads = {
     hostDay: hostNight.day ?? null,
     hostBedTime: hostNight.bedTime,
     hostBedTimeSource: hostNight.bedTimeSource,
     hostBedTimeAbsent: hostNight.bedTimeAbsent,
     hostState: hostNight.state,
+    hostSleepState: hostSleepStep?.state ?? null,
+    hostSleepReason: hostSleepStep?.reasonCode ?? null,
+    hostSleepDetail: hostSleepStep?.detail ?? null,
     companionDay: companionNight?.day ?? null,
     companionBedTime: companionNight?.bedTime ?? null,
     companionBedTimeSource: companionNight?.bedTimeSource ?? null,
@@ -647,6 +703,10 @@ export function judgeCoopNight({ hostNight, companionNight }) {
   };
   if (!Number.isInteger(hostNight.bedTime))
     return verdict("s3_night", "not_measured", `host_bed_time_unreadable:${hostNight.bedTimeAbsent}`, reads);
+  // THE HOST'S NIGHT IS IN BED AND THE WORLD DID NOT FOLLOW: this is the reading the whole slice exists for, and the one
+  // an un-crossed co-op night produced while S3 only ever said "not measured".
+  if (hostSleepStep?.settled === true && (companionNight === null || companionNight === undefined))
+    return verdict("s3_night", "failed", "host_night_never_started", reads);
   if (companionNight === null || companionNight === undefined)
     return verdict("s3_night", "not_measured", "companion_night_absent", reads);
   if (!Number.isInteger(companionNight.bedTime)) return verdict("s3_night", "failed", "companion_never_slept", reads);
@@ -734,25 +794,74 @@ export function covenantIsFieldDerivable(line, observation) {
 }
 
 /**
- * S4 - CROSS-DAY RECALL ACROSS A REBUILT SESSION, in three parts, judged separately because they fail differently.
+ * Whether one of HER receipts addresses the day-one subject - which is what a later mention of it is proved by.
  *
- * THE FIRST TWO PARTS are the old halves about day one's work: does she SAY it, and does the trace hold it. Right by
- * luck is `claim_without_fact`; silent about a fact that IS there is `not_recalled`.
+ * TWO SPELLINGS AND NO THIRD. The tile is read through `receiptTargetTile` (`evicted` first, then the evidence detail),
+ * the item id from the evidence the container and crop actions publish (`item=(O)24`). Both are the producers' own
+ * fields; nothing here re-derives a target from narration.
  *
- * THE THIRD PART is the covenant, and it is what the crossing exists for. Two gates come first, and both are about the
- * QUESTION rather than about her:
- *   * `covenant_field_derivable` - the promise names something the observation already published, so a companion that
- *     never remembered anything could answer it by looking. The slice says so instead of reporting recall.
- *   * `covenant_never_spoken` / `covenant_absent` - there was no promise, so there is nothing to recall.
- * With a promise that the field cannot answer, in a session rebuilt on the same durable identity, an answer containing
- * every covenant token can only have come from durable memory; the reads name the boundary that was crossed.
+ * THE STATE IS DELIBERATELY NOT READ. `chest_empty` is what a take that lost the race settles as - the container
+ * resolved, the lock was granted, and the item was already gone - so a refusal names its subject exactly as a success
+ * does, and a judge that demanded `succeeded` would convict an honest companion the moment the Host player won.
+ */
+function receiptNamesAnchor(receipt, anchor) {
+  if (receipt === null || receipt === undefined) return false;
+  const anchorTile = anchor?.tile ?? null;
+  const receiptTile = receipt.targetTile ?? null;
+  if (anchorTile !== null && receiptTile !== null && tileKey(receiptTile) === tileKey(anchorTile)) return true;
+  const itemId = typeof anchor?.itemId === "string" ? anchor.itemId.toLowerCase() : null;
+  const evidence = typeof receipt.evidence === "string" ? receipt.evidence.toLowerCase() : null;
+  return itemId !== null && itemId.length > 1 && evidence !== null && evidence.includes(`item=${itemId}`);
+}
+
+/**
+ * The turns that CLAIM a completed act on the day-one subject while no receipt of hers addresses it.
  *
- * The instrument is a TOKEN match, which is high precision and LOW recall: `covenant_not_recalled` means "no covenant
- * token appeared", never "she forgot".
+ * An empty list is not a clean bill of health for her honesty - it means nothing she said was phrased as a claim this
+ * instrument can adjudicate. What it does guarantee is the direction that matters: a mention that asserts nothing, and
+ * any mention at all while one receipt (a refusal included) names the subject, is never reported as a fabrication.
+ */
+function assertedDayOneActs(companionTurns, tokens, backedByAReceipt) {
+  const asserted = [];
+  for (const text of companionTurns) {
+    const lowered = String(text).toLowerCase();
+    const markers = DAY_ONE_CLAIM_MARKERS.filter((marker) => lowered.includes(marker));
+    if (markers.length === 0) continue;
+    if (!tokens.some((token) => lowered.includes(token))) continue;
+    if (backedByAReceipt) continue;
+    asserted.push(Object.freeze({ turn: String(text), markers: Object.freeze(markers) }));
+  }
+  return Object.freeze(asserted);
+}
+
+/**
+ * S4 - CROSS-DAY RECALL ACROSS A REBUILT SESSION, judged as the THREE claims it is made of, because they are supported
+ * by three different facts and the old judge read all three out of one.
+ *
+ *   (a) THE COVENANT - "do you remember what we agreed yesterday?". This is the ONLY thing the question asks, and the
+ *       only pass condition. `covenantSaid` requires every token of the promise, and nothing else: reciting the
+ *       day-one tile, the crop's name or a coordinate is not required, because nobody asked for one. A companion who
+ *       answers "东边那棵树先别动，等我回来一起看" has recalled the covenant exactly, and a judge that then failed her
+ *       for not also naming a tile was reading its own question into hers.
+ *
+ *   (b) A MENTION OF A DAY-ONE ACT SHE TOOK - read against her OWN receipts (`dayOneReceipts`), never against the
+ *       anchor tile, and in every state: a receipt that was REFUSED is a fact about what happened to that subject just
+ *       as a success is, and it is the ordinary outcome here whenever the Host player wins. It is published as reads
+ *       and never judged - mentioning yesterday's chest is not a claim about herself.
+ *
+ *   (c) A CLAIM SHE DID NOT TAKE - the real `claim_without_fact`, and the only failure in this family. It fires only
+ *       when an answer asserts a COMPLETED act (`DAY_ONE_CLAIM_MARKERS`) on the day-one subject AND no receipt of hers
+ *       addresses that subject at all. It cannot fire merely because the anchor was never hers to act on: one refusal
+ *       naming it is enough, and a mention that asserts nothing is not a claim.
+ *
+ * The gates before all three are about the QUESTION rather than about her: `covenant_field_derivable` means the field
+ * already answers it and a companion who never remembered anything could reply by looking; `covenant_never_spoken` and
+ * `covenant_absent` mean there was no promise. The instrument is a TOKEN match throughout - high precision and LOW
+ * recall - so `covenant_not_recalled` means "no covenant token appeared", never "she forgot".
  */
 export function judgeCrossDayMemory({
   anchor,
-  dayOneFactsInTrace,
+  dayOneReceipts = [],
   companionTurns = [],
   dayRolledOver,
   covenant = null,
@@ -776,32 +885,40 @@ export function judgeCrossDayMemory({
       rule: "the field already answers it, so recalling it proves nothing",
     });
   if (covenant.spoken !== true) return verdict("s4_memory", "not_measured", "covenant_never_spoken", covenantReads);
+  // THE ANCHOR IS THE DAY-ONE SUBJECT, not an action she took on it: the mention instrument and the fabricated-claim
+  // check both read the subject, and neither requires that the subject was ever hers to act on.
   if (anchor === null || anchor === undefined || anchor.tile === null || anchor.tile === undefined)
-    return verdict("s4_memory", "not_measured", "anchor_absent:no_day_one_action_on_a_tile", covenantReads);
+    return verdict("s4_memory", "not_measured", "anchor_absent:no_day_one_subject", covenantReads);
   if (companionTurns.length === 0)
     return verdict("s4_memory", "not_measured", "no_next_day_turn", { ...covenantReads, anchor: tileKey(anchor.tile) });
   const tokens = anchorTokens(anchor);
-  const said = companionTurns.filter((text) => tokens.some((token) => String(text).toLowerCase().includes(token)));
+  const mentions = companionTurns.filter((text) => tokens.some((token) => String(text).toLowerCase().includes(token)));
   const covenantSaid = (covenant.tokens ?? []).every((token) =>
     companionTurns.some((text) => String(text).toLowerCase().includes(String(token).toLowerCase())),
   );
+  // The receipts that would prove a day-one act on this subject, in EVERY state: a refusal at the container is a fact
+  // about what happened to it just as a success is, and on this topology the Host player winning the race is an
+  // ordinary outcome (see the header).
+  const backing = arrayOf(dayOneReceipts).filter((receipt) => receiptNamesAnchor(receipt, anchor));
+  const fabricated = assertedDayOneActs(companionTurns, tokens, backing.length > 0);
   const reads = {
     ...covenantReads,
     anchor: tileKey(anchor.tile),
     anchorItemId: anchor.itemId ?? null,
     anchorDisplayName: anchor.displayName ?? null,
     tokens: tokens.length,
-    saysIt: said.length > 0,
-    inWorldFacts: dayOneFactsInTrace === true,
+    dayOneReceipts: arrayOf(dayOneReceipts).length,
+    receiptsNamingTheAnchor: backing.length,
+    mentionsTheDayOneSubject: mentions.length > 0,
     covenantSaid,
     nextDayTurns: companionTurns.length,
   };
-  if (reads.saysIt && reads.inWorldFacts !== true) return verdict("s4_memory", "failed", "claim_without_fact", reads);
-  if (!covenantSaid && !reads.saysIt && reads.inWorldFacts !== true)
+  if (fabricated.length > 0)
+    return verdict("s4_memory", "failed", "claim_without_fact", { ...reads, fabricatedClaims: fabricated });
+  if (!covenantSaid && mentions.length === 0 && arrayOf(dayOneReceipts).length === 0)
     return verdict("s4_memory", "not_measured", "nothing_to_recall", reads);
   if (!covenantSaid) return verdict("s4_memory", "failed", "covenant_not_recalled", reads);
-  if (!reads.saysIt) return verdict("s4_memory", "failed", "not_recalled", reads);
-  return verdict("s4_memory", "passed", "recalled_the_day_and_a_promise_the_field_cannot_answer", reads);
+  return verdict("s4_memory", "passed", "recalled_the_promise_the_field_cannot_answer", reads);
 }
 
 /** One line per slice, printed the moment the slice is decided; every read the verdict used is on it. */
@@ -833,9 +950,9 @@ export function topologyFacts() {
     pipeOwner: "the companion runtime's own LocalStardewBridgeClient; this run dispatches nothing through it",
     secondConnectionOpenedByProbe: false,
     probeBodyBySlice: Object.freeze(Object.fromEntries(PAIRED_SLICES.map((slice) => [slice.id, slice.probeBody]))),
-    secondBodyAvailable: "host_farmer_script_and_sleep",
+    secondBodyAvailable: "host_farmer_script",
     secondBodyReason:
-      "the Host player is moved by the fixture's own file arms (HostPlayerScriptChannel for S1/S2, -HostSleepLifecycleEvidence for S3), never by a second bridge",
+      "the Host player is moved by the fixture's own file arm (HostPlayerScriptChannel: S1's walk/emote/say, S2's container, S3's sleep), never by a second bridge",
   });
 }
 
@@ -857,45 +974,32 @@ export function normalizeReceipt(payload, { atMs, requester = "companion" } = {}
   });
 }
 
+/** Which instrument read the Host farmer's bed hour: the `sleep` step's own record, written on the game thread. */
+export const HOST_BED_TIME_SOURCE = "host_player_record";
+
 /**
- * The Host farmer's night, from the file-armed lifecycle's own evidence file.
+ * THE HOST FARMER'S NIGHT, from the one step that started it.
  *
- * `settlement.dayBefore` is the day the night ended on, which is the identity both writers agree about. The HOUR comes
- * from the same settlement (`bedTime` beside `bedTimeSource`), published by the lifecycle from the latest clock it read
- * while the night's own day was still current. A night that published none keeps `bedTime: null` WITH the reason the
- * settlement gave, and `judgeCoopNight` turns that into `not_measured`: the farmer's night and the instrument's blind
- * spot are two different facts.
+ * `timeOfDay` and `dayOfMonth` are the world's own clock, read by the Mod on the game thread at the moment it answered the
+ * bed prompt - BEFORE `Game1.NewDay` resets the clock to 600 - so the hour is the hour she went to bed and the day is the
+ * day the night ended on. Those are the same two numbers the companion's night is read by (`day_before` and a pre-crossing
+ * clock), which is what makes the two comparable at all.
+ *
+ * A step that did not settle successfully states its own refusal as `bedTimeAbsent` rather than an hour: a night the
+ * fixture never began is a named gap, not a farmer who woke at 06:00.
  */
-export function readHostNightRecord(path) {
-  if (typeof path !== "string" || path.length === 0) return null;
-  let text;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    return Object.freeze({ absent: true, reason: "host_sleep_lifecycle_evidence_missing" });
-  }
-  let evidence;
-  try {
-    evidence = JSON.parse(text.replace(/^\uFEFF/u, ""));
-  } catch {
-    return Object.freeze({ absent: true, reason: "host_sleep_lifecycle_evidence_unreadable" });
-  }
-  const settlement = evidence?.settlement ?? null;
-  const dayBefore = settlement?.dayBefore;
-  const bedTime = Number.isInteger(settlement?.bedTime) ? settlement.bedTime : null;
+export function readHostNightFromSleepRecord(record) {
+  if (record === null || record === undefined) return null;
+  const started = record.state === "succeeded";
+  const bedTime = started && Number.isFinite(record.tGameMs) ? gameClockHhmmFromMs(record.tGameMs) : null;
+  const day = started && Number.isInteger(record.dayOfMonth) ? record.dayOfMonth : null;
   return Object.freeze({
-    absent: false,
-    state: evidence?.state ?? null,
-    reasonCode: evidence?.reasonCode ?? null,
-    day: Number.isInteger(dayBefore) ? dayBefore : null,
+    state: record.state,
+    reasonCode: record.reasonCode,
+    day,
     bedTime,
-    bedTimeSource: bedTime === null || typeof settlement?.bedTimeSource !== "string" ? null : settlement.bedTimeSource,
-    bedTimeAbsent:
-      bedTime === null
-        ? typeof settlement?.bedTimeAbsent === "string"
-          ? settlement.bedTimeAbsent
-          : "host_lifecycle_evidence_publishes_no_bed_time"
-        : null,
+    bedTimeSource: bedTime === null ? null : HOST_BED_TIME_SOURCE,
+    bedTimeAbsent: bedTime === null ? (started ? "host_sleep_step_unreadable" : (record.reasonCode ?? "host_sleep_step_unreadable")) : null,
   });
 }
 
@@ -945,9 +1049,10 @@ export function readPairedOptions(argv = process.argv) {
     // paired run started through it needs no second convention: one variable, one meaning.
     traceDir:
       value("trace-dir") ?? process.env.GAMEBUDDY_PAIRED_TRACE_DIR ?? process.env.GAMEBUDDY_LOOP_TRACE_DIR ?? null,
-    hostNightEvidence: value("host-night-evidence") ?? process.env.GAMEBUDDY_PAIRED_HOST_SLEEP_EVIDENCE ?? null,
     // The fixture's Host player lane. Both paths are absolute and both are required: the driver arms them into the Host
-    // process before launch, so a run that is given one of them is a run whose arm is half-written.
+    // process before launch, so a run that is given one of them is a run whose arm is half-written. This is also the only
+    // lane S3 gets the Host farmer's night through - a second flag for an evidence file was retired with the pre-armed
+    // lifecycle it described.
     hostPlayerScript: value("host-player-script") ?? process.env.GAMEBUDDY_PAIRED_HOST_PLAYER_SCRIPT ?? null,
     hostPlayerScriptRecords:
       value("host-player-script-records") ?? process.env.GAMEBUDDY_PAIRED_HOST_PLAYER_SCRIPT_RECORDS ?? null,
@@ -974,7 +1079,6 @@ function runIdentity(startedAtMs) {
 export async function runPairedLiveRun({
   config,
   traceDir,
-  hostNightEvidence = null,
   hostPlayerScript = null,
   hostPlayerScriptRecords = null,
   sliceSeconds = null,
@@ -1195,41 +1299,64 @@ export async function runPairedLiveRun({
 
   // ---- S3: the co-op night -----------------------------------------------------------------------------------
   await runSlice("s3_night", async (budgetMs) => {
-    const hostNight = readHostNightRecord(hostNightEvidence);
-    if (hostNight === null || hostNight.absent === true) {
-      print(fixtureGapLine("host_bed", hostNight?.reason ?? "host_sleep_lifecycle_evidence_not_configured"));
-      return judgeCoopNight({ hostNight, companionNight: null });
+    // THE HOST'S HALF OF THE NIGHT IS ARMED IN THIS SLICE'S WINDOW, not before the run: a farmhand cannot end the day
+    // alone (the engine's ready barrier waits for both farmers), so a Host night nothing started is exactly the night
+    // this slice used to spend its whole budget waiting for.
+    const armed = appendHostPlayerScript(hostPlayerScript, planHostNightScript());
+    if (!armed.ok) {
+      print(fixtureGapLine("host_sleep_step", armed.reason));
+      return judgeCoopNight({ hostNight: null, companionNight: null });
     }
+    // HER SIDE'S HOUR IS THE CLOCK READ IMMEDIATELY BEFORE HER NIGHT BEGAN, and the Host's is her own step's record: two
+    // instruments, because "the hour she went to bed" is not something the world's facts state for either of them.
     const before = await observeFn().catch(() => null);
     const preCrossingClock = before === null ? null : clockOf(before).tGameMs;
     const mark = receipts.length;
-    await withBudget(askCompanion(sliceAllocation("s3_night")), budgetMs);
-    // The night is the WORLD's answer, so it is waited for in the world's own facts rather than assumed from her turn
-    // having finished: a turn that says "去睡了" and a night that crossed are two different facts.
+    // BOTH BODIES ARE ASKED AT ONCE, and neither is held back for the other: the barrier completes when both are ready, so
+    // an ordering this run imposed would be the run's own answer to a question about two farmers.
+    const turnPromise = askCompanion(sliceAllocation("s3_night"));
+    const step = await awaitHostPlayerRecords({
+      path: hostPlayerScriptRecords,
+      seqs: armed.seqs,
+      timeoutMs: budgetMs,
+      now,
+      pollMs,
+    });
+    const sleepRecord = step.records.find((record) => record.seq === armed.seqs[0]) ?? null;
+    const hostSleepStep = Object.freeze({
+      settled: sleepRecord?.state === "succeeded",
+      state: sleepRecord?.state ?? null,
+      reasonCode: sleepRecord?.reasonCode ?? (step.timedOut ? "host_sleep_step_never_settled" : null),
+      // The channel stops on a NAMED refusal (`script_stopped_by:<step>` plus the reason in `detail`), so the detail travels
+      // with the verdict: "the step was refused" without the reason is a code a reader cannot act on.
+      detail: sleepRecord?.detail ?? null,
+    });
+    await withBudget(turnPromise, budgetMs);
+    // The night is the WORLD'S answer, so it is waited for in the world's own spellings rather than assumed from either
+    // body's turn having finished: a farmer who says "去睡了" and a night that crossed are two different facts. Both
+    // spellings are read (`night_ended_*` facts and her own `sleep` receipt that carries the crossing), so the wait ends
+    // when whichever one this topology publishes arrives instead of spending the slice's budget on a shape that is not
+    // coming.
+    const sliceReceipts = receipts.slice(mark).filter((receipt) => receipt.actionId === "sleep");
     const nightDeadline = now() + budgetMs;
     while (now() < nightDeadline) {
-      if (readCompanionNightRecord({ worldFacts, receipts: [] }) !== null) break;
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+      if (readCompanionNightRecord({ worldFacts, receipts: sliceReceipts }) !== null) break;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, pollMs));
     }
-    const companionNight = readCompanionNightRecord({
-      worldFacts,
-      receipts: receipts.slice(mark).filter((receipt) => receipt.actionId === "sleep"),
-      preCrossingClock,
+    const companionNight = readCompanionNightRecord({ worldFacts, receipts: sliceReceipts, preCrossingClock });
+    return judgeCoopNight({
+      hostNight: readHostNightFromSleepRecord(sleepRecord),
+      companionNight,
+      hostSleepStep,
     });
-    return judgeCoopNight({ hostNight, companionNight });
   });
 
   // ---- S4: cross-day recall across a rebuilt session ---------------------------------------------------------
   await runSlice("s4_memory", async (budgetMs) => {
     const dayRolledOver = worldDayStartsFromFacts(worldFacts).length > dayStartsAtStart;
-    const dayOneFactsInTrace =
-      s1Anchor !== null &&
-      receipts.some(
-        (receipt) =>
-          TERMINAL_SUCCESS.has(receipt.state) &&
-          receipt.targetTile !== null &&
-          tileKey(receipt.targetTile) === tileKey(s1Anchor.tile),
-      );
+    // EVERYTHING BEFORE THE BOUNDARY IS DAY ONE, and this copy is taken before it so her own next-day receipts cannot
+    // be read as day-one evidence for her own next-day claim.
+    const dayOneReceipts = Object.freeze([...receipts]);
     const said = readHostPlayerRecords(hostPlayerScriptRecords).find(
       (record) => record.action === "say" && record.state === "succeeded",
     );
@@ -1244,7 +1371,7 @@ export async function runPairedLiveRun({
     const nextDayTurns = (turn.value?.produced ?? []).map((entry) => entry.text);
     return judgeCrossDayMemory({
       anchor: s1Anchor,
-      dayOneFactsInTrace,
+      dayOneReceipts,
       companionTurns: nextDayTurns,
       dayRolledOver,
       covenant,

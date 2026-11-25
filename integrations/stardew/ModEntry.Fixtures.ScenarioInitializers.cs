@@ -135,6 +135,10 @@ public sealed partial class ModEntry
         NativeLocalFixtureScenarioRow.ActorPrepared("native_crop_research_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalCropResearchFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_fertilize_tile_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalFertilizeTileFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_harvest_crop_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalHarvestCropFixture(player, farm)),
+        // THE PAIRED WORLD: one ripe crop AND one chest holding one item on the same map, with her body already on that
+        // map inside the observation's discovery radius of both. Its own row because no shipped scenario carries both,
+        // and because the paired run's S1 and S2 are measured on one launch of it rather than two.
+        NativeLocalFixtureScenarioRow.ActorPrepared("native_paired_companion_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalPairedCompanionFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_harvest_crop_inventory_full_recovery_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalHarvestCropInventoryFullRecoveryFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_jodi_harvest_deliver_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalJodiHarvestDeliverFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_strawberry_covenant_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalStrawberryCovenantFixture(player, farm)),

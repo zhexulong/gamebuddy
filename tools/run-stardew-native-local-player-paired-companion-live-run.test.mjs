@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
+import { parseReceiptEvidence } from "./lib/multiday-baseline.mjs";
+import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import {
   gameClockHhmmFromMs,
   gameClockMs,
@@ -11,28 +12,29 @@ import {
   receiptTargetTile,
   snapshotClock,
 } from "./lib/stardew-player-probe-driver.mjs";
-import { parseReceiptEvidence } from "./lib/multiday-baseline.mjs";
 import {
-  COVENANT_LINE,
-  COVENANT_RECALL_TOKENS,
-  HOST_PLAYER_SCRIPT_SCHEMA,
-  PAIRED_SLICES,
   allocationLeaksTile,
   appendHostPlayerScript,
   attentionSubject,
   awaitHostPlayerRecords,
+  COVENANT_LINE,
+  COVENANT_RECALL_TOKENS,
   covenantIsFieldDerivable,
   fixtureGapLine,
   gameMinutesBetween,
+  HOST_BED_TIME_SOURCE,
+  HOST_PLAYER_SCRIPT_SCHEMA,
   judgeConcurrentClaim,
   judgeCoopNight,
   judgeCrossDayMemory,
   judgeJointAttention,
   normalizeReceipt,
+  PAIRED_SLICES,
   planHostAttentionScript,
   planHostClaimScript,
+  planHostNightScript,
   readCompanionNightRecord,
-  readHostNightRecord,
+  readHostNightFromSleepRecord,
   readHostPlayerRecords,
   renderSliceLine,
   runPairedLiveRun,
@@ -142,49 +144,46 @@ test("the Host player's script is the protocol the Mod parses, and it round-trip
     assert.equal(written.steps[1].emote, "exclamation");
     assert.equal(written.steps[2].text, COVENANT_LINE, "the promise is the player's own line, spoken in the world");
 
-    // The records the channel would write, read back into the same field names a receipt is read by.
-    writeFileSync(
-      recordsPath,
-      [
-        {
-          seq: 1,
-          stepId: "walk",
-          action: "walk_to_tile",
-          state: "succeeded",
-          reasonCode: "walked_to_tile",
-          x: 39,
-          y: 19,
-          timeOfDay: 1010,
-          dayOfMonth: 1,
-          location: "Farm",
-        },
-        {
-          seq: 3,
-          stepId: "say",
-          action: "say",
-          state: "succeeded",
-          reasonCode: "chat_sent",
-          x: 39,
-          y: 19,
-          timeOfDay: 1010,
-          dayOfMonth: 1,
-        },
-        {
-          seq: null,
-          stepId: null,
-          action: "script",
-          state: "succeeded",
-          reasonCode: "script_complete",
-          x: 39,
-          y: 19,
-          timeOfDay: 1010,
-        },
-      ]
-        .map((record) => JSON.stringify(record))
-        .join("\n"),
-    );
+    // The records the channel would write, read back into the same field names a receipt is read by. The rows are one
+    // declaration and the count is READ OFF it, so the assertion below cannot drift from the fixture it describes.
+    const recordRows = [
+      {
+        seq: 1,
+        stepId: "walk",
+        action: "walk_to_tile",
+        state: "succeeded",
+        reasonCode: "walked_to_tile",
+        x: 39,
+        y: 19,
+        timeOfDay: 1010,
+        dayOfMonth: 1,
+        location: "Farm",
+      },
+      {
+        seq: 3,
+        stepId: "say",
+        action: "say",
+        state: "succeeded",
+        reasonCode: "chat_sent",
+        x: 39,
+        y: 19,
+        timeOfDay: 1010,
+        dayOfMonth: 1,
+      },
+      {
+        seq: null,
+        stepId: null,
+        action: "script",
+        state: "succeeded",
+        reasonCode: "script_complete",
+        x: 39,
+        y: 19,
+        timeOfDay: 1010,
+      },
+    ];
+    writeFileSync(recordsPath, recordRows.map((record) => JSON.stringify(record)).join("\n"));
     const records = readHostPlayerRecords(recordsPath);
-    assert.equal(records.length, 3);
+    assert.equal(records.length, recordRows.length);
     assert.equal(records[0].seq, 1, "a step record carries the position that makes it attributable to one slice");
     assert.equal(records[2].seq, null, "a channel-level record belongs to no step");
     assert.deepEqual(records[0].targetTile, { x: 39, y: 19, source: "host_player_record" });
@@ -228,12 +227,27 @@ test("S2's steps are appended behind S1's in the same document, at positions of 
       "a repeated step id is two steps, because two positions carry it",
     );
 
+    // S3's step goes into the same document BEHIND S2's, and it carries no payload at all: which bed is the engine's own
+    // answer (`FarmHouse.GetPlayerBedSpot`), so a step naming one would be a second spelling of it.
+    const s3 = appendHostPlayerScript(scriptPath, planHostNightScript());
+    assert.deepEqual(s3.seqs, [6], "S3 is a position in the same document, not a file of its own");
+    const withNight = JSON.parse(readFileSync(scriptPath, "utf8"));
+    assert.deepEqual(withNight.steps[5], { stepId: "sleep", action: "sleep", seq: 6 });
+
     // Sealing is the fixture's own end-of-stream, and it keeps every step exactly as written.
     const sealed = sealHostPlayerScript(scriptPath);
     assert.equal(sealed.ok, true);
     const final = JSON.parse(readFileSync(scriptPath, "utf8"));
     assert.equal(final.sealed, true);
-    assert.equal(final.steps.length, 5);
+    assert.equal(final.steps.length, 6);
+
+    // A STEP THAT ARRIVES AFTER `sealed` IS REFUSED BY NAME. The Mod stops reading a sealed document, so a step written
+    // past it would be performed by nobody and the slice that armed it would wait out its budget for a cue that was never
+    // given - which is exactly how S3's night would disappear.
+    const late = appendHostPlayerScript(scriptPath, planHostNightScript());
+    assert.equal(late.ok, false);
+    assert.equal(late.reason, "host_player_script_sealed");
+    assert.deepEqual(late.seqs, []);
 
     // A document this run cannot extend is refused by name rather than replaced: replacing it would drop steps the Mod
     // may already have performed.
@@ -454,17 +468,18 @@ test("S2's plan contends over the container the world published, with one item i
 
 test("S3: two readable nights pass; ONE night is a failure, and an unreadable hour is not the farmer's fault", () => {
   const hostNight = {
-    absent: false,
-    state: "passed",
+    state: "succeeded",
     day: 4,
     bedTime: 2210,
-    bedTimeSource: "pre_crossing_clock",
+    bedTimeSource: HOST_BED_TIME_SOURCE,
     bedTimeAbsent: null,
   };
+  const hostSleepStep = { settled: true, state: "succeeded", reasonCode: "sleeping" };
   const companionNight = { day: 4, bedTime: 2240, bedTimeSource: "pre_crossing_clock", bedTimeAbsent: null };
-  const passed = judgeCoopNight({ hostNight, companionNight });
+  const passed = judgeCoopNight({ hostNight, companionNight, hostSleepStep });
   assert.equal(passed.state, "passed");
   assert.equal(passed.reads.order, "host_first");
+  assert.equal(passed.reads.hostSleepReason, "sleeping", "the step that started the night travels with the verdict");
 
   // RED CASE 4: only one night is readable - the body that never slept, `round94`'s `null`.
   const oneNight = judgeCoopNight({
@@ -475,14 +490,17 @@ test("S3: two readable nights pass; ONE night is a failure, and an unreadable ho
       bedTimeSource: null,
       bedTimeAbsent: "no_clock_reading_before_the_crossing",
     },
+    hostSleepStep,
   });
   assert.equal(oneNight.state, "failed");
   assert.equal(oneNight.reasonCode, "companion_never_slept");
+  // With nothing said about the Host's step, an absent night stays the instrument's gap rather than her failure.
+  assert.equal(judgeCoopNight({ hostNight, companionNight: null }).state, "not_measured");
   assert.equal(judgeCoopNight({ hostNight, companionNight: null }).reasonCode, "companion_night_absent");
 
   // Two nights, two different nights: the co-op night did not happen.
   assert.match(
-    judgeCoopNight({ hostNight, companionNight: { ...companionNight, day: 5 } }).reasonCode,
+    judgeCoopNight({ hostNight, companionNight: { ...companionNight, day: 5 }, hostSleepStep }).reasonCode,
     /^wrong_night:probe=day4:companion=day5$/u,
   );
 
@@ -496,123 +514,167 @@ test("S3: two readable nights pass; ONE night is a failure, and an unreadable ho
       bedTimeAbsent: "no_clock_reading_before_the_crossing",
     },
     companionNight,
+    hostSleepStep,
   });
   assert.equal(blind.state, "not_measured");
   assert.equal(blind.reasonCode, "host_bed_time_unreadable:no_clock_reading_before_the_crossing");
 
-  // No second body at all: the run was not launched with the Host sleep lane.
+  // No second body at all: the run was not launched with the Host player's script lane.
   const single = judgeCoopNight({ hostNight: null, companionNight });
   assert.equal(single.state, "not_measured");
-  assert.equal(single.reasonCode, "two_bodies_unavailable:host_night_not_configured");
+  assert.equal(single.reasonCode, "two_bodies_unavailable:host_sleep_step_never_settled");
+  assert.equal(single.reads.launchesWith.indexOf("-HostPlayerScript") >= 0, true);
+  assert.equal(single.reads.fixtureArm, "host_sleep_step");
 });
 
-test("the Host night is read from the file-armed lifecycle's own evidence, hour included", () => {
-  const dir = scratch();
-  try {
-    assert.deepEqual(readHostNightRecord(join(dir, "absent.json")), {
-      absent: true,
-      reason: "host_sleep_lifecycle_evidence_missing",
-    });
-    assert.equal(readHostNightRecord(null), null);
+/**
+ * THE FAILURE THIS SLICE EXISTS FOR: the Host's night STARTED and the world never crossed it.
+ *
+ * A co-op day ends only when both farmers are ready, so a Host farmer in bed beside a farmhand who never slept is a night
+ * that cannot cross - and a run that reported `not_measured` for it was reporting its own budget as the finding. The
+ * failure is named for what did not happen (`host_night_never_started`), and the readings that make it a failure rather
+ * than a gap travel with it: her own hour, her day, and the step that put her there.
+ */
+test("S3 fails BY NAME when the Host's sleep settled and no night followed", () => {
+  const hostNight = {
+    state: "succeeded",
+    day: 4,
+    bedTime: 2210,
+    bedTimeSource: HOST_BED_TIME_SOURCE,
+    bedTimeAbsent: null,
+  };
+  const hostSleepStep = { settled: true, state: "succeeded", reasonCode: "sleeping" };
 
-    const path = join(dir, "host-night.json");
-    // The settlement the lifecycle now writes: the crossing's day AND the hour it took the farmer.
-    writeFileSync(
-      path,
-      JSON.stringify({
-        schema: "gamebuddy-sleep-lifecycle/v1",
-        state: "passed",
-        reasonCode: "day_advanced",
-        settlement: { dayBefore: 4, dayAfter: 5, bedTime: 2210, bedTimeSource: "pre_crossing_clock" },
-      }),
-    );
-    const record = readHostNightRecord(path);
-    assert.equal(record.day, 4);
-    assert.equal(record.state, "passed");
-    assert.equal(record.bedTime, 2210);
-    assert.equal(record.bedTimeSource, "pre_crossing_clock");
-    assert.equal(record.bedTimeAbsent, null);
+  const never = judgeCoopNight({ hostNight, companionNight: null, hostSleepStep });
+  assert.equal(never.state, "failed");
+  assert.equal(never.reasonCode, "host_night_never_started");
+  assert.equal(never.reads.hostBedTime, 2210);
+  assert.equal(never.reads.hostDay, 4);
+  assert.equal(never.reads.hostSleepState, "succeeded");
 
-    // An older/other writer that publishes no hour keeps a NAMED gap rather than a fabricated 06:00.
-    writeFileSync(
-      path,
-      JSON.stringify({
-        schema: "gamebuddy-sleep-lifecycle/v1",
-        state: "passed",
-        settlement: { dayBefore: 4, dayAfter: 5 },
-      }),
-    );
-    const bare = readHostNightRecord(path);
-    assert.equal(bare.bedTime, null);
-    assert.equal(bare.bedTimeAbsent, "host_lifecycle_evidence_publishes_no_bed_time");
-
-    // The settlement's own reason travels through unchanged when it has one.
-    writeFileSync(
-      path,
-      JSON.stringify({
-        schema: "gamebuddy-sleep-lifecycle/v1",
-        state: "passed",
-        settlement: { dayBefore: 4, bedTimeAbsent: "no_clock_reading_before_the_crossing" },
-      }),
-    );
-    assert.equal(readHostNightRecord(path).bedTimeAbsent, "no_clock_reading_before_the_crossing");
-
-    writeFileSync(join(dir, "broken.json"), "{not json");
-    assert.deepEqual(readHostNightRecord(join(dir, "broken.json")), {
-      absent: true,
-      reason: "host_sleep_lifecycle_evidence_unreadable",
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  // THE CONTROL, so the assertion above is about the missing night and not about the word `failed`: the same world with a
+  // step that never settled is the instrument, not the farmer.
+  const driven = judgeCoopNight({
+    hostNight: {
+        state: "rejected",
+      reasonCode: "script_stopped_by:sleep",
+      day: null,
+      bedTime: null,
+      bedTimeSource: null,
+      bedTimeAbsent: "script_stopped_by:sleep",
+    },
+    companionNight: null,
+    hostSleepStep: { settled: false, state: "rejected", reasonCode: "script_stopped_by:sleep" },
+  });
+  assert.equal(driven.state, "not_measured");
+  assert.equal(driven.reasonCode, "host_bed_time_unreadable:script_stopped_by:sleep");
+  assert.equal(driven.reads.hostSleepReason, "script_stopped_by:sleep");
+  // ...AND WHY IT WAS REFUSED: "the step was refused" without the reason is a code a reader cannot act on.
+  const explained = judgeCoopNight({
+    hostNight: {
+      state: "rejected",
+      reasonCode: "script_stopped_by:sleep",
+      day: null,
+      bedTime: null,
+      bedTimeSource: null,
+      bedTimeAbsent: "script_stopped_by:sleep",
+    },
+    companionNight: null,
+    hostSleepStep: {
+      settled: false,
+      state: "rejected",
+      reasonCode: "script_stopped_by:sleep",
+      detail: "reason=sleep_bed_missing:FarmHouse",
+    },
+  });
+  assert.equal(explained.reads.hostSleepDetail, "reason=sleep_bed_missing:FarmHouse");
 });
 
-test("S3 end to end: the Host lane's own evidence file decides the slice, and a file with no hour never passes", () => {
-  const dir = scratch();
-  try {
-    const path = join(dir, "host-night.json");
-    const companionNight = { day: 4, bedTime: 2240, bedTimeSource: "pre_crossing_clock", bedTimeAbsent: null };
-    const hostNightFile = (settlement) =>
-      writeFileSync(
-        path,
-        JSON.stringify({
-          schema: "gamebuddy-sleep-lifecycle/v1",
-          state: "passed",
-          reasonCode: "day_advanced",
-          settlement,
-        }),
-      );
+/**
+ * THE HOST'S NIGHT COMES FROM HER OWN STEP, not from a file armed before the run.
+ *
+ * The `sleep` step's record is written on the game thread at the moment the Mod answered the engine's bed prompt, so its
+ * `timeOfDay` is the hour she went to bed and its `dayOfMonth` is the day that night ended on - the two numbers the
+ * companion's night is read by. A step that was refused, or a record whose clock never arrived, is a NAMED gap: an hour
+ * nobody observed must never be reported as 06:00.
+ */
+test("the Host night is read from the sleep step's own record, hour and day included", () => {
+  const settled = {
+    seq: 6,
+    stepId: "sleep",
+    action: "sleep",
+    state: "succeeded",
+    reasonCode: "sleeping",
+    tGameMs: gameClockMs(2210),
+    dayOfMonth: 4,
+  };
+  const night = readHostNightFromSleepRecord(settled);
+  assert.equal(night.day, 4);
+  assert.equal(night.state, "succeeded");
+  assert.equal(night.bedTime, 2210, "the hour the Mod read before the engine reset the clock");
+  assert.equal(night.bedTimeSource, HOST_BED_TIME_SOURCE);
+  assert.equal(night.bedTimeAbsent, null);
 
-    // The night the lifecycle publishes: the judge reads the HOUR it published, not just the presence of a field, so
-    // moving the Host farmer's bed time moves the order the verdict reports.
-    hostNightFile({ dayBefore: 4, dayAfter: 5, bedTime: 2210, bedTimeSource: "pre_crossing_clock" });
-    const earlier = judgeCoopNight({ hostNight: readHostNightRecord(path), companionNight });
-    assert.equal(earlier.state, "passed");
-    assert.equal(earlier.reads.hostBedTime, 2210);
-    assert.equal(earlier.reads.order, "host_first");
+  // A step the channel refused states its own reason rather than an hour: the body never went to bed, and the judgement
+  // must read that as the fixture's failure rather than as a farmer who woke early.
+  const refused = readHostNightFromSleepRecord({ ...settled, state: "rejected", reasonCode: "script_stopped_by:sleep" });
+  assert.equal(refused.bedTime, null);
+  assert.equal(refused.bedTimeSource, null);
+  assert.equal(refused.bedTimeAbsent, "script_stopped_by:sleep");
 
-    hostNightFile({ dayBefore: 4, dayAfter: 5, bedTime: 2310, bedTimeSource: "pre_crossing_clock" });
-    assert.equal(
-      judgeCoopNight({ hostNight: readHostNightRecord(path), companionNight }).reads.order,
-      "companion_first",
-    );
+  // A record that settled with no clock keeps a NAMED gap rather than a fabricated hour.
+  const unclocked = readHostNightFromSleepRecord({ ...settled, tGameMs: null });
+  assert.equal(unclocked.bedTime, null);
+  assert.equal(unclocked.bedTimeAbsent, "host_sleep_step_unreadable");
 
-    // A file that publishes no hour - an older writer, or one whose clock was never read - is `not_measured` with the
-    // READER's reason, never a pass on an hour nobody observed.
-    hostNightFile({ dayBefore: 4, dayAfter: 5 });
-    const bare = judgeCoopNight({ hostNight: readHostNightRecord(path), companionNight });
-    assert.equal(bare.state, "not_measured");
-    assert.equal(bare.reasonCode, "host_bed_time_unreadable:host_lifecycle_evidence_publishes_no_bed_time");
+  // No record at all is no night: the judge turns that into `two_bodies_unavailable`, never into a pass.
+  assert.equal(readHostNightFromSleepRecord(null), null);
+});
 
-    // And a settlement that names its own absence carries the writer's spelling through to the verdict.
-    hostNightFile({ dayBefore: 4, bedTimeAbsent: "no_clock_reading_before_the_crossing" });
-    assert.equal(
-      judgeCoopNight({ hostNight: readHostNightRecord(path), companionNight }).reasonCode,
-      "host_bed_time_unreadable:no_clock_reading_before_the_crossing",
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+/**
+ * THE WHOLE SLICE, END TO END, from the step's record to the verdict.
+ *
+ * The hour is what decides the order, so moving the reading the Mod wrote moves the verdict - which is the property a
+ * reader needs: S3 reports the clock the farmer's own body produced, not one this run chose.
+ */
+test("S3 end to end: the step's record decides the slice, and a record with no hour never passes", () => {
+  const companionNight = { day: 4, bedTime: 2240, bedTimeSource: "pre_crossing_clock", bedTimeAbsent: null };
+  const hostSleepStep = { settled: true, state: "succeeded", reasonCode: "sleeping" };
+  const recordAt = (timeOfDay) => ({
+    seq: 6,
+    stepId: "sleep",
+    action: "sleep",
+    state: "succeeded",
+    reasonCode: "sleeping",
+    tGameMs: gameClockMs(timeOfDay),
+    dayOfMonth: 4,
+  });
+
+  const earlier = judgeCoopNight({
+    hostNight: readHostNightFromSleepRecord(recordAt(2210)),
+    companionNight,
+    hostSleepStep,
+  });
+  assert.equal(earlier.state, "passed");
+  assert.equal(earlier.reads.hostBedTime, 2210);
+  assert.equal(earlier.reads.hostBedTimeSource, HOST_BED_TIME_SOURCE);
+  assert.equal(earlier.reads.order, "host_first");
+
+  assert.equal(
+    judgeCoopNight({ hostNight: readHostNightFromSleepRecord(recordAt(2310)), companionNight, hostSleepStep }).reads
+      .order,
+    "companion_first",
+  );
+
+  // An hour that never arrived is the instrument's blind spot, with the READER's reason - never a pass on an hour nobody
+  // observed.
+  const bare = judgeCoopNight({
+    hostNight: readHostNightFromSleepRecord({ ...recordAt(2210), tGameMs: null }),
+    companionNight,
+    hostSleepStep,
+  });
+  assert.equal(bare.state, "not_measured");
+  assert.equal(bare.reasonCode, "host_bed_time_unreadable:host_sleep_step_unreadable");
 });
 
 test("the covenant the run speaks is one the FIELD cannot answer", () => {
@@ -637,24 +699,36 @@ test("the covenant the run speaks is one the FIELD cannot answer", () => {
 test("S4 judges the promise across the rebuilt session, and names a covenant too weak to test", () => {
   const anchor = { tile: { x: 39, y: 18 }, itemId: "(O)256", displayName: "番茄" };
   const covenant = { line: COVENANT_LINE, tokens: COVENANT_RECALL_TOKENS, spoken: true, fieldDerivable: false };
+  // Her day one, as the trace holds it: the crop on the anchor tile was harvested by her.
+  const harvestedTheAnchor = [
+    {
+      actionId: "harvest_crop",
+      state: "succeeded",
+      reasonCode: "crop_harvested",
+      targetTile: { x: 39, y: 18 },
+      evidence: "location=Farm;tile=39,18;item=(O)256",
+      evicted: ["39:18"],
+    },
+  ];
 
   const both = judgeCrossDayMemory({
     anchor,
-    dayOneFactsInTrace: true,
+    dayOneReceipts: harvestedTheAnchor,
     companionTurns: ["昨天我把那格番茄收了。", "东边那棵树我留着没动。"],
     dayRolledOver: true,
     covenant,
     sessionBoundary: "fresh_game_runtime_session_on_the_same_continuity_identity",
   });
   assert.equal(both.state, "passed");
-  assert.equal(both.reads.saysIt, true);
+  assert.equal(both.reads.mentionsTheDayOneSubject, true);
+  assert.equal(both.reads.receiptsNamingTheAnchor, 1);
   assert.equal(both.reads.covenantSaid, true);
   assert.equal(both.reads.covenantFieldDerivable, false);
 
   // RED CASE 5: the promise itself is missing from her next-day answer.
   const forgot = judgeCrossDayMemory({
     anchor,
-    dayOneFactsInTrace: true,
+    dayOneReceipts: harvestedTheAnchor,
     companionTurns: ["昨天我把那格番茄收了。"],
     dayRolledOver: true,
     covenant,
@@ -666,7 +740,7 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
   // NOT that she remembered.
   const weak = judgeCrossDayMemory({
     anchor,
-    dayOneFactsInTrace: true,
+    dayOneReceipts: harvestedTheAnchor,
     companionTurns: ["东边那棵树我留着。", "昨天收了番茄。"],
     dayRolledOver: true,
     covenant: { ...covenant, fieldDerivable: true },
@@ -678,7 +752,7 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
   assert.equal(
     judgeCrossDayMemory({
       anchor,
-      dayOneFactsInTrace: true,
+      dayOneReceipts: harvestedTheAnchor,
       companionTurns: ["东边那棵树我留着。"],
       dayRolledOver: false,
       covenant,
@@ -688,14 +762,18 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
 
   // No promise at all: there is nothing to recall, and that is not a pass either.
   assert.equal(
-    judgeCrossDayMemory({ anchor, dayOneFactsInTrace: true, companionTurns: ["东边那棵树。"], dayRolledOver: true })
-      .reasonCode,
+    judgeCrossDayMemory({
+      anchor,
+      dayOneReceipts: harvestedTheAnchor,
+      companionTurns: ["东边那棵树。"],
+      dayRolledOver: true,
+    }).reasonCode,
     "covenant_absent:no_verbal_promise_before_the_boundary",
   );
   assert.equal(
     judgeCrossDayMemory({
       anchor,
-      dayOneFactsInTrace: true,
+      dayOneReceipts: harvestedTheAnchor,
       companionTurns: ["东边那棵树。"],
       dayRolledOver: true,
       covenant: { ...covenant, fieldDerivable: null },
@@ -705,7 +783,7 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
   assert.equal(
     judgeCrossDayMemory({
       anchor,
-      dayOneFactsInTrace: true,
+      dayOneReceipts: harvestedTheAnchor,
       companionTurns: ["东边那棵树。"],
       dayRolledOver: true,
       covenant: { ...covenant, spoken: false },
@@ -713,21 +791,11 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
     "covenant_never_spoken",
   );
 
-  // The old halves are still judged: she says a day-one action the trace cannot support.
-  const claimed = judgeCrossDayMemory({
-    anchor,
-    dayOneFactsInTrace: false,
-    companionTurns: ["昨天我把那格番茄收了。", "东边那棵树我留着。"],
-    dayRolledOver: true,
-    covenant,
-  });
-  assert.equal(claimed.reasonCode, "claim_without_fact");
-
   // Nothing happened on day one and nothing was said: `nothing_to_recall`, not a pass.
   assert.equal(
     judgeCrossDayMemory({
       anchor,
-      dayOneFactsInTrace: false,
+      dayOneReceipts: [],
       companionTurns: ["今天天气不错。"],
       dayRolledOver: true,
       covenant,
@@ -735,21 +803,125 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
     "nothing_to_recall",
   );
   assert.equal(
-    judgeCrossDayMemory({ anchor, dayOneFactsInTrace: true, companionTurns: [], dayRolledOver: true, covenant })
-      .reasonCode,
+    judgeCrossDayMemory({
+      anchor,
+      dayOneReceipts: harvestedTheAnchor,
+      companionTurns: [],
+      dayRolledOver: true,
+      covenant,
+    }).reasonCode,
     "no_next_day_turn",
   );
   // The tile is a token too, so a companion that says WHERE is recognised without knowing the item's name.
   assert.equal(
     judgeCrossDayMemory({
       anchor,
-      dayOneFactsInTrace: true,
+      dayOneReceipts: harvestedTheAnchor,
       companionTurns: ["39,18 那一格是我收的。", "东边的树我没砍。"],
       dayRolledOver: true,
       covenant,
     }).state,
     "passed",
   );
+});
+
+/**
+ * THE THREE CLAIMS, ONE CASE EACH - the two false convictions S4 used to produce and the fabricated action it must
+ * still catch. The covenant question asks only whether she remembers the promise; a judge that also demanded a
+ * coordinate, and one that read any mention of yesterday as a claim of an act, both convicted a correct companion.
+ */
+test("S4 separates remembering the covenant, mentioning a day-one act, and claiming one she never took", () => {
+  const anchor = { tile: { x: 39, y: 18 }, itemId: "(O)256", displayName: "番茄" };
+  const covenant = { line: COVENANT_LINE, tokens: COVENANT_RECALL_TOKENS, spoken: true, fieldDerivable: false };
+  const judge = (overrides) => judgeCrossDayMemory({ anchor, dayRolledOver: true, covenant, ...overrides });
+
+  // (a) THE QUESTION ANSWERED, AND NO COORDINATE. She never names the tile or the crop, because nobody asked her to:
+  // the covenant is the whole of what was promised, and recalling it is the whole of the property.
+  const covenantOnly = judge({
+    dayOneReceipts: [
+      {
+        actionId: "move_to_tile",
+        state: "succeeded",
+        reasonCode: "walked_to_tile",
+        targetTile: { x: 40, y: 18 },
+        evidence: "tile=40,18",
+        evicted: [],
+      },
+    ],
+    companionTurns: ["东边那棵树先别动，等你回来一起看。"],
+  });
+  assert.equal(covenantOnly.state, "passed", JSON.stringify(covenantOnly.reads));
+  assert.equal(covenantOnly.reasonCode, "recalled_the_promise_the_field_cannot_answer");
+  assert.equal(covenantOnly.reads.mentionsTheDayOneSubject, false, "a landmark she does not name is not a defect");
+
+  // (b) A REFUSAL IS EVIDENCE TOO. The Host player won the container, so her own take settled `chest_empty` with no tile
+  // in its evidence at all - only the item id. Naming yesterday's container afterwards is the truth, not a fabrication.
+  const refusal = [
+    {
+      actionId: "chest_retrieve",
+      state: "rejected",
+      reasonCode: "chest_empty",
+      targetTile: null,
+      evidence: "target=chest_0123456789abcdef;item=(O)256",
+      evicted: [],
+    },
+  ];
+  const lostTheRace = judge({
+    dayOneReceipts: refusal,
+    companionTurns: ["东边那棵树先别动，等你回来一起看。", "箱子里那个番茄我拿到了吗？没有——你先拿了。"],
+  });
+  assert.equal(lostTheRace.state, "passed", JSON.stringify(lostTheRace.reads));
+  assert.equal(lostTheRace.reads.receiptsNamingTheAnchor, 1);
+  assert.equal(lostTheRace.reads.mentionsTheDayOneSubject, true);
+
+  // The same sentence with NO receipt behind it at all is the real thing this verdict exists for: she asserts a
+  // completed act on the day-one subject and her own trace holds nothing that names it.
+  const fabricated = judge({
+    dayOneReceipts: [],
+    companionTurns: ["东边那棵树先别动。", "昨天那格番茄我摘了，拿进背包了。"],
+  });
+  assert.equal(fabricated.state, "failed");
+  assert.equal(fabricated.reasonCode, "claim_without_fact");
+  assert.deepEqual(
+    fabricated.reads.fabricatedClaims.map((claim) => claim.turn),
+    ["昨天那格番茄我摘了，拿进背包了。"],
+    "the verdict names the sentence, not just the slice",
+  );
+  // ... and a mention that asserts NOTHING is not a claim, even with the same empty trace: the crop was simply there.
+  assert.equal(
+    judge({ dayOneReceipts: [], companionTurns: ["东边那棵树先别动。", "昨天那格番茄红得很。"] }).state,
+    "passed",
+  );
+  // A denial is not a claim either: the perfective markers are what the instrument reads, and `没拿到` is not `拿到了`.
+  assert.equal(
+    judge({ dayOneReceipts: [], companionTurns: ["东边那棵树先别动。", "那个番茄我没拿到。"] }).state,
+    "passed",
+  );
+});
+
+test("the paired lane key arms its own scenario, and every action it publishes exists", () => {
+  const actions = fixtureActions("paired_companion");
+  // The four slices need these and nothing else: go to the person, contend for the container, and end her own night.
+  for (const required of ["move_to_tile", "chest_retrieve", "harvest_crop", "observe_scene", "sleep"])
+    assert.ok(actions.includes(required), `the paired lane publishes ${required}`);
+
+  // ACTION-KEYED, NOT ACTION-SET-KEYED: the set carries `harvest_crop`, `chest_retrieve` and `sleep`, and every one of
+  // those has an `includes()` fallback in `fixtureScenario` that would otherwise arm another lane's world.
+  assert.equal(fixtureScenario(actions, "paired_companion"), "native_paired_companion_v1");
+
+  // Every id is one the surface actually publishes; a lane that grants an unpublished action is refused there.
+  const surface = JSON.parse(
+    readFileSync(
+      new URL("../integrations/stardew/action-development/contracts/generated/action-surface.v1.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const published = new Set(surface.actions.map((action) => action.actionId));
+  for (const action of actions) assert.ok(published.has(action), `${action} is a published action id`);
+
+  // The run's own map of arms names the same scenario, so the line it prints at 3 a.m. is the world that exists.
+  for (const requirement of ["ready_grab_crop", "chest_with_item"])
+    assert.match(fixtureGapLine(requirement, "any"), /arm=native_paired_companion_v1/u);
 });
 
 test("the companion's night comes from the world's own ending spellings, and states the hour's provenance", () => {
@@ -846,12 +1018,12 @@ test("the receipt normaliser reads fields, and the slice line names every read t
 
   const gap = fixtureGapLine("chest_with_item", "snapshot_published_no_chest_holding_an_item");
   assert.match(gap, /^PAIRED_FIXTURE_MISSING chest_with_item reason=/u);
-  assert.match(gap, /arm=native_chest_retrieve_v1/u);
+  assert.match(gap, /arm=native_paired_companion_v1/u);
 
   const topology = topologyFacts();
   assert.equal(topology.bridgeConsumers, 1);
   assert.equal(topology.secondConnectionOpenedByProbe, false);
-  assert.equal(topology.secondBodyAvailable, "host_farmer_script_and_sleep");
+  assert.equal(topology.secondBodyAvailable, "host_farmer_script");
   assert.equal(topology.probeBodyBySlice.s1_attention, "host_farmer");
   assert.equal(topology.probeBodyBySlice.s4_memory, "companion_body");
 });
@@ -1043,7 +1215,6 @@ test("one launch prints four slice lines, and a missing second body is never a p
     const report = await runPairedLiveRun({
       config: {},
       traceDir: dir,
-      hostNightEvidence: null,
       hostPlayerScript: join(dir, "host-player-script.json"),
       hostPlayerScriptRecords: recordsPath,
       sessionFactory: async ({ onFact }) => ({

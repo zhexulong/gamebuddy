@@ -382,6 +382,181 @@ public sealed partial class ModEntry
         this.Monitor.Log($"GameBuddy native-local-player initialized native harvest-crop fixture before bridge attachment: selected={selected.Value.Value.crop.netSeedIndex.Value ?? "unknown"}@{(int)selected.Value.Key.X},{(int)selected.Value.Key.Y}; harvest={harvestItem.QualifiedItemId}; ready=true; production alone harvests and emits receipt.", LogLevel.Info);
     }
 
+    /// <summary>
+    /// THE PAIRED WORLD: one ripe crop AND one chest holding one item, on the SAME map, with her body already on that
+    /// map inside the observation's own discovery radius of both.
+    ///
+    /// <para>
+    /// WHY IT EXISTS. The paired companion run's first two slices need two world facts that the single-player fixtures
+    /// declare apart - a ripe grab crop (<c>native_harvest_crop_v1</c>) and a container holding one item
+    /// (<c>native_chest_retrieve_v1</c>) - and the shared-world driver arms exactly one scenario per launch, so S1 and
+    /// S2 could only ever be measured on different launches of the same run. This world is both facts and nothing else.
+    /// </para>
+    ///
+    /// <para>
+    /// EACH PRECONDITION AND THE ENGINE MECHANISM THAT GIVES IT:
+    /// <list type="bullet">
+    /// <item>THE RIPE CROP is the world's, not this file's: the target-version debug commands the shipped harvest
+    /// fixture already uses (`RemoveDirt`, `SpreadDirt`, `SpreadSeeds 472`, `GrowCrops 6`) till, sow and GROW parsnip by
+    /// six days, so `readyForHarvest()` is the engine's answer about a crop the engine grew. Exactly ONE ready grab
+    /// crop is kept (nearest the farmhouse's warp-in, so every walk to it is short), because the observation publishes
+    /// the whole family and the two sides must agree on which row the subject is without a sorting assumption.</item>
+    /// <item>THE CONTAINER is an ordinary, current-player-owned `Chest` holding exactly ONE item, filled through
+    /// `Chest.addItem` and read back through `GetItemsForPlayer`. It stands on empty untilled ground beside that crop
+    /// (`FindNativeLocalPairedChestTile`) and holds an item id DIFFERENT from the crop's own harvest, so no reading can
+    /// confuse the two subjects.</item>
+    /// <item>WHERE SHE STARTS is the engine's own warp into the Farm (`Farmer.warpFarmer`, the call every sibling
+    /// fixture uses), onto a tile `StardewBodyController.IsStandableTile` accepts, three to
+    /// `ExecutionManager.TargetDiscoveryRadius` tiles from the crop and no further than that radius from the chest.
+    /// THAT radius is what the observation publishes CROPS and CHESTS within (`FarmhandTargetDiscovery`); other PLAYERS
+    /// are bounded by the MAP instead (`DiscoverOtherFarmers`), which is why being on the Farm at all is what makes the
+    /// Host player visible to her. The lower bound of three is the half that keeps S1 honest: starting her beside the
+    /// subject would let any action at all read as joint attention.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// NOTHING IS PRE-SATISFIED. The crop is not harvested, the chest is not opened, nothing she carries came from
+    /// either, and no action's postcondition is established here - production alone harvests, contends and takes.
+    /// </para>
+    /// </summary>
+    private void InitializeNativeLocalPairedCompanionFixture(Farmer player, Farm farm)
+    {
+        GameLocation? previousLocation = Game1.currentLocation;
+        try
+        {
+            Game1.currentLocation = farm;
+            if (!Game1.game1.parseDebugInput("RemoveDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
+                || !Game1.game1.parseDebugInput("GrowCrops 6", null))
+                throw new InvalidOperationException("fixture_native_paired_companion_setup_unavailable");
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
+        }
+        finally { Game1.currentLocation = previousLocation; }
+
+        StardewValley.Warp? farmWarp = player.currentLocation is StardewValley.Locations.FarmHouse pairedFarmHouse
+            ? pairedFarmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value
+                && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal)
+                && warp.TargetX >= 0 && warp.TargetY >= 0)
+            : null;
+        if (farmWarp is null)
+            throw new InvalidOperationException("fixture_native_paired_companion_farm_warp_missing");
+        Vector2 arrival = new(farmWarp.TargetX, farmWarp.TargetY);
+
+        KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? selected = farm.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                && dirt.crop is not null
+                && !dirt.crop.forageCrop.Value
+                && dirt.readyForHarvest()
+                && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
+                && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value))
+            .Select(pair => new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(
+                pair.Key, (StardewValley.TerrainFeatures.HoeDirt)pair.Value))
+            .OrderBy(pair => Math.Abs(pair.Key.X - arrival.X) + Math.Abs(pair.Key.Y - arrival.Y))
+            .ThenBy(pair => pair.Key.X)
+            .ThenBy(pair => pair.Key.Y)
+            .Select(pair => (KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?)pair)
+            .FirstOrDefault();
+        if (selected is null || selected.Value.Value.crop is null)
+            throw new InvalidOperationException("fixture_native_local_ready_grab_crop_missing");
+        Vector2 cropTile = selected.Value.Key;
+        // ONE ready crop, so both sides read the same subject without either sorting the family.
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
+        {
+            if (pair.Key == cropTile) continue;
+            if (pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } other
+                && other.readyForHarvest()
+                && other.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab)
+                farm.terrainFeatures.Remove(pair.Key);
+        }
+
+        const string pairedChestItemId = "(O)388";
+        Vector2? chestTile = FindNativeLocalPairedChestTile(farm, cropTile);
+        if (chestTile is null)
+            throw new InvalidOperationException("fixture_native_paired_companion_chest_tile_missing");
+        StardewValley.Objects.Chest chest = new(playerChest: true, chestTile.Value);
+        StardewValley.Object contained = ItemRegistry.Create<StardewValley.Object>(pairedChestItemId, 1);
+        if (chest.addItem(contained) is not null)
+            throw new InvalidOperationException("fixture_native_paired_companion_chest_fill_failed");
+        if (!player.couldInventoryAcceptThisItem(contained))
+            throw new InvalidOperationException("fixture_native_paired_companion_inventory_unavailable");
+        farm.objects.Add(chestTile.Value, chest);
+        if (!farm.objects.TryGetValue(chestTile.Value, out StardewValley.Object? placed)
+            || placed is not StardewValley.Objects.Chest placedChest
+            || !ReferenceEquals(placedChest, chest)
+            || !IsFixtureOwnedOrdinaryChest(chest)
+            || chest.GetItemsForPlayer().Count(item => item is not null) != 1)
+            throw new InvalidOperationException("fixture_native_paired_companion_chest_placement_failed");
+
+        int radius = ExecutionManager.TargetDiscoveryRadius;
+        Vector2? companionTile = Enumerable.Range(-radius, radius * 2 + 1)
+            .SelectMany(offsetX => Enumerable.Range(-radius, radius * 2 + 1)
+                .Select(offsetY => new Vector2(cropTile.X + offsetX, cropTile.Y + offsetY)))
+            .Where(tile => farm.isTileOnMap(tile)
+                && !farm.objects.ContainsKey(tile)
+                && !farm.terrainFeatures.ContainsKey(tile)
+                && !farm.warps.Any(warp => warp.X == (int)tile.X && warp.Y == (int)tile.Y)
+                && Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)) >= 3
+                && Math.Max(Math.Abs(tile.X - chestTile.Value.X), Math.Abs(tile.Y - chestTile.Value.Y)) <= radius
+                && StardewBodyController.IsStandableTile(farm, player, tile))
+            .OrderBy(tile => Math.Abs(tile.X - chestTile.Value.X) + Math.Abs(tile.Y - chestTile.Value.Y))
+            .ThenBy(tile => Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)))
+            .ThenBy(tile => tile.X)
+            .ThenBy(tile => tile.Y)
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+        if (companionTile is null)
+            throw new InvalidOperationException("fixture_native_paired_companion_standing_missing");
+        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)companionTile.Value.X, (int)companionTile.Value.Y, false));
+
+        int readyGrabCrops = farm.terrainFeatures.Pairs.Count(pair =>
+            pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+            && dirt.crop is not null
+            && dirt.readyForHarvest()
+            && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab);
+        if (readyGrabCrops != 1)
+            throw new InvalidOperationException($"fixture_native_paired_companion_crop_count_not_one:{readyGrabCrops}");
+        if (Math.Max(Math.Abs(companionTile.Value.X - cropTile.X), Math.Abs(companionTile.Value.Y - cropTile.Y)) > radius
+            || Math.Max(Math.Abs(companionTile.Value.X - chestTile.Value.X), Math.Abs(companionTile.Value.Y - chestTile.Value.Y)) > radius)
+            throw new InvalidOperationException("fixture_native_paired_companion_geometry_out_of_range");
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log(
+            "GameBuddy native-local-player initialized the paired companion world before bridge attachment: "
+                + $"crop={cropTile.X},{cropTile.Y};ready_grab_crops={readyGrabCrops};chest={chest.QualifiedItemId}@{chestTile.Value.X},{chestTile.Value.Y}"
+                + $";chest_item={contained.QualifiedItemId};standing={companionTile.Value.X},{companionTile.Value.Y};radius={radius}; "
+                + "production alone harvests, contends and takes.",
+            LogLevel.Info);
+    }
+
+    /// <summary>
+    /// Where the paired world's container stands: empty, untilled ground, with at least one cardinal approach a farmer
+    /// can stand on, and inside <see cref="ExecutionManager.TargetDiscoveryRadius"/> of the crop - so ONE observation
+    /// publishes both subjects to her from wherever the run starts her.
+    /// </summary>
+    private static Vector2? FindNativeLocalPairedChestTile(Farm farm, Vector2 cropTile)
+    {
+        int radius = ExecutionManager.TargetDiscoveryRadius;
+        return Enumerable.Range(-radius, radius * 2 + 1)
+            .SelectMany(offsetX => Enumerable.Range(-radius, radius * 2 + 1)
+                .Select(offsetY => new Vector2(cropTile.X + offsetX, cropTile.Y + offsetY)))
+            .Where(tile => farm.isTileOnMap(tile)
+                && !farm.objects.ContainsKey(tile)
+                && !farm.terrainFeatures.ContainsKey(tile)
+                // A warp the map itself carries is not ground: a container there would swallow the door, and a walk to
+                // it would leave the map instead of reaching the chest.
+                && !farm.warps.Any(warp => warp.X == (int)tile.X && warp.Y == (int)tile.Y)
+                && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
+                    .Any(approach => farm.isTileOnMap(approach) && farm.isTilePassable(approach)
+                        && !farm.IsTileOccupiedBy(approach, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)))
+            .OrderBy(tile => Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)))
+            .ThenBy(tile => Math.Abs(tile.X - cropTile.X) + Math.Abs(tile.Y - cropTile.Y))
+            .ThenBy(tile => tile.X)
+            .ThenBy(tile => tile.Y)
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+    }
+
     private void InitializeNativeLocalHarvestCropInventoryFullRecoveryFixture(Farmer player, Farm farm)
     {
         // Lane G container-full recovery precondition. Establishes only the

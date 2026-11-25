@@ -1,10 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 import { COMPANION_LOCALE } from "./companion-locale.mjs";
 import { MOD_BUNDLE_FILE_NAMES } from "./stardew-mod-bundle.mjs";
 import { STARDEW_BRIDGE_PIPE_NAME, STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
+import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 
 const LOCK_DIRECTORY = ".stardew-native-local-player-fixture.lock";
 const PUBLIC_ERROR_CODES = new Set([
@@ -90,7 +90,7 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
   const timeoutSeconds = options.timeoutSeconds ?? 300;
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
-  if (!options.stardewSaveRoot || !isAbsolute(options.stardewSaveRoot))
+  if (!(options.stardewSaveRoot && isAbsolute(options.stardewSaveRoot)))
     throw new Error("native_local_fixture_save_root_required");
   const template = join(context.root, "templates", options.saveName);
   await assertDirectoryNotLink(template);
@@ -293,9 +293,11 @@ export async function verifyNativeLocalPlayerFixture(options) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
   if (
-    !Array.isArray(config.DeniedActions) ||
-    !Array.isArray(config.DeniedActionFamilies) ||
-    !Array.isArray(config.ExperimentalActions)
+    !(
+      Array.isArray(config.DeniedActions) &&
+      Array.isArray(config.DeniedActionFamilies) &&
+      Array.isArray(config.ExperimentalActions)
+    )
   )
     throw new Error("native_local_fixture_action_policy_invalid");
   if (options.sleepModalProbe !== undefined) {
@@ -351,12 +353,14 @@ async function restoreNativeLocalPlayerFixtureInternal(options) {
 
 function resolveContext(options) {
   if (
-    !options.root ||
-    !isAbsolute(options.root) ||
-    !options.modsPath ||
-    !isAbsolute(options.modsPath) ||
-    !options.releaseDir ||
-    !isAbsolute(options.releaseDir)
+    !(
+      options.root &&
+      isAbsolute(options.root) &&
+      options.modsPath &&
+      isAbsolute(options.modsPath) &&
+      options.releaseDir &&
+      isAbsolute(options.releaseDir)
+    )
   )
     throw new Error("native_local_fixture_absolute_paths_required");
   const modRoot = join(options.modsPath, STARDEW_MOD_FOLDER);
@@ -429,7 +433,7 @@ export function assertSaveCalendarConsistent(saveXml) {
     /<string>daysPlayed<\/string>\s*<\/key>\s*<value>\s*<unsignedInt>(\d+)<\/unsignedInt>/u.exec(saveXml)?.[1],
   );
   const season = /<currentSeason>([A-Za-z]+)<\/currentSeason>/u.exec(saveXml)?.[1];
-  if (!Number.isInteger(dayOfMonth) || !Number.isInteger(daysPlayed) || typeof season !== "string")
+  if (!(Number.isInteger(dayOfMonth) && Number.isInteger(daysPlayed)) || typeof season !== "string")
     throw new Error("native_local_fixture_calendar_unreadable");
   const expectedDayOfMonth = ((daysPlayed - 1) % 28) + 1;
   if (dayOfMonth !== expectedDayOfMonth)
@@ -727,6 +731,22 @@ export function fixtureActions(action) {
       "ship_item",
     ];
   if (action === "cut_grass") return ["equip_tool", "cut_grass"];
+  // The PAIRED four-slice lane. Every capability here is one the four slices are measured over and nothing else: go to
+  // the person (`move_to_tile`), contend for the container (`chest_retrieve`), the world's own crop (`harvest_crop`),
+  // read what she can see (`observe_scene`), her own body language (`express_emote`), and end her own night (`sleep`,
+  // with the two routes home it needs). No action is pre-performed by the fixture, so publishing one grants nothing it
+  // has not already granted every other lane.
+  if (action === "paired_companion")
+    return [
+      "move_to_tile",
+      "travel",
+      "enter_exit",
+      "observe_scene",
+      "harvest_crop",
+      "chest_retrieve",
+      "express_emote",
+      "sleep",
+    ];
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate. Fixture shapes follow the same discipline as
   // their family peers: the fixture supplies only the native precondition and
@@ -955,6 +975,11 @@ export function fixtureScenario(actions, action) {
   // would otherwise claim it and arm a world with nothing to do (its only farm fact is one shippable object),
   // so a multi-day run over it could show that days pass but not that the companion keeps working.
   if (action === "play_session_multi_day") return "native_multi_day_play_session_v1";
+  // The PAIRED world: one ripe crop AND one chest holding one item on the same map, with her body already on that map
+  // within the observation's own discovery radius of both. Action-keyed here, before every `includes()` fallback, and
+  // it has to be: the set carries `harvest_crop`, `chest_retrieve` and `sleep`, and each of those has a fallback below
+  // that would arm a single-subject world instead - the exact split this scenario exists to remove.
+  if (action === "paired_companion") return "native_paired_companion_v1";
   // Lane G resource-depletion recovery chain: the same water_crop action set plus
   // refill_watering_can, but the fixture must supply an EMPTY can. Without this
   // override the `water_crop` check below would select the charged-can scenario
@@ -1645,7 +1670,7 @@ async function archiveBodyProgramJournal(scopePath, evidenceDir) {
   // A bundle inside the scope would be copied and then deleted by the removal one line below, leaving a marker that
   // claims an archive nobody can read. Refused as a refusal rather than trusted.
   const containment = relative(resolve(scopePath), resolve(directory));
-  if (!containment.startsWith("..") && !isAbsolute(containment))
+  if (!(containment.startsWith("..") || isAbsolute(containment)))
     return journalArchiveRecord({ reason: "bundle_inside_journal_scope", directory, lease });
   try {
     const live = await journalFileDigests(scopePath);
