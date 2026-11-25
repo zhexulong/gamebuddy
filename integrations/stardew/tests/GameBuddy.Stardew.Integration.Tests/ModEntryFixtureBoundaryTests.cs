@@ -157,6 +157,10 @@ public sealed class ModEntryFixtureBoundaryTests
         // The three halves of the empty-can recovery Given (one empty can, one dry crop, a refillable neighbour) live on
         // their own so the scenario reads as the three facts it declares.
         "SupplyExactlyOneEmptyWateringCan", "SpreadExactlyOneDryCropOnTheFarm", "CountDryCrops", "ClaimWaterSourceBeside",
+        // The ripe-crop half five Givens share: the target-version till/sow/grow of a declared seed plus the cleanup that
+        // takes back the paving the spread laid. Registered like every other fixture member; the name it refuses under is
+        // the CALLER's, so this one entry does not collapse five arm-time names into one.
+        "GrowRipeCropFieldOnTheFarm",
         "InitializeNativeFarmhandChatFixture", "PrepareNativeHarvestCropFixture",
         "InitializeNativeMachineInspectFixture", "InitializeNativeTillSoilFixture",
         "InitializeNativePlantSeedFixture", "InitializeNativeWaterCropFixture",
@@ -235,6 +239,10 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalHarvestBushFixture",
         "InitializeNativeLocalHarvestCropFixture",
         "InitializeNativeLocalHarvestCropInventoryFullRecoveryFixture",
+        // The paired companion world: one ripe crop AND one chest holding one item on the same map, plus the container
+        // tile it searches for beside that crop (a `Vector2?` helper, so the boundary scanner sees it and it is
+        // registered rather than exempted).
+        "InitializeNativeLocalPairedCompanionFixture", "FindNativeLocalPairedChestTile",
         "InitializeNativeLocalHarvestFruitTreeFixture",
         "InitializeNativeLocalMachineNavigateAbFixture",
         "InitializeNativeLocalMachinePreconditionFixture",

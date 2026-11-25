@@ -343,24 +343,48 @@ public sealed partial class ModEntry
         this.Monitor.Log($"GameBuddy native-local-player initialized native fertilize-tile fixture before bridge attachment: fertilizer={fertilizerId}; eligible_empty_dirt_count={eligibleDirtCount}; production alone applies fertilizer and emits receipt.", LogLevel.Info);
     }
 
-    private void InitializeNativeLocalHarvestCropFixture(Farmer player, Farm farm)
+    /// <summary>
+    /// The ripe-crop half every Given that needs one starts from: the target-version debug commands till, sow and GROW
+    /// the declared seed across the Farm, and the paving they laid is taken back out of the world they produced.
+    ///
+    /// <para>
+    /// THE PORCH IS NOT FARMLAND AND THE DEBUG SPREAD DOES NOT KNOW THAT. <c>SpreadDirt</c> tills every tile whose map
+    /// data says <c>Diggable</c>, and <c>SpreadSeeds</c>/<c>GrowCrops</c> then put a ripe crop on each one - measured
+    /// <c>round98</c> (2026-11-23), a ripe cauliflower on <c>29,17</c>, the bottom-right tile of the greenhouse's 3x2
+    /// stone doorstep. The spread stays (it is the target-version setup the whole ladder is built on) and the cleanup
+    /// runs INSIDE the swap, so the ripe crop on the doorstep goes first and the dirt under it second: that order is
+    /// load-bearing, because the spread has already grown a crop on the paving, so the cleanup detaches the crop and
+    /// then removes the dirt.
+    /// </para>
+    ///
+    /// <para>
+    /// THE REFUSAL IS THE CALLER'S NAME, not this helper's. Five fixtures share this setup and each arm-time line has to
+    /// say which Given went missing; one shared code here would turn five distinct fixture failures into one reading no
+    /// reader can attribute. The growth window is a parameter for the same reason - it is scenario setup, not an Agent
+    /// wait - and nothing else about the crop is established: production alone harvests, contends and takes.
+    /// </para>
+    /// </summary>
+    private void GrowRipeCropFieldOnTheFarm(Farm farm, string seedItemId, int growthDays, string setupRefusalCode)
     {
-        // Target-version commands create a ready ordinary crop only;
-        // production alone performs use/harvest and changes inventory.
-        GameLocation? harvestSetupPreviousLocation = Game1.currentLocation;
+        GameLocation? previousLocation = Game1.currentLocation;
         try
         {
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null)
                 || !Game1.game1.parseDebugInput("SpreadDirt", null)
-            || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
-                || !Game1.game1.parseDebugInput("GrowCrops 6", null))
-                throw new InvalidOperationException("fixture_native_local_harvest_crop_setup_unavailable");
-            // THE RIPE CROP ON THE DOORSTEP GOES FIRST, and this is the ladder where that order is load-bearing: the
-            // spread has already grown a crop on the paving, so the cleanup detaches the crop and then removes the dirt.
+                || !Game1.game1.parseDebugInput($"SpreadSeeds {seedItemId}", null)
+                || !Game1.game1.parseDebugInput($"GrowCrops {growthDays}", null))
+                throw new InvalidOperationException(setupRefusalCode);
             this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         }
-        finally { Game1.currentLocation = harvestSetupPreviousLocation; }
+        finally { Game1.currentLocation = previousLocation; }
+    }
+
+    private void InitializeNativeLocalHarvestCropFixture(Farmer player, Farm farm)
+    {
+        // Target-version commands create a ready ordinary crop only;
+        // production alone performs use/harvest and changes inventory.
+        this.GrowRipeCropFieldOnTheFarm(farm, "472", 6, "fixture_native_local_harvest_crop_setup_unavailable");
         KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? selected = farm.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is not null
@@ -422,18 +446,7 @@ public sealed partial class ModEntry
     /// </summary>
     private void InitializeNativeLocalPairedCompanionFixture(Farmer player, Farm farm)
     {
-        GameLocation? previousLocation = Game1.currentLocation;
-        try
-        {
-            Game1.currentLocation = farm;
-            if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
-                || !Game1.game1.parseDebugInput("GrowCrops 6", null))
-                throw new InvalidOperationException("fixture_native_paired_companion_setup_unavailable");
-            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
-        }
-        finally { Game1.currentLocation = previousLocation; }
+        this.GrowRipeCropFieldOnTheFarm(farm, "472", 6, "fixture_native_paired_companion_setup_unavailable");
 
         StardewValley.Warp? farmWarp = player.currentLocation is StardewValley.Locations.FarmHouse pairedFarmHouse
             ? pairedFarmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value
@@ -569,18 +582,7 @@ public sealed partial class ModEntry
         // Readiness setup uses the same target-version command sequence the
         // shipped harvest fixture uses; the backpack fill is plain inventory
         // placement and never harvests, stores, or emits a receipt.
-        GameLocation? fullBagSetupPreviousLocation = Game1.currentLocation;
-        try
-        {
-            Game1.currentLocation = farm;
-            if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadDirt", null)
-            || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
-                || !Game1.game1.parseDebugInput("GrowCrops 6", null))
-                throw new InvalidOperationException("fixture_native_local_harvest_full_bag_setup_unavailable");
-            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
-        }
-        finally { Game1.currentLocation = fullBagSetupPreviousLocation; }
+        this.GrowRipeCropFieldOnTheFarm(farm, "472", 6, "fixture_native_local_harvest_full_bag_setup_unavailable");
 
         KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? fullBagSelected = farm.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
