@@ -917,6 +917,26 @@ interface PlanNodeAnswer {
    * </p>
    */
   readonly chore?: string;
+  /**
+   * The addresses this step proved the reading no longer describes - the Mod's `BodyProgramJournalNode.Evicted`.
+   *
+   * <p>
+   * THE PAIR WITH `chore`, AND THEY ARE THE SAME KIND OF FACT: `chore` says what the step's work CONSUMED, `evicted` says
+   * what it INVALIDATED - a row it took out of the world, a row the world answered is not there, or a tile whose state it
+   * changed. Both are the Mod's own statements arriving typed, both are legal only where the node PROVED an effect, and
+   * both exist because the reader used to find them by scanning the node's `evidence` string: the row list was subtracted
+   * from a reading by splitting `target=`/`expected=`/`removed=`/`changed=` out of `key=val;` text, so a space or a
+   * renamed key turned a finished removal into "nothing was removed" (`round78`, `round80`).
+   * </p>
+   *
+   * <p>
+   * An entry is a row's own opaque id (`rock_source_d941…`) or, for a row with no identity of its own, the tile it stands on
+   * (`62:19`) - one address space, two spellings, because that is how `rowTargetId` (game-world-vocabulary.ts) gives a row
+   * its address. A `for_each` pass unions its rows into one list here, since the settlement is the only shape its proofs
+   * reach a reader in.
+   * </p>
+   */
+  readonly evicted?: readonly string[];
 }
 
 /** A plan's per-node answer, and the batch statement that goes with it. */
@@ -1004,6 +1024,7 @@ export function planBatchAnswer(
       ...(row?.evidence == null ? {} : { evidence: row.evidence }),
       ...(row?.postconditionVerification == null ? {} : { postconditionVerification: row.postconditionVerification }),
       ...(row?.chore == null ? {} : { chore: row.chore }),
+      ...(row?.evicted == null ? {} : { evicted: row.evicted }),
     });
   });
   const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
@@ -1097,6 +1118,12 @@ type PlanJournalNode = Readonly<{
   evidence?: string | null;
   postconditionVerification?: string | null;
   chore?: string | null;
+  /**
+   * The addresses the node proved the reading no longer describes, read for the same reason as `chore` above and as the
+   * two proof fields: this is the ONE reader of a status frame, so a field it does not read is a field no plan answer -
+   * and therefore no settlement - can ever carry.
+   */
+  evicted?: readonly string[] | null;
 }>;
 
 /**
@@ -1112,6 +1139,9 @@ function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
     if (typeof row !== "object" || row === null) continue;
     const entry = row as Record<string, unknown>;
     if (typeof entry.nodeId !== "string" || typeof entry.state !== "string") continue;
+    const evicted = Array.isArray(entry.evicted)
+      ? entry.evicted.filter((address): address is string => typeof address === "string")
+      : [];
     nodes.push(
       Object.freeze({
         nodeId: entry.nodeId,
@@ -1129,6 +1159,10 @@ function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
         // The family the step worked, typed. Read here for the same reason as the two proof fields above: this is the ONE
         // reader of a status frame, and a field it does not read is a field no plan answer can ever carry.
         chore: typeof entry.chore === "string" ? entry.chore : null,
+        // The addresses it invalidated, typed - the same kind of fact as `chore` one line up: what the work consumed, and
+        // what it left no longer worth offering. A list rather than a string for the reason the field exists at all, so an
+        // entry that is not a string is unreadable here rather than cast, and a row that proved nothing carries no list.
+        evicted: evicted.length === 0 ? null : Object.freeze(evicted),
       }),
     );
   }

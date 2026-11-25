@@ -212,6 +212,14 @@ type SettledNode = Readonly<{
   /** The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`. */
   postconditionVerification?: string;
   /**
+   * The addresses this step proved the reading no longer describes - the Mod's `BodyProgramJournalNode.Evicted`.
+   *
+   * A row's own opaque id (`rock_source_d941…`, `item_89728…`), or - for a row that carries no identity at all and is
+   * addressed by where it stands - its tile in the Mod's `x:y` spelling. Absent means the step proved nothing about any
+   * address, which is a statement about this step and never a claim that the world still holds what the reading says.
+   */
+  evicted?: readonly string[];
+  /**
    * The family this step's work consumed, typed - the Mod's `BodyProgramJournalNode.Chore`.
    *
    * THE FIELD A SETTLEMENT NAMES ITS CHORE IN, and the one fact this file cannot derive: that a step consumed a family is
@@ -653,7 +661,7 @@ export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<stri
 }
 
 /**
- * The target rows THIS DELIVERY's receipts proved are out of the world, keyed by the row's own opaque id.
+ * The addresses THIS DELIVERY's receipts proved the reading no longer describes, as the Mod publishes them.
  *
  * <p>
  * WHY. Measured `round78` (2026-11-19, the mine window, her own session): six `break_rock` receipts at revisions 112-123
@@ -666,90 +674,64 @@ export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<stri
  * </p>
  *
  * <p>
- * THE PROOF IS THE MOD'S OWN, and it has two spellings because the Mod publishes two: a receipt that took the row out
- * says `removed=true` (`farmhandexecutioncontroller.resourcetoolactions.cs:310`), and a request whose row the world no
- * longer holds is answered with a reason code ending `_gone` - `rock_source_gone`, `item_target_gone`,
- * `animal_product_target_gone`, `pet_target_gone`, `farm_animal_target_gone`, `npc_relationship_target_gone`,
- * `npc_interaction_target_gone`. Every one of those codes means the row this request named is not in the world, so no
- * table of families is needed and no family has to be named here: the code's own word is the proof. The row's id has to
- * be in the evidence as well, which is what keeps a `_gone` code that names no row (`clear_blocker_gone`) out.
+ * THE PROOF IS ONE FIELD, AND IT IS NOT A STRING TO BE READ. The Mod knows three ways an address stops matching the
+ * reading - it measured the row leave (`removed=true`), the world answered that the row is not there (`_gone`), or a step
+ * turned a tile's state (`soil_tilled`'s `changed` tiles) - and all three are the SAME claim to this block: the reading's
+ * row at that address is no longer worth offering. So the Mod publishes the addresses, typed, on the terminal itself
+ * (`evidence.evicted` on a receipt, `node.evicted` on a settlement), and this reader neither parses a detail nor knows a
+ * reason code. Before that, `provedGoneTargets` split `key=val;` text with `evidencePairs` and keyed on `target=`,
+ * `expected=`, `removed=` and `changed=` - four keys a reordering, a space or a rename turned silently into "nothing was
+ * proved", which is the `round80` defect (54 `soil_already_tilled` in eighteen minutes) coming back through a
+ * formatting change rather than a logic one.
  * </p>
  *
  * <p>
- * THE ROW'S ID is the pair the Mod names it by - `target=` in both spellings, `expected=` for `item_target_gone` - which
- * is the same id the row publishes as `targetId` and the plan copies as `expectedTargetId`. A detail with neither pair
- * proves nothing, and a refusal that names another row does not touch this one.
+ * AN ENTRY THAT IS NOT AN ADDRESS IS REFUSED BY NAME. The list is not a bag of strings that happens to work: an entry is
+ * either an opaque id or a tile, and anything else is `evidence_evicted_not_an_address:<value>` rather than a value this
+ * block silently uses or silently drops. `itemTargets` rows and `soilTiles` rows prove exactly that the one field can hold
+ * both kinds, and the grammar is the Mod's own (`BodyProgramValidation.IsIdentifier`, and the tile spelling
+ * `AreaToolFootprint.Format` writes).
  * </p>
  *
  * <p>
- * THE RESULT IS IDS AND NOTHING ELSE. Which action took a row out is the receipt's own statement, printed by `receiptLine`
- * in the same delivery with its own action id and evidence; a row list that also spelled the action gave one fact two
- * vocabularies, and the copy in a sentence is the one a run learned to answer with.
- * </p>
- *
- * BOTH SHAPES REACH HER, for the same reason `provedPackCounts` reads both: a bare `execution_receipt` and the nodes of a
- * settled body programme carry the same Mod detail. Later events win.
- *
- * <p>
- * A TILLED TILE IS THE SECOND KIND OF PROOF, and it needs no `_gone` code: `till_soil` states the tiles it turned into
- * HoeDirt (`changed=62:19|62:20`, the whole footprint of the charge), and the row standing there is addressed by that
- * same tile because it carries no id (`rowTargetId` in `game-world-vocabulary.ts`). Measured `round80`: a reading taken
- * before the Hoe went in still said `hoeDirt: false` about tiles `plan_258`'s own seven successes had just tilled, so the
- * line offered them as ground to hoe and the Mod answered `soil_already_tilled` 54 times in eighteen minutes. The tile
- * leaves the row list for the one delivery that carries both the stale reading and the receipt; the next observation
- * publishes it as the plantable tile it now is. SUBTRACTING IS THE SAFE DIRECTION: a tile that is not offered cannot be
- * worked twice, while a tile offered after the work is done is the defect this reads for.
+ * THE RESULT IS ADDRESSES AND NOTHING ELSE. Which action took a row out is the receipt's own statement, printed by
+ * `receiptLine` in the same delivery with its own action id and evidence; a row list that also spelled the action gave one
+ * fact two vocabularies, and the copy in a sentence is the one a run learned to answer with.
  * </p>
  */
 export function provedGoneTargets(events: readonly WorldFact[]): ReadonlySet<string> {
   const gone = new Set<string>();
-  const record = (detail: unknown, reasonCode: unknown): void => {
-    if (typeof detail !== "string" || detail === "") return;
-    const pairs = evidencePairs(detail);
-    if (reasonCode === SOIL_TILLED_REASON_CODE) {
-      for (const tile of tilledTiles(pairs)) gone.add(tile);
-      return;
+  const record = (evicted: unknown): void => {
+    if (evicted === undefined || evicted === null) return;
+    if (!Array.isArray(evicted)) throw new Error(`evidence_evicted_not_an_address:${String(evicted)}`);
+    for (const address of evicted) {
+      if (typeof address !== "string" || !EVIDENCE_ADDRESS.test(address))
+        throw new Error(`evidence_evicted_not_an_address:${String(address)}`);
+      gone.add(address);
     }
-    const target = pairs.get("target") ?? pairs.get("expected");
-    if (target === undefined || target === "") return;
-    const removed = pairs.get("removed") === "true";
-    const settled = typeof reasonCode === "string" && reasonCode.endsWith(GONE_REASON_SUFFIX);
-    if (!(removed || settled)) return;
-    gone.add(target);
   };
   for (const fact of events) {
     if (fact.kind === "execution_receipt") {
-      record((fact.payload.evidence as { detail?: unknown } | undefined)?.detail, fact.payload.reasonCode);
+      record((fact.payload.evidence as { evicted?: unknown } | undefined)?.evicted);
       continue;
     }
     if (fact.semanticKind !== PROGRAM_SETTLED) continue;
     if (!Array.isArray(fact.payload.nodes)) continue;
-    for (const node of fact.payload.nodes as readonly SettledNode[]) record(node.evidence, node.reasonCode);
+    for (const node of fact.payload.nodes as readonly SettledNode[]) record(node.evicted);
   }
   return gone;
 }
 
-/** The Mod's own word for "the row this request named is out of the world": `rock_source_gone`, `item_target_gone`. */
-const GONE_REASON_SUFFIX = "_gone";
-
-/** The Mod's own word for "this receipt turned the tile it names into HoeDirt" (`hasTillSoilCompletionEvidence`). */
-const SOIL_TILLED_REASON_CODE = "soil_tilled";
-
-/** One tile as the Mod's evidence spells it: `62:19`, with its sign when the map runs negative. */
-const EVIDENCE_TILE = /^-?(?:0|[1-9]\d*):-?(?:0|[1-9]\d*)$/u;
-
 /**
- * The tiles a tilling receipt says it moved, in the Mod's own spelling: the `changed` footprint of the charge, or the
- * single `target=` tile on a Mod older than that pair.
+ * What an evicted address may be, in the Mod's two spellings of one address space: an opaque row id
+ * (`rock_source_d94198ebf7480082`), or the tile a row with no identity of its own is addressed by (`62:19`).
  *
- * `changed=none` is the receipt saying nothing moved, and mints nothing: the same rule the completion contract reads it
- * by, where the count and the named tiles have to agree before the receipt is a measurement.
+ * The id half is `BodyProgramValidation.IsIdentifier`'s alphabet and length, which is also the wire's `isOpaqueId`; the
+ * tile half is `AreaToolFootprint.Format`'s. Neither is restated at a producer: the Mod validates the same union before
+ * publishing (`BodyProgramValidation.IsEvictedAddress`), so a value the Host refuses here is one the Mod would have
+ * refused too.
  */
-function tilledTiles(pairs: ReadonlyMap<string, string>): readonly string[] {
-  const changed = pairs.get("changed");
-  const spelled = changed === undefined ? [pairs.get("target") ?? ""] : changed === "none" ? [] : changed.split("|");
-  return spelled.filter((tile) => EVIDENCE_TILE.test(tile));
-}
+const EVIDENCE_ADDRESS = /^(?:[A-Za-z0-9_-]{1,128}|-?(?:0|[1-9]\d*):-?(?:0|[1-9]\d*))$/u;
 
 /** The `key=value` pairs of one Mod evidence detail: `location=Farm;item=(O)472;inventory_after=0`. */
 function evidencePairs(detail: string): ReadonlyMap<string, string> {
@@ -1273,9 +1255,7 @@ function worldFactLine(fact: WorldFact, at: string): FactRendering | null {
     }
     case "time_milestone": {
       const milestone = fact.payload.milestone;
-      return sentence(
-        `- ${at}又过了一个时辰${typeof milestone === "string" || typeof milestone === "number" ? `：${milestone}` : ""}`,
-      );
+      return sentence(`- ${at}又过了一个时辰${typeof milestone === "string" || typeof milestone === "number" ? `：${milestone}` : ""}`);
     }
     // THE ONE FACT THAT SAYS THE WORLD IS WAITING ON HER, and the line `round76` needed and did not have: the account
     // counted 37 of these in ten minutes, not one opened a turn, and the model-facing text for one was the literal word
@@ -1296,9 +1276,7 @@ function worldFactLine(fact: WorldFact, at: string): FactRendering | null {
         ...heldWorldOf(fact).map((declaration) => HELD_WORLD_ZH[declaration]),
         ...(keys.length === 0 ? [] : [`可以答：${keys.join(" / ")}`]),
       ].join("，");
-      return sentence(
-        `- ${at}${modal} 挡在面前${prose === "" ? "" : `：「${prose}」`}${state === "" ? "" : `（${state}）`}`,
-      );
+      return sentence(`- ${at}${modal} 挡在面前${prose === "" ? "" : `：「${prose}」`}${state === "" ? "" : `（${state}）`}`);
     }
     case "npc_dialogue_presented": {
       const speaker = typeof fact.payload.speaker === "string" ? fact.payload.speaker : "有人";
@@ -1335,17 +1313,13 @@ function worldFactLine(fact: WorldFact, at: string): FactRendering | null {
       const notice = typeof fact.payload.notice === "string" ? fact.payload.notice : undefined;
       const clock =
         typeof fact.payload.inGameTime === "string" ? formatGameClock(Number(fact.payload.inGameTime), true) : "";
-      return sentence(
-        `- ${at}游戏里冒出个提示：${notice === undefined ? "（没有文字）" : `「${notice}」`}${clock === "" ? "" : `（${clock}）`}`,
-      );
+      return sentence(`- ${at}游戏里冒出个提示：${notice === undefined ? "（没有文字）" : `「${notice}」`}${clock === "" ? "" : `（${clock}）`}`);
     }
     case "world_state_stale": {
       // The token is the whole fact, and it is printed VERBATIM: the pump minted it from the one function that spells it
       // (`worldStateStaleCode`), so re-deriving it here would be a second rendering of one number.
       const code = typeof fact.payload.code === "string" ? fact.payload.code : "";
-      return sentence(
-        `- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`,
-      );
+      return sentence(`- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`);
     }
     case "execution_stalled": {
       // WHICH execution, WHY the body is waiting, and FOR HOW LONG are all the Mod's own statements (`reason=
@@ -1425,9 +1399,7 @@ const LINE_BREAK_RUN = /\s+/gu;
  */
 function multiplayerChatLine(fact: WorldFact, at: string): FactRendering {
   const named =
-    typeof fact.payload.speaker === "string" &&
-    fact.payload.speaker !== "" &&
-    fact.payload.speaker !== SPEAKER_NOT_MEASURED
+    typeof fact.payload.speaker === "string" && fact.payload.speaker !== "" && fact.payload.speaker !== SPEAKER_NOT_MEASURED
       ? fact.payload.speaker
       : null;
   const who = named === null ? "有人" : `玩家「${named}」`;
@@ -1436,10 +1408,7 @@ function multiplayerChatLine(fact: WorldFact, at: string): FactRendering {
   const said = typeof fact.payload.text === "string" ? fact.payload.text.replace(LINE_BREAK_RUN, " ").trim() : "";
   const toHer = fact.payload.addressedToThisPlayer === true ? "只对你说" : "说";
   const cut = fact.payload.textTruncated === true ? "（原话更长，这里只有前面一段）" : "";
-  const day =
-    typeof fact.payload.day === "number" && Number.isFinite(fact.payload.day)
-      ? `第 ${String(fact.payload.day)} 天 `
-      : "";
+  const day = typeof fact.payload.day === "number" && Number.isFinite(fact.payload.day) ? `第 ${String(fact.payload.day)} 天 ` : "";
   const unread = Object.keys(fact.payload)
     .filter((field) => !MULTIPLAYER_CHAT_FIELDS.includes(field))
     .sort();

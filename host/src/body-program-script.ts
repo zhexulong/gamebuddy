@@ -691,6 +691,13 @@ const ENTER_EXIT_ACTION_ID = "enter_exit";
  * building's human door - a farmhouse door is in `doorTargets` and in no warp list. A check against `warps` alone
  * would therefore refuse a door the Mod enters, which is the `round19`/`round42` defect from the other side.
  * </p>
+ * <p>
+ * THESE TWO ARE WHAT `enter_exit` ITSELF RESOLVES, and they are not every way out of a map: a mine floor's exit is a
+ * ladder TILE the level's own `checkAction` dispatches, published as `mineEntranceTargets` +
+ * `fixedInteractionPoints` and owned by `use_mine_ladder`. That population is read where it is published
+ * (`planForeignExitOwners`), so this list stays the ACTION's own two tables rather than a list of everything a map can
+ * offer.
+ * </p>
  */
 const PLAN_EXIT_FAMILY_IDS: readonly Readonly<{ family: string; label: string }>[] = Object.freeze([
   Object.freeze({ family: "warps", label: "warps" }),
@@ -3731,6 +3738,11 @@ function planExitTables(snapshot: Snapshot): PlanExitTables {
  * what each exit table published - a count, or `unmeasured` for a table the snapshot did not carry, because "this map
  * has no doors" and "nobody measured them" are different answers and only one of them is the world's.
  * </p>
+ * <p>
+ * IT IS THE THIRD ANSWER NOW, NOT THE SECOND. A map whose way out is a mechanism no table holds - a mine floor's ladder
+ * - is answered by `planForeignExitReason`, naming the exit and the action that owns it, so this line is reached only
+ * when the map publishes no exit at all in any family.
+ * </p>
  */
 function planDoorNotOnThisMapReason(
   tile: Readonly<{ x: string; y: string }>,
@@ -3744,6 +3756,121 @@ function planDoorNotOnThisMapReason(
 }
 
 /**
+ * The interaction kinds one action owns, where the map names the mechanism instead of the action.
+ *
+ * <p>
+ * A MINE LEVEL'S WAY OUT IS NOT A `Warp` AND NOT A DOOR: it is a Buildings-layer tile index the engine dispatches
+ * (`MineShaft.checkAction`, 115 up and 173 down), which is why the snapshot publishes it as a `fixedInteractionPoints`
+ * row whose `kind` is the mechanism - `mine_ladder_up` at `(10,3)` on the floor round99 stood on - and why the two
+ * ladder rows travel in ONE target family, `mineEntranceTargets`, which BOTH mine actions declare. So the family can
+ * say "this tile is one of mine"; only the kind says which of the two owns it.
+ * </p>
+ * <p>
+ * THE POPULATION IS NOT THIS TABLE. Which tiles are answered with `plan_script_exit_belongs_to_another_action` comes
+ * from the snapshot crossed with the surface (`planForeignExitOwners`): any published action that moves the actor and
+ * publishes this tile as one of its targets. A kind the map starts reporting tomorrow is covered by that derivation
+ * with no edit here - this table only decides WHICH of several owner candidates is named, and a kind absent from it
+ * leaves the candidates to answer for themselves.
+ * </p>
+ * <p>
+ * Exported so the gate reads THIS declaration instead of a second hand-written copy of it: `body-program-script.test.ts`
+ * checks every key against the wire's own closed vocabulary and every value against the published surface, so a renamed
+ * kind or a renamed action fails there by name rather than leaving a pointer to nothing in a refusal.
+ * </p>
+ */
+export const FIXED_INTERACTION_POINT_ACTION_IDS: Readonly<Record<string, string>> = Object.freeze({
+  mine_ladder_up: "use_mine_ladder",
+  mine_ladder_down: "enter_mine",
+});
+
+/**
+ * The word a refusal uses when several published actions own the tile and the map names no kind that separates them.
+ *
+ * A measured absence rather than a guess: naming one of them would send her to the action the other one refuses.
+ */
+const PLAN_EXIT_OWNER_UNSTATED = "unstated";
+
+/**
+ * The other actions that publish this tile as a target of their own, and what the map calls the mechanism there.
+ *
+ * <p>
+ * DERIVED FROM TWO DECLARATIONS, NOT FROM A LIST. The candidates are the published actions whose declared
+ * `targetFamily` holds a row at this exact tile and whose declared effect moves her to ANOTHER MAP - so a family added
+ * tomorrow, a kind added tomorrow, or a second action sharing a family are all examined without touching this file.
+ * The `kind` is what the snapshot's own `fixedInteractionPoints` family says about that tile.
+ * </p>
+ * <p>
+ * THE SUBJECT IS WHAT MAKES IT A WAY OUT. The surface declares two `moves_actor` subjects and they are different
+ * questions: `actor_location` is another map (`travel`, `enter_mine`, `use_obelisk`, a minecart) and `actor_position` is
+ * the same map (`move_to_tile`, `use_raft`, `navigate_to_destination`). A raft's water tile is published by a moving
+ * action and is NOT an exit, so matching the class alone would answer `enter_exit` at it with "this is a way out, ask
+ * `use_raft`" - a new false statement in place of the old one. `move_to_tile` falls out for the same reason.
+ * </p>
+ */
+function planForeignExitOwners(
+  snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+  compiled: PublishedPlanAction,
+  x: string,
+  y: string,
+): Readonly<{ actions: readonly string[]; families: readonly string[]; kind: string | undefined }> | null {
+  const owners: string[] = [];
+  const families = new Set<string>();
+  for (const candidate of actions) {
+    if (candidate.actionId === compiled.actionId) continue;
+    if (candidate.targetFamily === null) continue;
+    if (!candidate.effects.some((effect) => effect.class === "moves_actor" && effect.subject === "actor_location"))
+      continue;
+    const published = planSnapshotRows(snapshot, candidate.targetFamily);
+    if (!published.measured) continue;
+    const names = published.rows.some(
+      (row) => planRowValue(row.x) === x && planRowValue(row.y) === y,
+    );
+    if (!names) continue;
+    if (!owners.includes(candidate.actionId)) owners.push(candidate.actionId);
+    families.add(candidate.targetFamily);
+  }
+  if (owners.length === 0) return null;
+  const points = planSnapshotRows(snapshot, "fixedInteractionPoints");
+  const kind = points.measured
+    ? points.rows
+        .filter((row) => planRowValue(row.x) === x && planRowValue(row.y) === y)
+        .map((row) => planRowValue(row.kind))[0]
+    : undefined;
+  return Object.freeze({ actions: Object.freeze(owners), families: Object.freeze([...families].sort()), kind });
+}
+
+/**
+ * The line a transition is answered with when the tile it names IS a way out of this map, owned by another action.
+ *
+ * <p>
+ * THE REFUSAL STAYS A REFUSAL, AND STOPS BEING A FALSE STATEMENT. Measured round99 (2026-11-24, revision 441): she stood
+ * in `UndergroundMine1`, the snapshot published `warps: []`, `doorTargets: []` - true, the level's exits are ladder TILES
+ * - and also `mineEntranceTargets` at `(10,3)` with `fixedInteractionPoints` kind `mine_ladder_up` at the same tile, so
+ * `use_mine_ladder` compiled there. Her `enter_exit({x:10,y:3})` was answered `... warps=0:doors=0`, which reads as "this
+ * map publishes no exits at all" and sent her looking for a door that was never the mechanism. The tile is not a door
+ * and `enter_exit` still may not take it: the ladder's own action does, and the refusal names it.
+ * </p>
+ * <p>
+ * THREE ANSWERS, AND THIS IS THE SECOND. A tile in the exit tables compiles (`planExitTables`); a tile another moving
+ * action publishes answers this line; anything else keeps `planDoorNotOnThisMapReason`, whose counts are then TRUE about
+ * the map rather than a claim about all its ways out.
+ * </p>
+ */
+function planForeignExitReason(
+  owners: Readonly<{ actions: readonly string[]; families: readonly string[]; kind: string | undefined }>,
+  tile: Readonly<{ x: string; y: string }>,
+  snapshot: Snapshot,
+): string {
+  const pair = owners.kind === undefined ? undefined : FIXED_INTERACTION_POINT_ACTION_IDS[owners.kind];
+  let owner = PLAN_EXIT_OWNER_UNSTATED;
+  if (pair !== undefined && owners.actions.includes(pair)) owner = pair;
+  else if (owners.actions.length === 1) owner = owners.actions[0]!;
+  const exit = owners.kind ?? owners.families.join("+");
+  return `plan_script_exit_belongs_to_another_action:${tile.x}:${tile.y}:map=${planRowValue(snapshot.location) ?? "unmeasured"}:exit=${exit}:use_action=${owner}`;
+}
+
+/**
  * Whether this call's tile is a way out of the map she stands on, or the refusal to answer it with.
  *
  * Only `enter_exit` asks this: `travel` resolves the warp table alone and answers `warp_not_available` at a door tile by
@@ -3754,6 +3881,7 @@ function planExitTileRefusal(
   action: PublishedPlanAction,
   canonical: Readonly<Record<string, PlanArgument>>,
   snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
 ): PlanRefusedExit | null {
   if (action.actionId !== ENTER_EXIT_ACTION_ID) return null;
   const x = planIntentionText(canonical, "x");
@@ -3761,7 +3889,12 @@ function planExitTileRefusal(
   if (x === undefined || y === undefined) return null;
   const exits = planExitTables(snapshot);
   if (exits.tiles.has(`${x},${y}`)) return null;
-  return Object.freeze({ tile: `${x},${y}`, reasonCode: planDoorNotOnThisMapReason({ x, y }, snapshot, exits) });
+  const owners = planForeignExitOwners(snapshot, actions, action, x, y);
+  const reasonCode =
+    owners === null
+      ? planDoorNotOnThisMapReason({ x, y }, snapshot, exits)
+      : planForeignExitReason(owners, { x, y }, snapshot);
+  return Object.freeze({ tile: `${x},${y}`, reasonCode });
 }
 
 /**
@@ -4133,7 +4266,7 @@ function emitPlanStep(
   if (secondSow !== null) rejectPlanCall(secondSow, state, requirement);
   // AND WHETHER THE TILE A TRANSITION NAMES IS A WAY OUT OF THE MAP SHE IS ON - the question every other layer left
   // unasked, because a transition's coordinates are intentions and its declared family is never applied to them.
-  const refusedExit = planExitTileRefusal(action, canonical, snapshot);
+  const refusedExit = planExitTileRefusal(action, canonical, snapshot, actions);
   if (refusedExit !== null) {
     state.refusedExits.push(refusedExit);
     rejectPlanCall(refusedExit.reasonCode, state, requirement);

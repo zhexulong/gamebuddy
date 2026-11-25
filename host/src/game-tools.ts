@@ -10,7 +10,6 @@ import {
   STARDEW_ACTION_TOOL_NAMES,
   type StardewActionId,
   type StardewDescriptorDerivedActionId,
-  TILE_TARGET_ARGUMENTS,
   searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
@@ -277,10 +276,10 @@ const selectionAxisSchema = Type.Object(
  * Each bound is ONE exported number beside the predicate that enforces it (`protocol-target-facts.ts`). An earlier
  * version derived them by PROBING the predicates - doubling to the first refusal and bisecting back - because a
  * function cannot be imported as a number. That made tool assembly depend on being able to provoke refusals, and it
- * answered with the wrong range wherever an action's own declaration differs from the family predicate:
- * `travel`/`enter_exit` take a warp source whose floor is -1, and the probe's 0 refused the only tile an edge exit has.
+ * answered with the wrong range wherever an action's own declaration differs from the family predicate: `travel`
+ * takes a warp source whose floor is -1, and the probe's 0 refused the only tile an edge exit has.
  *
- * Eight members stay literal because they are their own action's and no other's: `respond_level_up`'s published
+ * The members still written in this file are their own action's and no other's: `respond_level_up`'s published
  * `choice`/`expectedSkill`/`expectedLevel`, `navigate_to_destination`'s typed `destination`, `equip_tool`'s tool
  * vocabulary, `till_soil`/`water_crop`'s `charge` (read from the wire's own row by `declaredIntegerArgument`), the
  * three pinned item ids a fence, a crab pot and a bait pot place, and `machine_load`'s accepted-input pattern. Each is
@@ -1682,48 +1681,92 @@ export const DECLARED_ACTION_TOOL_DESCRIPTIONS: Readonly<Record<StardewDescripto
   answer_dialogue: "Choose one response from the currently displayed native question dialogue. responseKey must exactly match a response offered by the live DialogueBox.",
   break_container: "Break a breakable container on the map, such as a crate or barrel. The action takes a tool the container accepts (any heavy hitter) out of the pack and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one; x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry. Success is the container being GONE and its drops accounted for, not the tool's return value.",
   break_resource_clump: "Use the Axe or Pickaxe a large stump, hollow log, boulder or meteorite demands on it, one call swinging until the clump is gone. x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result - never invent or guess coordinates. There is no slot to name: the handler selects the tool the clump's own switch requires and restores the previous selection, and a pack that cannot supply the level it needs is refused by name (`clump_tool_too_weak`). Success is the clump GONE, not the swing's return value.",
+  break_rock: "Use one equipped basic Pickaxe swing on a live ordinary breakable stone. slot, x, y and expectedTargetId must be copied exactly from the rockSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Drops and pickup are separate actions.",
   build_farm_building: "Commission a farm building at a site the game itself accepts. Read the opaque target id, its tile, the `buildingType`, the `buildCost` and the `buildDays` from the `farmBuildingTargets` entries of the most recent observation - the site carries the type, so name the site and never a bare structure. The commission charges the build cost and the materials the game declares, and the terminal is a building standing on that site with a durable id; a site the game no longer accepts, or that you cannot afford or supply, is refused by name rather than built.",
+  chest_retrieve: "Move one item out of a reachable chest into the Farmhand inventory. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of one item in that entry's `items` list, which carries every item the container holds. There is no x, y, expectedTargetId or slot to send - the container and the item are the whole address, so nothing is picked by position. The item id pins the observed item, so one that is gone by then is refused chest_empty rather than substituted. No ItemGrabMenu is opened. Returns chest_retrieved.",
+  chest_store: "Move one carried inventory stack into a reachable chest. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of the carried stack you mean. There is no x, y, expectedTargetId or slot to send - the container is the whole address, and the body takes the first stack of that item in the backpack and names the slot it moved in the receipt. No ItemGrabMenu is opened. Refused chest_target_changed when no live container answers to chestId, and item_not_owned_in_slot when the backpack holds none of that item by then. Returns chest_stored with the exact stack conservation evidence.",
+  chop_stump: "Chop one live ordinary tree that is already a stump with the equipped Axe. slot, x, y and expectedTargetId must be copied exactly from the treeStumpTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native axe until the stump is cleared. Returns stump_cleared. A mature standing tree is stardew_chop_tree, not this action.",
+  chop_tree: "Chop one live ordinary mature tree. The Mod keeps swinging the equipped Axe until the tree is felled and reports how many swings it took, so one call completes the chop. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the felled tree in the authoritative receipt determines completion.",
   claim_mail_attachment: "Claim whatever is waiting in a mailbox. x, y and expectedTargetId must be copied exactly from the mailboxTargets entry of the MOST RECENT observe result; the target id binds the location, the tile and the pending letter, so a stale id is refused rather than claiming the next letter. A letter whose %item attachment has to be delivered is completed with the native letter exit, not discarded.",
   claim_museum_reward: "Collect every museum donation reward this player is entitled to. Read the opaque target id and the `rewardCount` from the `museumRewardTargets` entries of the most recent observation; the reward items are delivered into the backpack and recorded as collected. A museum with nothing to collect is refused by name rather than reporting an empty success.",
+  clear_cask: "Clear one live adjacent Cask with a heavy hitter that is not a melee weapon (an Axe, Pickaxe or Hoe); the action takes that tool out of the pack itself and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from caskTargets. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
+  clear_debris: "Clear one live ResourceClump with the equipped Axe or Pickaxe, walking to it first when it is out of reach. slot, x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). One call swings until the clump is gone and returns succeeded/debris_cleared, or uncertain/debris_not_cleared when the bounded swing cap could not finish it; drops and pickup are separate actions.",
   clear_fish_pond: "Empty a built fish pond of every occupant through the pond own clearing settlement. Read the opaque target id, its tile, the pond type, the occupant count and the fish type from the `fishPondTargets` projection. The fish are NOT destroyed: each one is put on the ground as debris for you to collect, and the pond itself is reset and must be restocked from scratch. An empty pond is never advertised, and one that was already emptied refuses by name (pond_already_empty) rather than clearing nothing and calling it a success.",
+  clear_hoedirt: "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt. slot, x, y and expectedTargetId must be copied exactly from the clearHoeDirtTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Crops, IndoorPots, drops, and pickup are excluded.",
+  collect_animal_product: "Use the live compatible Farmhand-owned tool on a live ready animal-product target. slot, x, y and expectedTargetId must be copied exactly from the animalProductTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native animation and receipt determine completion.",
   collect_building_chest_output: "Take what a building's OWN output chest holds, such as a Mill's flour or a Junimo Hut's crops. Stand within reach of the building first. Read the opaque target id, its tile and `stackCount` from the `buildingChestTargets` entries of the most recent observation. A chest holding two or more stacks is refused by name (building_chest_requires_menu), because the native branch would open a container menu this action does not drive; otherwise the Mod asserts the stack left the chest AND arrived in the pack.",
+  collect_crab_pot_output: "Collect the ready output of one live adjacent baited Crab Pot. x, y and expectedTargetId must be copied exactly from the crabPotCollectTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod re-checks that the pot is really harvest-ready and visually ready before calling the native interaction, so an immature or unbaited pot is rejected rather than torn down. Returns crab_pot_output_collected.",
   color_placed_object: "Repaint one placed chest with one of the game's own 21 palette colours. Read the opaque target id, its tile (`x`, `y`) and the `color` it already carries from the `colorTargets` entries of the most recent observation, then name the palette index (`colorSelection`) it should carry. Only palette colours are writable, so no RGB value is accepted, and a repaint to the colour it already carries is refused by name instead of being reported as a change.",
+  cook_recipe: "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the cookingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
+  craft_item: "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the craftingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
+  cut_grass: "Cut one live adjacent Grass tuft (a TerrainFeature, distinct from weeds) with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the grassTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the tuft is removed; grassType 1/7 feeds Hay into a silo (hay_unstored 0 = all stored) and grassType 6 drops rare items. Returns grass_cut.",
+  cut_weeds: "Cut one live adjacent Weed with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the weedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the weed is removed; the family is free, so the stamina cost is an explicit zero. Returns weeds_cut. Standing crops are stardew_scythe_crop, not this action.",
+  deposit_silo_hay: "Deposit Silo Hay using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and siloTargets in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.",
+  dig_artifact_spot: "Use one equipped Basic Hoe on a live adjacent diggable artifact spot. slot, x, y and expectedTargetId must be copied exactly from the artifactSpotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Source removal and native HoeDirt creation are required; rewards are excluded.",
   dismiss_modal: "Close the informational native dialogue currently on screen (a DialogueBox with no pending question) through the native closeDialogue path. The dialog must have been opened by the world (a villager, a door gate, an event) and must not be a question that requires choosing an answer.",
   dismount_transport: "Get off the horse or other mount the Farmhand is currently riding. This action takes NO arguments. It is a pure state assertion: it refuses when the actor is not riding anything, and only the observed end state (!isRidingHorse) can report success.",
+  dress_mannequin: "Dress Mannequin using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and mannequinTargets in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.",
   dye_clothing_with_item: "Recolour one existing garment from one dye item. Read the opaque target id, the garment slot (`leftSlot`), the dye slot (`rightSlot`) and the garment's CURRENT `garmentColour` from the `tailoringTargets` entries of the most recent observation. The receipt proves the dye was spent AND the colour settled, and reports before/expected/after; a colour that did not move is never reported as success.",
+  enter_exit: "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x and y must be copied exactly from the sourceX and sourceY of a doorTargets entry in the most recent observe result; an edge exit's source lies one tile outside the map, which is why -1 is a real coordinate here. Only the Warped postcondition can report success.",
+  enter_mine: "Enter the mine through the live entrance tile OR descend the ladder tile inside a shaft; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. The ladder descends exactly one level, derived from the live shaft. This uses normal game progression and does not accept a level selector - to choose a floor, use stardew_select_mine_elevator_floor.",
   equip_wearable: "Put a wearable Farmhand inventory item into the body slot it belongs to. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot (hat, shirt, pants, boots, left_ring, right_ring), so a stale id is refused. slot and expectedQualifiedItemId must be copied from the inventoryItemFacts entry of that same result: that is the pack slot holding the item to wear. A repeat of the same equip is an idempotent success, not an error.",
   express_emote: "Show a native overhead emote balloon for the companion actor. A gesture is one step by nature, so this tool is mounted on its own beside the plan builder and is NOT a step inside `stardew_plan_work`: one call is the whole gesture, it never queues behind the work in front of it, and its settlement is its own. It takes exactly one `emote` word, and this parameter list carries the closed set of words the Mod accepts.",
   face_direction: "Turn the companion actor to face a cardinal direction (up, right, down, left). Mounted on its own beside the plan builder for the same reason as `stardew_express_emote` - a turn is one step by nature and is NOT a step inside `stardew_plan_work` - and it takes exactly one `direction` word, whose closed set this parameter list carries.",
+  feed_animal: "Place one live owned Hay item in a live empty AnimalHouse trough. slot, x, y and expectedTargetId must be copied exactly from the feedTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This does not claim an animal has eaten.",
+  fertilize_tile: "Apply one live owned fertilizer item to a live eligible ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the fertilizerTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native placement and the authoritative receipt determine completion.",
+  fish_here: "Cast a fishing rod at one water tile the game itself says a rod may be cast at, wait for the game's own bite, and let the game's own win path credit the catch. x, y and expectedTargetId must be copied exactly from the waterTargets entries of the MOST RECENT observe result for the current location - never invent or guess coordinates. The row names a tile the engine's own canFishHere/isTileFishable pair admitted, not a particular fish: which fish swims there is decided inside the engine at the bite. There is no slot to name: the handler selects the rod the action's own tool claim requires and restores the previous selection on every exit. Every refusal happens before the cast - no rod in the pack, no bait that rod needs, water the engine refuses, too little stamina, or a target id that no longer names this tile - and success is the catch the engine itself credited.",
+  harvest_bush: "Harvest a live in-bloom berry bush using its native interaction. x, y and expectedTargetId must come from the bushTargets entries of the most recent observe result for the current location.",
+  harvest_fruit_tree: "Harvest fruit from a live fruit tree through its native interaction. x, y and expectedTargetId must be copied exactly from fruitTreeTargets in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.",
   interact_npc_with_item: "Offer one carried inventory item to an adjacent villager. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A matching native quest delivery completes first and returns quest_item_delivered; the ordinary gift path returns gift_given.",
   load_building_chest: "Put the held item into a storage chest the BUILDING itself declares, such as a Mill's input chest. Stand within reach of the building first. Read the opaque target id, its tile, the chest id and the load hint from the buildingChestTargets entries of the most recent observation. Only the native Load branch is driven; a chest the game exposes only through a menu is refused by name.",
+  machine_collect_output: "Collect the ready output of a live machine through the normal native machine interaction. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A receipt proves native inventory delivery, the held item and the stack that moved, and a cleared ready state.",
+  machine_inspect: "Read a live native machine state without opening a menu or changing the machine. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates, never reuse coordinates observed in a different location). requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
+  mount_transport: "Mount an advertised named horse in range; x, y and expectedTargetId must be copied exactly from horseTargets in the most recent observe result. The Mod waits for the native mounting animation to finish before reporting success.",
   move_placed_furniture: "Pick up a piece of furniture that is already placed in the room, so it can be put down somewhere else. x, y and expectedTargetId must be copied exactly from the `placed_furniture` entry of the worldObjectTargets list in the MOST RECENT observe result; a stale id is refused rather than lifting a different piece that now stands there. There is no slot to name: the game chooses which backpack slot receives it. If the pack is full the piece goes back exactly where it stood and the action is refused by name - it is never silently lost - and success is the piece gone from the room AND one more in the pack.",
   name_entity: "Give your own horse its name through the game own naming settlement. It takes exactly one string (`text`) and no target: the subject is YOUR horse, found live. It is REFUSED when you own no horse (name_entity_target_unavailable), when the horse already carries a name (name_entity_target_already_named), or when the name is blank, longer than 64 characters, or carries a `;` or `=` (name_entity_name_invalid). The receipt reports the name READ BACK from the entity, never the call itself.",
+  npc_relationship: "Read the live relationship facts of one adjacent villager. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This never changes friendship, gifts or dialogue; it returns npc_relationship_inspected.",
   open_geode: "Crack one carried geode at the blacksmith's own counter, through the game's GeodeMenu, so the machine's assignment and fee decide what comes out. slot and expectedQualifiedItemId must be copied exactly from the `inventoryItemFacts` row of the MOST RECENT observe result, and the slice is checked against that id before anything is consumed, so a stale pair is refused rather than opening a different item. There is no target id and no tile: the counter is the location's own. A counter out of reach, a fee the actor cannot pay and a full backpack are each refused by name, and success is the geode gone and the reward in the pack.",
   pan_ore: "Pan an ore-panning spot with the Copper Pan the Farmhand is holding. slot, x and y must be copied exactly from the panSites entry of the MOST RECENT observe result; the tile is re-checked against the game's own live panning point, so a stale site is refused rather than panned. Only the observed point change plus the panning counter can report success.",
   pet_animal: "Pet a nearby pet. x, y and expectedTargetId must be copied exactly from the petTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The pet target is bound by identity: if it has moved away, the native interaction returns a rejection instead of petting a different pet. A pet that is stationary right now is the reliable target; a moving one may leave before dispatch returns. Returns pet_completed.",
   pet_farm_animal: "Pet one of your own farm animals - a cow, chicken, sheep, pig, duck, rabbit or dinosaur - in the barn, coop or pasture you are standing in. This is NOT stardew_pet_animal: that one pets the household cat/dog, this one pets barn and coop stock through the game's own FarmAnimal.pet, and the two read different day markers. x, y and expectedTargetId must be copied exactly from the farmAnimalPetTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates): x and y are only the tile the animal was published at, and the animal is named by the opaque id, so the Mod re-resolves it from its live tile and walks the actor into reach when it has wandered, while an animal that is no longer in the building is refused as farm_animal_target_gone instead of petting a different one. A second pet attempt in the same day is refused as farm_animal_already_petted_today, because the game's pet would open the animal menu and change no friendship at all. Also refused by name: farm_animal_cracker_would_be_consumed (a held Golden Animal Cracker would be spent instead of petting) and farm_animal_pet_requires_movement_after_1900 (after 19:00 only a moving animal answers a pet). Returns farm_animal_petted with the friendship before and after; an animal whose friendship and wasPet marker did not move comes back as farm_animal_pet_postcondition_not_observed rather than as a pet that never happened.",
+  pickup_forage: "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt and target disappearance can report completion.",
+  pickup_item: "Approach a live native Debris target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the itemTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native magnetic-collection receipt and exact inventory evidence can report completion.",
   place_item_on_pedestal: "Place one backpack item on an empty pedestal, whose own drop-in action decides acceptance. slot, the item's expectedQualifiedItemId, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the id names the `empty_pedestal` row, because a pedestal already holding something has no such row. An occupied pedestal is refused by name (`pedestal_occupied`) before the call, because its own branch would knock the standing item off, and success is the pedestal's heldObject being this item while the pack lost exactly one.",
   place_owned_object: "Place a big-craftable the Farmhand owns onto a live lawful tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the target id names the exact placement candidate, so a stale id is refused rather than placed somewhere else. Only the observed new object on the tile can report success.",
+  plant_sapling: "Plant one observed tree sapling on a live lawful tile through the native wild-tree-seed placement path. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the treeSaplingTargets entries of the MOST RECENT observe result (never invent or guess coordinates). Returns sapling_planted with the seed consumed exactly once.",
+  plant_seed: "Plant a live ordinary seed into a live empty ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the seedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The row's surface and surfaceOwner say what the ground under it is: stone, wood or path ground, or a tile whose surfaceOwner names a building, is a porch or a deck rather than a plot, and not_measured means nobody measured it. Native crop creation and the authoritative receipt determine completion.",
   put_item_in_fish_tank: "Put one backpack item into a placed fish tank, letting the tank's own CanBeDeposited rule decide whether it may hold it. slot, the item's expectedQualifiedItemId, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the tank holding exactly one more item, that one, while the pack lost exactly one; an item the tank will not hold is refused by name (`fish_tank_rejects_item`), and a deposit the engine took the item for but never completed is put back and reported, never as a success.",
   redeem_prize_ticket: "Redeem one prize ticket at the machine. It takes NO arguments: the prize is whatever the machine own track head offers you right now, derived by the game from your own ticketPrizesClaimed stat, so there is nothing to choose and nothing to name. The receipt proves BOTH halves - the ticket stack fell by exactly one AND the prize entered your pack - and it refuses by name when you hold no ticket (prize_ticket_unavailable) or your pack cannot take the prize (prize_inventory_full) rather than dropping it on the ground.",
+  refill_watering_can: "Refill one selected, partially filled Watering Can from a live adjacent native water source. slot, x, y and expectedTargetId must be copied exactly from the refillWateringCanTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates).",
   remove_fence: "Take one placed fence or fence gate off its tile with the tool the fence's own data accepts. x, y, expectedTargetId and the TOOL's slot must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Fence.performToolAction answers false on every branch, including the one that destroyed the fence, so success is the fence GONE from the location plus the drops it produced; a tool that cannot remove that exact fence is refused by name (`remove_fence_tool_cannot_remove_target`).",
   remove_placed_item: "Remove a placed object from the world with the tool that can remove it: the action takes an Axe or Pickaxe out of the pack (the object itself decides which one removes it) and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry. A pack with neither tool, or a tool that cannot remove THIS object, is refused by name rather than silently doing nothing, and success is the object being GONE from the tile.",
   respond_level_up: "Settle the level-up the actor is being shown: choice \"confirm\" for an ordinary level, or \"branch_a\"/\"branch_b\" for one of the two professions a level-5 or level-10 menu offers. Pass the skill and level the menu is about, so a persistent choice can never be applied to the wrong level-up.",
   ride_bus: "Ride the native bus from the Bus Stop ticket machine to the desert. Stand next to the ticket machine first (otherwise the action refuses with bus_ticket_machine_out_of_reach). The Mod verifies the vault, the driver and the fare itself, then drives the game's own ticket interaction: the receipt arrives as bus_arrived when the actor is in the desert, or bus_arrival_unconfirmed if the ride never completes.",
   ride_minecart: "Ride one advertised native minecart objective from a live station tile. x, y and expectedTargetId must be copied exactly from the minecartTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates); x,y is the STATION tile, not the destination. The Mod re-derives the network, its unlock, the destination condition and the ticket price on the game thread from the live map tile and Data/Minecarts, then performs the native ride. Only the minecart_ride_completed receipt, which names the ridden objective and the exact arrival tile, reports success.",
   rotate_furniture: "Turn one already-placed piece of furniture one step through its own rotation cycle, in place. x, y and expectedTargetId must be copied exactly from the `placed_furniture` entry of the worldObjectTargets list in the MOST RECENT observe result; there is no angle to name, because the piece's own `rotations` data decides whether it alternates or steps. A piece with fewer than two rotations is refused by name (`furniture_rotation_unsupported`), never reported as a turn that did nothing, and success is the piece's rotation changed while it still stands on the same tile.",
+  scythe_crop: "Scythe one live ready Scythe-method crop. slot, x, y and expectedTargetId must be copied exactly from the scytheCropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The native scythe harvest removes the crop and leaves the produce on the ground; the produce is not added to the inventory by this action, so expect ground debris rather than an inventory increase. Returns scythe_crops_harvested.",
   select_mine_elevator_floor: "Select an already-reached floor on the mine elevator. Read the opaque target id, `floor` and `isCurrentFloor` from the `mineElevatorFloorTargets` entries of the most recent observation. The offered floors come from the Mod reading the live lowest level reached, so a level the player has not unlocked cannot be requested. Floor 0 returns to the mine entrance and is only valid from inside the mine.",
   send_multiplayer_chat: "Send one chat line to the whole multiplayer lobby through the game own chat egress. It takes exactly one string (`text`), moves nobody, opens nothing and touches no inventory, and it is REFUSED when there is no lobby (chat_multiplayer_only), when the text is blank or longer than one native chat line (chat_message_invalid), or when you send again inside the minimum interval (chat_rate_limited, with retry_after_ms). The receipt proves the SEND only: it never claims that anyone read the line.",
+  set_sign_display: "Set Sign Display using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and signTargets in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.",
+  shake_tree: "Shake a live tree that has not been shaken today through its native interaction. x, y and expectedTargetId must be copied exactly from shakeTreeTargets in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.",
+  ship_item: "Move the Farmhand's carried stack of one item into their own live shipping bin. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the shippingBinTargets entries of the MOST RECENT observe result (never invent or guess coordinates). There is no slot argument: walking to a bin takes many ticks and the pack shifts on the way, so the Mod resolves the FIRST carried stack of that item id when it arrives and the receipt names which slot actually shipped. Non-shippable items such as tools are rejected before any native settlement. In a shared world the destination bin depends on the world's separate-wallets setting. Returns item_shipped.",
   shop_purchase: "Buy goods from a shop the game says is open here. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation; `stockItemIds` lists what this shop actually sells, so do not request an item it does not name. A shop may be opened by an eligible owner (an NPC) OR by its own tile or object, which is why a target can exist with no owner standing nearby; the Mod reads owner eligibility and stock from the game's own content data, and the purchase runs through the game's own shop menu. Only a counter whose own TILE is the shop has to be reached before it can be used; a counter an eligible owner NPC runs opens from anywhere in that room, so no walk is required for it. The action never walks.",
   sleep: "End the day the way the player does: the Farmhand walks to its own bed, lets the native bedtime path run, declares bedtime-ready through that same native path, and then observes the native save and new-day transition. In a shared world the night completes only when every required player is ready; the Farmhand never marks another player ready and never forces the day. Takes no arguments. Returns day_advanced when the native save and day transition are observed, blocked with requires_other_player when the ready barrier is still waiting on someone else.",
   sweep_scythe: "Swing the scythe ONCE at a tile arc. x and y are only the tile the Farmhand must FACE, copied from the MOST RECENT observe result for the current location (never invent or guess coordinates) - there is no target id, because one swing covers a SET of tiles the engine itself samples, and the scythe comes from the action's own `tool:scythe` claim rather than a slot you name. The receipt is that arc's own measurement: arc_tiles, arc_sweepable and arc_clear count what it sampled, and changed names the tiles that moved with what stood on each before the swing. Completion is the NAMED tile moving (scythe_sweep_cut); a swing that left it alone comes back as scythe_sweep_partial rather than as a completed sweep, and nothing here claims a monster hit.",
   tailor_clothing: "Consume the cloth and the reagent a live sewing-machine recipe pairs and produce that recipe's garment into your backpack. Read the opaque target id, the two backpack slots (`leftSlot`/`rightSlot`) and the produced item id from the `tailoringTargets` entries of the most recent observation; the Mod re-reads both named slots on the game thread and refuses by name when the pair no longer mints the published id. A garment only part of which fits is reported as `clothing_tailoring_output_dropped`, never as a full success.",
+  take_pedestal_item: "Take the displayed item through the native pedestal inventory transaction. x, y and expectedTargetId must be copied exactly from pedestalTargets in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.",
   talk_to_npc: "Talk to an adjacent villager: the Mod drives the game's own NPC.checkAction talk branch, so the villager's real dialogue is what appears. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Empty your hands first: with an item in hand the game takes the gift path instead and the action refuses with hands_not_empty, and a villager who is asleep or out of reach is refused too. Returns talk_to_npc_talked when the dialogue is open; the actor stays inside that dialogue until it is closed (stardew_dismiss_modal, or stardew_answer_dialogue for a question).",
   toggle_animal_door: "Open or close a barn or coop animal door. Stand within reach of the building first. Read the opaque target id, its tile and the current `isOpen` state from the `animalDoorTargets` entries of the most recent observation. The Mod re-resolves the building from the opaque target id and asserts the door state flipped; the receipt carries the observed before/after state.",
+  toggle_fence_gate: "Toggle a live fence gate through its native gate state transition. x, y and expectedTargetId must be copied exactly from fenceGateTargets in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.",
+  toggle_tool_light: "Toggle the Lantern light; the action takes the lantern its own `tool:lantern` claim declares out of the pack and puts the actor's previous selection back, so slot is the number from lanternSlots in the most recent observe result and need not be the held one. The light toggles on the tool itself, not on a world object.",
   unequip_wearable: "Take the wearable out of a body slot and put it into a free pack slot. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot to empty, so a stale id is refused. slot is the DESTINATION pack slot and must be a slot that the same result does not list in inventoryItemFacts (that list holds only OCCUPIED slots) and that is below inventorySlots. The action refuses when the pack is full rather than losing the item, and emptying an already-empty body slot is an idempotent success.",
+  use_item: "Eat one ordinary edible Farmhand inventory item. This does NOT use a tool on a world object; for that use stardew_clear_debris, stardew_chop_tree, stardew_break_rock, stardew_clear_hoedirt, stardew_refill_watering_can, stardew_scythe_crop, stardew_cut_weeds, stardew_cut_grass or stardew_till_soil instead. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The item is consumed as the action is accepted, so a later interruption does not un-eat it. Native eating animation and the authoritative receipt determine completion.",
   use_mine_ladder: "Leave the mine level you are inside through its own exit ladder, so you are not trapped when nothing can be mined. x, y and expectedTargetId must be copied exactly from the mineEntranceTargets entries of the most recent observe result: inside a mine level that family publishes the ladder tiles, and the exit ladder is the one this action owns. The game opens its own Leave question and performs the warp, so no destination is accepted here. A row that belongs to the DESCENDING ladder is refused by name and points at stardew_enter_mine; to choose a floor you have already reached, use stardew_select_mine_elevator_floor.",
   use_obelisk: "Activate a discovered warp obelisk. Stand within reach of it first. Read the opaque target id, `route`, tile and `destination` from the `obeliskTargets` entries of the most recent observation. The Mod chooses the destination from the target itself (a Data/Buildings obelisk building, or the island farm obelisk tile), so name the structure and never a destination; the arrival is the terminal, not the dispatch.",
+  use_raft: "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",
   use_warp_item: "Use a held warp totem (farm, mountain, beach, desert or island) through the game's own object-use path, consuming the totem and warping the Farmhand. slot and expectedQualifiedItemId must be copied exactly from the warpItemTargets entry of the MOST RECENT observe result. The destination comes from the totem itself; only the arrival postcondition can report success.",
+  water_pet_bowl: "Water the current location's completed, unwatered native Pet Bowl with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the petBowlTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Returns pet_bowl_watered with the exact water and stamina delta.",
+  water_slime_hutch_trough: "Water one unwatered trough tile inside the current Slime Hutch with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the slimeHutchTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Farmhand must already be inside the hutch. Returns slime_hutch_trough_watered.",
   withdraw_silo_hay: "Withdraw one hay from a discovered silo. Stand within reach of the silo first. Read the opaque target id, its tile and the stored `hay` count from the `siloTargets` entries of the most recent observation (the same list `stardew_deposit_silo_hay` reads). The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
 });
 
@@ -1762,12 +1805,13 @@ export function createStardewActionTools(
   );
   // Every action whose tool is a projection of the Mod's own declaration, mounted through the one rule a mount has: the
   // parameters are `buildCandidateToolSchema` over the published descriptor, the names forwarded to the wire are that
-  // same descriptor's, and the label and the sentence a model reads are the declaration's too. Forty-eight blocks used to
-  // spell each of these out by hand - the schema call, the forwarded names and the arm that admitted it - and every one of
-  // them was a second copy of a declaration the Mod already publishes; the label and the sentence were a THIRD copy, in a
-  // table beside this loop keyed by action id, which is why a factory could not be written here: the two facts a tool says
-  // about itself were in a Host file. That table is gone (`2026-11-24`), and the Mod publishes all three facts instead. The
-  // condition is unchanged: a descriptor that cannot open its own arm means the tool is not mounted.
+  // same descriptor's, and the label and the sentence a model reads are the declaration's too. Ninety-seven blocks used
+  // to spell each of these out by hand - the schema call, the forwarded names and the arm that admitted it - and every
+  // one of them was a second copy of a declaration the Mod already publishes; the label and the sentence were a THIRD
+  // copy, in a table beside this loop keyed by action id, which is why a factory could not be written here: the two facts
+  // a tool says about itself were in a Host file. That table is gone (`2026-11-24`), and the Mod publishes the two FACTS
+  // instead while this file keeps the one SENTENCE (`DECLARED_ACTION_TOOL_DESCRIPTIONS`). The condition is unchanged: a
+  // descriptor that cannot open its own arm means the tool is not mounted.
   //
   // WHAT THIS LOOP READS, AND WHAT IT DOES NOT. It reads the Mod's own published descriptor (`registration.descriptor`
   // through `isModDescriptorComplete`, which only ever closes) and nothing else: not `lifecycle`, not the live capability
@@ -1802,42 +1846,6 @@ export function createStardewActionTools(
     );
   }
 
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.navigate_to_destination,
-        label: "Navigate Farmhand to Destination",
-        description:
-          "Navigate to exactly one destination selected by a label or canonical destination reference. Only the authoritative Mod receipt can report completion.",
-        parameters: Type.Object(
-          {
-            destination: Type.Union([
-              Type.Object(
-                {
-                  kind: Type.Literal("label"),
-                  label: Type.String({ minLength: 1, maxLength: 128 }),
-                },
-                { additionalProperties: false },
-              ),
-              Type.Object(
-                {
-                  kind: Type.Literal("ref"),
-                  ref: Type.String({ pattern: "^dr1_[A-Za-z0-9_-]{21}[AQgw]$" }),
-                },
-                { additionalProperties: false },
-              ),
-            ]),
-            requestId: CALLER_REQUEST_SCHEMA,
-            idempotencyKey: CALLER_REQUEST_SCHEMA,
-          },
-          { additionalProperties: false },
-        ),
-        action: "navigate_to_destination",
-        toArgs: (params) => ({ destination: params.destination }),
-      }),
-    );
-  }
   {
     // constant mount; per-action admission at execution
     tools.push(
@@ -1883,25 +1891,6 @@ export function createStardewActionTools(
     // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.enter_exit,
-        label: "Enter or Exit Stardew Location",
-        description:
-          "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x and y must be copied exactly from the sourceX and sourceY of a doorTargets entry in the most recent observe result; an edge exit's source lies one tile outside the map, which is why -1 is a real coordinate here. Only the Warped postcondition can report success.",
-        parameters: Type.Object({
-          x: WARP_SOURCE_COORDINATE_SCHEMA,
-          y: WARP_SOURCE_COORDINATE_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "enter_exit",
-        toArgs: (params) => ({ x: params.x, y: params.y }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.till_soil,
         label: "Till Stardew Soil",
         description:
@@ -1915,84 +1904,6 @@ export function createStardewActionTools(
         }),
         action: "till_soil",
         toArgs: (params) => ({ x: params.x, y: params.y, charge: params.charge }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.pickup_forage,
-        label: "Pick Up Stardew Forage",
-        description:
-          "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt and target disappearance can report completion.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "pickup_forage",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.pickup_item,
-        label: "Pick Up Stardew Item Drop",
-        description:
-          "Approach a live native Debris target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the itemTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native magnetic-collection receipt and exact inventory evidence can report completion.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "pickup_item",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.refill_watering_can,
-        label: "Refill Stardew Watering Can",
-        description:
-          "Refill one selected, partially filled Watering Can from a live adjacent native water source. slot, x, y and expectedTargetId must be copied exactly from the refillWateringCanTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates).",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "refill_watering_can",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
       }),
     );
   }
@@ -2026,12 +1937,11 @@ export function createStardewActionTools(
     // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.plant_seed,
-        label: "Plant Stardew Seed",
+        name: STARDEW_ACTION_TOOL_NAMES.harvest_crop,
+        label: "Harvest Stardew Crop",
         description:
-          "Plant a live ordinary seed into a live empty ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the seedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The row's surface and surfaceOwner say what the ground under it is: stone, wood or path ground, or a tile whose surfaceOwner names a building, is a porch or a deck rather than a plot, and not_measured means nobody measured it. Native crop creation and the authoritative receipt determine completion.",
+          "Harvest a live ready ordinary crop. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the harvestTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native harvest receipt and inventory/regrow postcondition determine completion.",
         parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
           x: TILE_COORDINATE_SCHEMA,
           y: TILE_COORDINATE_SCHEMA,
           expectedQualifiedItemId: ITEM_ID_SCHEMA,
@@ -2039,14 +1949,49 @@ export function createStardewActionTools(
           requestId: CALLER_REQUEST_SCHEMA,
           idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
-        action: "plant_seed",
+        action: "harvest_crop",
         toArgs: (params) => ({
-          slot: params.slot,
           x: params.x,
           y: params.y,
           expectedQualifiedItemId: params.expectedQualifiedItemId,
           expectedTargetId: params.expectedTargetId,
         }),
+      }),
+    );
+  }
+  {
+    // constant mount; per-action admission at execution
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.navigate_to_destination,
+        label: "Navigate Farmhand to Destination",
+        description:
+          "Navigate to exactly one destination selected by a label or canonical destination reference. Only the authoritative Mod receipt can report completion.",
+        parameters: Type.Object(
+          {
+            destination: Type.Union([
+              Type.Object(
+                {
+                  kind: Type.Literal("label"),
+                  label: Type.String({ minLength: 1, maxLength: 128 }),
+                },
+                { additionalProperties: false },
+              ),
+              Type.Object(
+                {
+                  kind: Type.Literal("ref"),
+                  ref: Type.String({ pattern: "^dr1_[A-Za-z0-9_-]{21}[AQgw]$" }),
+                },
+                { additionalProperties: false },
+              ),
+            ]),
+            requestId: CALLER_REQUEST_SCHEMA,
+            idempotencyKey: CALLER_REQUEST_SCHEMA,
+          },
+          { additionalProperties: false },
+        ),
+        action: "navigate_to_destination",
+        toArgs: (params) => ({ destination: params.destination }),
       }),
     );
   }
@@ -2138,136 +2083,6 @@ export function createStardewActionTools(
     // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.harvest_bush,
-        label: "Harvest Stardew Berry Bush",
-        description:
-          "Harvest a live in-bloom berry bush using its native interaction. x, y and expectedTargetId must come from the bushTargets entries of the most recent observe result for the current location.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "harvest_bush",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.fish_here,
-        label: "Fish Stardew Water Tile",
-        description:
-          "Cast a fishing rod at one water tile the game itself says a rod may be cast at, wait for the game's own bite, and let the game's own win path credit the catch. x, y and expectedTargetId must be copied exactly from the waterTargets entries of the MOST RECENT observe result for the current location - never invent or guess coordinates. The row names a tile the engine's own canFishHere/isTileFishable pair admitted, not a particular fish: which fish swims there is decided inside the engine at the bite. There is no slot to name: the handler selects the rod the action's own tool claim requires and restores the previous selection on every exit. Every refusal happens before the cast - no rod in the pack, no bait that rod needs, water the engine refuses, too little stamina, or a target id that no longer names this tile - and success is the catch the engine itself credited.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "fish_here",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  for (const action of ["harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"] as const) {
-    const labels = (
-      {
-        harvest_fruit_tree: [
-          "Harvest Stardew Fruit Tree",
-          "fruitTreeTargets",
-          "Harvest fruit from a live fruit tree through its native interaction.",
-        ],
-        shake_tree: [
-          "Shake Stardew Tree",
-          "shakeTreeTargets",
-          "Shake a live tree that has not been shaken today through its native interaction.",
-        ],
-        take_pedestal_item: [
-          "Take Stardew Pedestal Item",
-          "pedestalTargets",
-          "Take the displayed item through the native pedestal inventory transaction.",
-        ],
-        toggle_fence_gate: [
-          "Toggle Stardew Fence Gate",
-          "fenceGateTargets",
-          "Toggle a live fence gate through its native gate state transition.",
-        ],
-      } as const
-    )[action];
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES[action],
-        label: labels[0],
-        description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.`,
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action,
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.fertilize_tile,
-        label: "Fertilize Stardew Soil",
-        description:
-          "Apply one live owned fertilizer item to a live eligible ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the fertilizerTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native placement and the authoritative receipt determine completion.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "fertilize_tile",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.machine_inspect,
-        label: "Inspect Stardew Machine",
-        description:
-          "Read a live native machine state without opening a menu or changing the machine. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates, never reuse coordinates observed in a different location). requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "machine_inspect",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_load,
         label: "Load Machine Input",
         description:
@@ -2302,230 +2117,6 @@ export function createStardewActionTools(
     // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.machine_collect_output,
-        label: "Collect Machine Output",
-        description:
-          "Collect the ready output of a live machine through the normal native machine interaction. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A receipt proves native inventory delivery, the held item and the stack that moved, and a cleared ready state.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "machine_collect_output",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.collect_animal_product,
-        label: "Collect Stardew Animal Product",
-        description:
-          "Use the live compatible Farmhand-owned tool on a live ready animal-product target. slot, x, y and expectedTargetId must be copied exactly from the animalProductTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native animation and receipt determine completion.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "collect_animal_product",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.feed_animal,
-        label: "Place Hay in Stardew Trough",
-        description:
-          "Place one live owned Hay item in a live empty AnimalHouse trough. slot, x, y and expectedTargetId must be copied exactly from the feedTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This does not claim an animal has eaten.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "feed_animal",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.use_item,
-        label: "Consume Held Stardew Food Item",
-        description:
-          "Eat one ordinary edible Farmhand inventory item. This does NOT use a tool on a world object; for that use stardew_clear_debris, stardew_chop_tree, stardew_break_rock, stardew_clear_hoedirt, stardew_refill_watering_can, stardew_scythe_crop, stardew_cut_weeds, stardew_cut_grass or stardew_till_soil instead. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The item is consumed as the action is accepted, so a later interruption does not un-eat it. Native eating animation and the authoritative receipt determine completion.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "use_item",
-        toArgs: (params) => ({
-          slot: params.slot,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.harvest_crop,
-        label: "Harvest Stardew Crop",
-        description:
-          "Harvest a live ready ordinary crop. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the harvestTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native harvest receipt and inventory/regrow postcondition determine completion.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "harvest_crop",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.chop_tree,
-        label: "Chop Stardew Tree",
-        description:
-          "Chop one live ordinary mature tree. The Mod keeps swinging the equipped Axe until the tree is felled and reports how many swings it took, so one call completes the chop. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the felled tree in the authoritative receipt determines completion.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "chop_tree",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.dig_artifact_spot,
-        label: "Dig Stardew Artifact Spot",
-        description:
-          "Use one equipped Basic Hoe on a live adjacent diggable artifact spot. slot, x, y and expectedTargetId must be copied exactly from the artifactSpotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Source removal and native HoeDirt creation are required; rewards are excluded.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "dig_artifact_spot",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.clear_hoedirt,
-        label: "Clear Stardew HoeDirt",
-        description:
-          "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt. slot, x, y and expectedTargetId must be copied exactly from the clearHoeDirtTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Crops, IndoorPots, drops, and pickup are excluded.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "clear_hoedirt",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.break_rock,
-        label: "Break Stardew Rock",
-        description:
-          "Use one equipped basic Pickaxe swing on a live ordinary breakable stone. slot, x, y and expectedTargetId must be copied exactly from the rockSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Drops and pickup are separate actions.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "break_rock",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.equip_tool,
         label: "Equip Stardew Tool",
         description: `Select a Tool already owned by the AI Farmhand by semantic category (${[...TOOL_SELECTOR_VALUES].join(", ")}). The Mod receipt reports the authoritative before/after CurrentTool state.`,
@@ -2536,491 +2127,6 @@ export function createStardewActionTools(
         }),
         action: "equip_tool",
         toArgs: (params) => ({ tool: params.tool }),
-      }),
-    );
-  }
-
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.clear_debris,
-        label: "Clear Stardew Debris",
-        description:
-          "Clear one live ResourceClump with the equipped Axe or Pickaxe, walking to it first when it is out of reach. slot, x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). One call swings until the clump is gone and returns succeeded/debris_cleared, or uncertain/debris_not_cleared when the bounded swing cap could not finish it; drops and pickup are separate actions.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "clear_debris",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.npc_relationship,
-        label: "Inspect NPC Relationship",
-        description:
-          "Read the live relationship facts of one adjacent villager. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This never changes friendship, gifts or dialogue; it returns npc_relationship_inspected.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "npc_relationship",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.water_pet_bowl,
-        label: "Water the Pet Bowl",
-        description:
-          "Water the current location's completed, unwatered native Pet Bowl with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the petBowlTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Returns pet_bowl_watered with the exact water and stamina delta.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "water_pet_bowl",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.water_slime_hutch_trough,
-        label: "Water a Slime Hutch Trough",
-        description:
-          "Water one unwatered trough tile inside the current Slime Hutch with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the slimeHutchTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Farmhand must already be inside the hutch. Returns slime_hutch_trough_watered.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "water_slime_hutch_trough",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.chest_store,
-        label: "Store Item in Chest",
-        description:
-          "Move one carried inventory stack into a reachable chest. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of the carried stack you mean. There is no x, y, expectedTargetId or slot to send - the container is the whole address, and the body takes the first stack of that item in the backpack and names the slot it moved in the receipt. No ItemGrabMenu is opened. Refused chest_target_changed when no live container answers to chestId, and item_not_owned_in_slot when the backpack holds none of that item by then. Returns chest_stored with the exact stack conservation evidence.",
-        parameters: Type.Object({
-          chestId: OPAQUE_ID_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "chest_store",
-        toArgs: (params) => ({
-          chestId: params.chestId,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.chest_retrieve,
-        label: "Take Item From Chest",
-        description:
-          "Move one item out of a reachable chest into the Farmhand inventory. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of one item in that entry's `items` list, which carries every item the container holds. There is no x, y, expectedTargetId or slot to send - the container and the item are the whole address, so nothing is picked by position. The item id pins the observed item, so one that is gone by then is refused chest_empty rather than substituted. No ItemGrabMenu is opened. Returns chest_retrieved.",
-        parameters: Type.Object({
-          chestId: OPAQUE_ID_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "chest_retrieve",
-        toArgs: (params) => ({
-          chestId: params.chestId,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.chop_stump,
-        label: "Chop Tree Stump",
-        description:
-          "Chop one live ordinary tree that is already a stump with the equipped Axe. slot, x, y and expectedTargetId must be copied exactly from the treeStumpTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native axe until the stump is cleared. Returns stump_cleared. A mature standing tree is stardew_chop_tree, not this action.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "chop_stump",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.plant_sapling,
-        label: "Plant Tree Sapling",
-        description:
-          "Plant one observed tree sapling on a live lawful tile through the native wild-tree-seed placement path. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the treeSaplingTargets entries of the MOST RECENT observe result (never invent or guess coordinates). Returns sapling_planted with the seed consumed exactly once.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "plant_sapling",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.cut_weeds,
-        label: "Cut Weeds",
-        description:
-          "Cut one live adjacent Weed with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the weedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the weed is removed; the family is free, so the stamina cost is an explicit zero. Returns weeds_cut. Standing crops are stardew_scythe_crop, not this action.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "cut_weeds",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.cut_grass,
-        label: "Cut Grass",
-        description:
-          "Cut one live adjacent Grass tuft (a TerrainFeature, distinct from weeds) with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the grassTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the tuft is removed; grassType 1/7 feeds Hay into a silo (hay_unstored 0 = all stored) and grassType 6 drops rare items. Returns grass_cut.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "cut_grass",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.clear_cask,
-        label: "Clear Cask",
-        description:
-          "Clear one live adjacent Cask with a heavy hitter that is not a melee weapon (an Axe, Pickaxe or Hoe); the action takes that tool out of the pack itself and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from caskTargets. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "clear_cask",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  for (const action of ["dress_mannequin", "set_sign_display", "deposit_silo_hay"] as const) {
-    const isMannequin = action === "dress_mannequin";
-    const isSign = action === "set_sign_display";
-    const targetKey = isMannequin ? "mannequinTargets" : isSign ? "signTargets" : "siloTargets";
-    const label = isMannequin ? "Dress Mannequin" : isSign ? "Set Sign Display" : "Deposit Silo Hay";
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES[action],
-        label,
-        description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.`,
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action,
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.toggle_tool_light,
-        label: "Toggle Tool Light",
-        description:
-          "Toggle the Lantern light; the action takes the lantern its own `tool:lantern` claim declares out of the pack and puts the actor's previous selection back, so slot is the number from lanternSlots in the most recent observe result and need not be the held one. The light toggles on the tool itself, not on a world object.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "toggle_tool_light",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.scythe_crop,
-        label: "Scythe Crop",
-        description:
-          "Scythe one live ready Scythe-method crop. slot, x, y and expectedTargetId must be copied exactly from the scytheCropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The native scythe harvest removes the crop and leaves the produce on the ground; the produce is not added to the inventory by this action, so expect ground debris rather than an inventory increase. Returns scythe_crops_harvested.",
-        parameters: Type.Object({
-          slot: TOOL_SLOT_SCHEMA,
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "scythe_crop",
-        toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.craft_item,
-        label: "Craft Item",
-        description:
-          "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the craftingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
-        parameters: Type.Object({
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "craft_item",
-        toArgs: (params) => ({
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.cook_recipe,
-        label: "Cook Recipe",
-        description:
-          "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the cookingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
-        parameters: Type.Object({
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "cook_recipe",
-        toArgs: (params) => ({
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.collect_crab_pot_output,
-        label: "Collect Crab Pot Output",
-        description:
-          "Collect the ready output of one live adjacent baited Crab Pot. x, y and expectedTargetId must be copied exactly from the crabPotCollectTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod re-checks that the pot is really harvest-ready and visually ready before calling the native interaction, so an immature or unbaited pot is rejected rather than torn down. Returns crab_pot_output_collected.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "collect_crab_pot_output",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.ship_item,
-        label: "Ship Item",
-        description:
-          "Move the Farmhand's carried stack of one item into their own live shipping bin. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the shippingBinTargets entries of the MOST RECENT observe result (never invent or guess coordinates). There is no slot argument: walking to a bin takes many ticks and the pack shifts on the way, so the Mod resolves the FIRST carried stack of that item id when it arrives and the receipt names which slot actually shipped. Non-shippable items such as tools are rejected before any native settlement. In a shared world the destination bin depends on the world's separate-wallets setting. Returns item_shipped.",
-        parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
-          expectedQualifiedItemId: ITEM_ID_SCHEMA,
-          expectedTargetId: OPAQUE_ID_SCHEMA,
-          requestId: CALLER_REQUEST_SCHEMA,
-          idempotencyKey: CALLER_REQUEST_SCHEMA,
-        }),
-        action: "ship_item",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
-        }),
-      }),
-    );
-  }
-  {
-    // constant mount; per-action admission at execution
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.mount_transport,
-        label: "Mount a Native Horse",
-        description:
-          "Mount an advertised named horse in range; x, y and expectedTargetId must be copied exactly from horseTargets in the most recent observe result. The Mod waits for the native mounting animation to finish before reporting success.",
-        parameters: Type.Object(
-          {
-            x: TILE_COORDINATE_SCHEMA,
-            y: TILE_COORDINATE_SCHEMA,
-            expectedTargetId: OPAQUE_ID_SCHEMA,
-            requestId: CALLER_REQUEST_SCHEMA,
-            idempotencyKey: CALLER_REQUEST_SCHEMA,
-          },
-          { additionalProperties: false },
-        ),
-        action: "mount_transport",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.enter_mine,
-        label: "Enter the Mine",
-        description:
-          "Enter the mine through the live entrance tile OR descend the ladder tile inside a shaft; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. The ladder descends exactly one level, derived from the live shaft. This uses normal game progression and does not accept a level selector - to choose a floor, use stardew_select_mine_elevator_floor.",
-        parameters: Type.Object(
-          {
-            x: TILE_COORDINATE_SCHEMA,
-            y: TILE_COORDINATE_SCHEMA,
-            expectedTargetId: OPAQUE_ID_SCHEMA,
-            requestId: CALLER_REQUEST_SCHEMA,
-            idempotencyKey: CALLER_REQUEST_SCHEMA,
-          },
-          { additionalProperties: false },
-        ),
-        action: "enter_mine",
-        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
-      }),
-    );
-    tools.push(
-      makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.use_raft,
-        label: "Launch Stardew Raft",
-        description:
-          "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",
-        parameters: Type.Object(
-          {
-            slot: TOOL_SLOT_SCHEMA,
-            x: TILE_COORDINATE_SCHEMA,
-            y: TILE_COORDINATE_SCHEMA,
-            requestId: CALLER_REQUEST_SCHEMA,
-            idempotencyKey: CALLER_REQUEST_SCHEMA,
-          },
-          { additionalProperties: false },
-        ),
-        action: "use_raft",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
       }),
     );
   }

@@ -988,6 +988,50 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "dye_clothing_with_item",
   "color_placed_object",
   "sweep_scythe",
+  "use_raft",
+  "mount_transport",
+  "enter_mine",
+  "enter_exit",
+  "pickup_forage",
+  "pickup_item",
+  "refill_watering_can",
+  "plant_seed",
+  "harvest_bush",
+  "fish_here",
+  "fertilize_tile",
+  "machine_inspect",
+  "machine_collect_output",
+  "collect_animal_product",
+  "feed_animal",
+  "use_item",
+  "chop_tree",
+  "dig_artifact_spot",
+  "clear_hoedirt",
+  "break_rock",
+  "clear_debris",
+  "npc_relationship",
+  "water_pet_bowl",
+  "water_slime_hutch_trough",
+  "chest_store",
+  "chest_retrieve",
+  "chop_stump",
+  "plant_sapling",
+  "cut_weeds",
+  "cut_grass",
+  "clear_cask",
+  "dress_mannequin",
+  "set_sign_display",
+  "deposit_silo_hay",
+  "toggle_tool_light",
+  "scythe_crop",
+  "harvest_fruit_tree",
+  "shake_tree",
+  "take_pedestal_item",
+  "toggle_fence_gate",
+  "craft_item",
+  "cook_recipe",
+  "collect_crab_pot_output",
+  "ship_item",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -1173,6 +1217,15 @@ const WRITES_EFFECT = requirement(
   "a mounted action performs a native write, and the Host does not advertise an effect it cannot see",
   (descriptor) => descriptor.effect === "write",
   (descriptor) => ({ ...descriptor, effect: "read" }),
+);
+
+/** `effect`: a mounted action that reads the world and changes nothing, so no write receipt is owed. */
+const READS_EFFECT = requirement(
+  "effect",
+  'the string "read"',
+  "the mount offers a read-only action, and the Host does not advertise a write the action never performs",
+  (descriptor) => descriptor.effect === "read",
+  (descriptor) => ({ ...descriptor, effect: "write" }),
 );
 
 /** `postcondition`: the receipt the Mod mints for this action, by name. */
@@ -1412,6 +1465,229 @@ export const MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze({
   // One swing at one FACED tile: the scythe comes from the action's own `tool:scythe` claim, so the request names no slot,
   // and the arc is the engine's own - a target id would name one occupant of a set the swing covers.
   sweep_scythe: [publishesArguments("x", "y"), WRITES_EFFECT, mintsPostcondition("scythe_arc_occupancy_changed")],
+  // The same three facts the mount blocks below spelled: the exact published argument names, the write it performs,
+  // and the receipt the Mod mints. Read here so the projection loop can mount the action without a Host copy of any
+  // of them.
+  use_raft: [
+    publishesArguments("slot", "x", "y"),
+    WRITES_EFFECT,
+    mintsPostcondition("raft_launched"),
+  ],
+  mount_transport: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("horse_mounted"),
+  ],
+  enter_mine: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("mine_entered"),
+  ],
+  enter_exit: [
+    publishesArguments("x", "y"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  pickup_forage: [
+    publishesArguments("x", "y", "expectedQualifiedItemId", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("forage_picked_up"),
+  ],
+  pickup_item: [
+    publishesArguments("x", "y", "expectedQualifiedItemId", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("item_picked_up"),
+  ],
+  refill_watering_can: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  plant_seed: [
+    TILE_ITEM_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  harvest_bush: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  fish_here: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("fish_caught"),
+  ],
+  fertilize_tile: [
+    TILE_ITEM_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  machine_inspect: [
+    TILE_AND_TARGET,
+    READS_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  machine_collect_output: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  collect_animal_product: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  feed_animal: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  use_item: [
+    publishesArguments("slot", "expectedQualifiedItemId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  chop_tree: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  dig_artifact_spot: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  clear_hoedirt: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  break_rock: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  clear_debris: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  npc_relationship: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  water_pet_bowl: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  water_slime_hutch_trough: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  chest_store: [
+    publishesArguments("chestId", "expectedQualifiedItemId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  chest_retrieve: [
+    publishesArguments("chestId", "expectedQualifiedItemId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  chop_stump: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  plant_sapling: [
+    TILE_ITEM_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  cut_weeds: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  cut_grass: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  clear_cask: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("cask_cleared"),
+  ],
+  dress_mannequin: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("mannequin_dressed"),
+  ],
+  set_sign_display: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("sign_display_set"),
+  ],
+  deposit_silo_hay: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("silo_hay_deposited"),
+  ],
+  toggle_tool_light: [
+    publishesArguments("slot", "x", "y"),
+    WRITES_EFFECT,
+    mintsPostcondition("tool_light_toggled"),
+  ],
+  scythe_crop: [
+    TILE_SLOT_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  harvest_fruit_tree: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  shake_tree: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  take_pedestal_item: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  toggle_fence_gate: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  craft_item: [
+    publishesArguments("expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  cook_recipe: [
+    publishesArguments("expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  collect_crab_pot_output: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  ship_item: [
+    publishesArguments("x", "y", "expectedQualifiedItemId", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
 } satisfies Record<StardewDescriptorDerivedActionId, readonly DescriptorRequirement[]>);
 
 /**

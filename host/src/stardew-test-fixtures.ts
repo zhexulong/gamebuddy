@@ -1,4 +1,78 @@
-import type { ActionRegistration } from "./protocol.js";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { ActionRegistration, ActionRegistrationDescriptor } from "./protocol.js";
+
+/** One argument of one action as the Mod's own surface artifact publishes it. */
+type PublishedArgument = Readonly<{
+  type: string;
+  enum?: readonly string[];
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  resolvedAtExecution?: boolean;
+}>;
+
+/**
+ * One action's descriptor, exactly as the Mod's own surface artifact publishes it.
+ *
+ * The fixture used to carry no descriptor at all, and every Game Action tool still mounted - because all 25 actions it
+ * names had a hand-written mount block that never consulted the catalog. They are projections of the declaration now
+ * (`game-tools.ts` `HOST_PRESENTED_ACTION_IDS`), so a fixture that publishes arguments and no descriptor would be a Mod
+ * this Host cannot build a tool for: the mount skips it, and a test that looked the tool up by name would read the
+ * absence as a behaviour change. Reading the artifact keeps the fixture a Mod rather than a shape the Host invented.
+ */
+const SURFACE: readonly Readonly<{
+  actionId: string;
+  argumentSchema?: Readonly<Record<string, PublishedArgument>>;
+  effect?: "read" | "write";
+  postcondition?: Readonly<{ name?: string }>;
+  nativeBinding?: string;
+  label?: string;
+  targetKinds?: readonly string[];
+}>[] = JSON.parse(
+  readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "integrations",
+      "stardew",
+      "action-development",
+      "contracts",
+      "generated",
+      "action-surface.v1.json",
+    ),
+    "utf8",
+  ),
+).actions;
+
+export function publishedDescriptor(actionId: string): ActionRegistrationDescriptor {
+  const action = SURFACE.find((candidate) => candidate.actionId === actionId);
+  if (action === undefined) throw new Error(`test_fixture_action_not_in_the_surface_artifact:${actionId}`);
+  const arguments_ = Object.entries(action.argumentSchema ?? {}).map(([name, schema]) => ({
+    name,
+    type: schema.type,
+    ...(schema.enum === undefined ? {} : { enum: schema.enum }),
+    ...(schema.minimum === undefined ? {} : { minimum: schema.minimum }),
+    ...(schema.maximum === undefined ? {} : { maximum: schema.maximum }),
+    ...(schema.minLength === undefined ? {} : { minLength: schema.minLength }),
+    ...(schema.maxLength === undefined ? {} : { maxLength: schema.maxLength }),
+    ...(schema.resolvedAtExecution === true ? { resolvedAtExecution: true as const } : {}),
+  }));
+  return Object.freeze({
+    arguments: arguments_,
+    ...(action.effect === undefined ? {} : { effect: action.effect }),
+    ...(action.postcondition?.name === undefined ? {} : { postcondition: { name: action.postcondition.name } }),
+    ...(action.nativeBinding === undefined ? {} : { nativeBinding: action.nativeBinding }),
+    // The two FACTS the mount loop reads before it projects anything: a derived action whose descriptor omits its
+    // label mounts no tool at all, so a fixture that dropped it would exercise a surface the Mod never advertises.
+    ...(action.label === undefined ? {} : { label: action.label }),
+    ...(action.targetKinds === undefined ? {} : { targetKinds: action.targetKinds }),
+  });
+}
 
 /**
  * Test-only authenticated Mod catalog. This explicit fixture deliberately does
@@ -40,6 +114,7 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] = Object.free
       identityVersion: 1,
       lifecycle: "published" as const,
       kind: "execution" as const,
+      descriptor: publishedDescriptor(actionId),
     }),
   ),
 );

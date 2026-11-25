@@ -2266,24 +2266,30 @@ export type ActionRegistrationDescriptor = Readonly<{
     none?: string;
   }>;
   /**
-   * What this action is CALLED, the sentence a model reads about it, and the kinds of thing it acts on - the Mod's own
-   * declaration (`FarmhandActionPresentation`), absent on every action that publishes none.
+   * What this action is CALLED and the kinds of thing it acts on - the Mod's own declaration
+   * (`FarmhandActionPresentation`), absent on every action that publishes none.
    *
    * <p>
-   * READ, NOT MERELY TOLERATED. These three were Host presentation: the label and the sentence sat in
-   * `game-tools.ts`'s presentation table keyed by action id, and the kinds sat in the adapter table beside it - so a
-   * consumer that builds a tool out of a declaration instead of out of a name it recognizes could not exist. The mount
-   * loop reads `label` and `description` from here, and the action's own publication decides whether it has one: an
-   * absent pair is the statement that this action's text is still written in its own mount block.
+   * READ, NOT MERELY TOLERATED. Both were Host presentation: the label sat in `game-tools.ts`'s presentation table
+   * keyed by action id and the kinds sat in the adapter table beside it, so a consumer that builds a tool out of a
+   * declaration instead of out of a name it recognizes could not exist. The mount loop reads `label` from here, and
+   * the action's own publication decides whether it has one: an absent pair is the statement that this action's tool
+   * is still written in its own mount block.
    * </p>
    * <p>
-   * THE THREE TRAVEL TOGETHER. A label with no sentence is a tool the model can call and not understand, so
-   * `isValidActionDescriptor` refuses a descriptor that carries one without the others - and refuses a blank one, because
-   * absence is how an action says it publishes no prose.
+   * THE BOUNDARY. These are FACTS about the action - its name and what it addresses - and the wire carries no SENTENCE
+   * a model reads: every tool description is the Host's (`DECLARED_ACTION_TOOL_DESCRIPTIONS` in `game-tools.ts`),
+   * because prose about the model's experience of a tool changes for reasons the game knows nothing about. A
+   * descriptor that publishes a `description` is therefore refused by `KNOWN_ACTION_DESCRIPTOR_KEYS` rather than
+   * ignored, so the member cannot come back as a third spelling of the same fact.
+   * </p>
+   * <p>
+   * THE PAIR TRAVELS TOGETHER. A kinds list with no label is a fact about an action nothing can name, so
+   * `isValidActionDescriptor` refuses a descriptor that carries one without the other - and refuses a blank one,
+   * because absence is how an action says it publishes no label.
    * </p>
    */
   label?: string;
-  description?: string;
   targetKinds?: readonly string[];
 }>;
 
@@ -3738,6 +3744,10 @@ function isDataQueryFieldValue(value: unknown): value is DataQueryFieldValue {
         typeof entry === "boolean",
     )
   );
+}
+
+export function isValidNavigationReadRequest(value: unknown): boolean {
+  return isRecord(value) && validateNavigationReadRequest(value) === null;
 }
 
 function validateNavigationReadRequest(value: Record<string, unknown>): string | null {
@@ -6813,11 +6823,10 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   // closure`), so a member the artifact carries and this list lacks reports `host_whitelist_missing_member` - the same
   // drift `arguments`, `watchdogMs`, `evidenceSchema` and `canonicalCodec` sit in this list from the other direction.
   "effects",
-  // What the action is called, the sentence a model reads about it, and the kinds it acts on (`FarmhandActionPresentation`
-  // on the Mod side). Read by the descriptor-derived mount loop, which is the reason they are on the wire at all: without
-  // them that loop had to look the label up in a Host table keyed by action id.
+  // What the action is called and the kinds it acts on (`FarmhandActionPresentation` on the Mod side). Read by the
+  // descriptor-derived mount loop, which is the reason they are on the wire at all: without the label that loop had to
+  // look the name up in a Host table keyed by action id. The SENTENCE a model reads is not a member: the Host owns it.
   "label",
-  "description",
   "targetKinds",
 ] as const;
 
@@ -6995,21 +7004,14 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
       return false;
   }
 
-  if (value.label !== undefined || value.description !== undefined || value.targetKinds !== undefined) {
-    // The three presentation facts travel together or not at all: a label beside no sentence is a tool the model can call
-    // and not understand. Blank is refused as well, because ABSENCE is how an action says it publishes no prose - and a
-    // present-but-empty label would read on this side exactly like one that is there. The prose ceiling is the Mod's own
-    // (`FarmhandActionPresentationCatalog.MaximumDescriptionLength`), stated here so a sentence that passes the producer
-    // cannot be refused at hello.
+  if (value.label !== undefined || value.targetKinds !== undefined) {
+    // The two facts travel together or not at all: a kinds list with no label is a fact about an action nothing can name.
+    // Blank is refused as well, because ABSENCE is how an action says it publishes no label - and a present-but-empty
+    // label would read on this side exactly like one that is there. The sentence a model reads about the tool is not
+    // here at all: it is the Host's, so a descriptor carrying `description` is refused by the exact-key gate above, where
+    // the member is named, rather than silently dropped here.
     if (typeof value.label !== "string" || value.label.length === 0 || value.label.length > 128) return false;
     if (value.label.trim().length === 0) return false;
-    if (
-      typeof value.description !== "string" ||
-      value.description.length === 0 ||
-      value.description.length > 2048 ||
-      value.description.trim().length === 0
-    )
-      return false;
     if (!Array.isArray(value.targetKinds) || value.targetKinds.length === 0 || value.targetKinds.length > 8)
       return false;
     if (!value.targetKinds.every((kind) => typeof kind === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(kind)))
