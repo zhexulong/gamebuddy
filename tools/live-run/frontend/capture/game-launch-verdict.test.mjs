@@ -33,6 +33,13 @@
  *                   `blocked_by_product/farmhand_not_initialized`; with either half stripped from that copy it
  *                   returned `null`, which is the run reading `failed
  *                   cabin_handoff_did_not_attach:instance=launching/attachment=none`.
+ *
+ * red-proof: inject  measured 2026-11-26, for the false pass: `readLaunchOutcome` deciding `attached` with
+ *                   `text.includes("attachment=attached")` - the string test the ROUNDW retry loop used -
+ *                   turned `✖ a FAILURE that quotes the chain's own target is not an attachment, however often
+ *                   the word appears` red with `AssertionError: the run's own verdict says failed, so this run
+ *                   did not attach / true !== false`, and the suite returned `pass 32 fail 3`. That is a whole
+ *                   run's reading flipped from `failed` to a pass by the prose in its own failure sentence.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -64,6 +71,7 @@ import {
   PRODUCT_GAPS,
   readBlockedByProduct,
   readinessOf,
+  readLaunchOutcome,
   readNotMeasured,
   responseStampForPress,
   VERDICTS,
@@ -831,4 +839,86 @@ test("a game in another language than the run's is red by name, and agreement is
   assert.equal(gameLocaleMismatch({ expected: null, saveLoadedLine: SAVE_LINE_ENGLISH }), null);
   // No save line: nothing was measured, so nothing is failed.
   assert.equal(gameLocaleMismatch({ expected: "zh-CN", saveLoadedLine: null }), null);
+});
+
+/*
+ * ---- did the launch ATTACH: the field, never the prose ----
+ *
+ * The text below is the tail of this machine's own facts file from 2026-11-26
+ * (`D:\gb-runs\roundw-out\w-game-launch.txt`, quoted in `.tmp/lane-roundw.md` §5.3 and §5.6). It is here
+ * verbatim because it is the text that produced the false pass: the run FAILED, and the failure sentence
+ * carries the chain's own target as a quotation, so `text.includes("attachment=attached")` answers YES.
+ */
+const ROUNDW_FAILED_TAIL = [
+  'launched game locale: {"expected":"zh-CN","saw":null} (nothing measured: the game never logged a save load)',
+  "FAILED: game_never_reached_ready:instance=crashed/attachment=none",
+  "=== ITEM: the verdict ===",
+  'FAILED: game_never_reached_ready:instance=crashed/attachment=none (the launch was requested through the product\'s own control ("启动游戏") and the surface then answered instance=crashed/attachment=none; the cabin step was not reached; the Host answers its own port: {"answered":true,"status":200}; the page\'s own events: []; the surface never reached instance=running/attachment=attached within 300000ms)',
+  "=== ITEM: the chain, rung by rung ===",
+  "CHAIN 1/9 launch admitted @3s - the surface moved to instance=launching/attachment=none after the launch control was pressed (the route's own answer had not arrived when this was read)",
+  "CHAIN 4/9 save loaded - not reached",
+  "CHAIN 9/9 attach - not reached",
+  "steps=launch admitted>guardian armed>process started",
+  "GAME-LAUNCH w: failed game_never_reached_ready:instance=crashed/attachment=none; steps=launch admitted>guardian armed>process started records=machine>guardian>surface>state before>installation>state after registration>fixture world>machine quiet>launch preconditions>launch",
+  "the game's own processes at the end: []",
+  "DONE-W",
+].join("\n");
+
+test("a FAILURE that quotes the chain's own target is not an attachment, however often the word appears", () => {
+  const outcome = readLaunchOutcome(ROUNDW_FAILED_TAIL);
+  assert.equal(outcome.verdict, VERDICTS.failed);
+  assert.equal(outcome.code, "game_never_reached_ready:instance=crashed/attachment=none");
+  assert.equal(outcome.attached, false, "the run's own verdict says failed, so this run did not attach");
+  assert.deepEqual(outcome.steps, ["launch admitted", "guardian armed", "process started"]);
+  assert.match(outcome.reason, /the driver's own verdict is failed/u);
+  // THE RED-PROOF SHAPE, asserted as a fact: the substring a text-matching classifier would have read.
+  assert.equal(
+    ROUNDW_FAILED_TAIL.includes("attachment=attached"),
+    true,
+    "the text really does contain the target's own spelling - which is why a substring test called this run a pass",
+  );
+});
+
+test("only the driver's own measured verdict WITH the attach rung in its chain is an attachment", () => {
+  const reached = [
+    "CHAIN RUNG: attach @64s - the Host published attachment=attached (instance=running/attachment=attached)",
+    "GAME-LAUNCH w: measured launch=ready line=sent reply_chars=42; steps=launch admitted>guardian armed>process started>save loaded>cabin ready>cabin confirm>cabin confirm accepted>attach records=machine>guardian>surface>launch>cabin",
+  ].join("\n");
+  const outcome = readLaunchOutcome(reached);
+  assert.equal(outcome.verdict, VERDICTS.measured);
+  assert.equal(outcome.attached, true);
+  assert.match(outcome.reason, /carries the attach rung/u);
+
+  // A measured verdict whose own chain does not carry the rung is not a pass either: the two fields disagree,
+  // and the answer to a disagreement is "not attached", never the friendlier half.
+  const disagreeing =
+    "GAME-LAUNCH w: measured launch=ready line=sent reply_chars=42; steps=launch admitted>guardian armed";
+  assert.equal(readLaunchOutcome(disagreeing).attached, false);
+  assert.match(readLaunchOutcome(disagreeing).reason, /does not carry attach/u);
+
+  // The two verdicts that are neither a pass nor a failure are not attachments, and say which they are.
+  for (const verdict of [VERDICTS.notMeasured, VERDICTS.blockedByProduct]) {
+    const reading = readLaunchOutcome(
+      `GAME-LAUNCH w: ${verdict} guardian_pipe_unreachable; steps=none records=machine`,
+    );
+    assert.equal(reading.verdict, verdict);
+    assert.equal(reading.attached, false);
+    assert.equal(reading.code, "guardian_pipe_unreachable");
+  }
+});
+
+test("a text with no result line is unreadable, never a pass", () => {
+  // ROUNDW's retry loop read a `tee`'d capture log. A log without the driver's result line - a phase that
+  // never reached its driver, a file an earlier execution left - measures nothing.
+  for (const text of [null, "", "DONE-CAPTURE failed=0 of 1 ran=1 skipped=0", "GAME-LAUNCH w: eventually attached"]) {
+    assert.equal(readLaunchOutcome(text).attached, false, `${JSON.stringify(text)} is not an attachment`);
+    assert.equal(readLaunchOutcome(text).verdict, "unreadable");
+  }
+  // A verdict word with its fields cut off is not an attachment either, and it says which field is missing.
+  const truncated = readLaunchOutcome("GAME-LAUNCH w: measured launch=ready line=sent reply_chars=42");
+  assert.equal(truncated.attached, false);
+  assert.match(truncated.reason, /does not carry attach/u);
+  assert.equal(readLaunchOutcome(null).code, "no_facts_file");
+  assert.equal(readLaunchOutcome("no result here").code, "no_result_line");
+  assert.equal(readLaunchOutcome("GAME-LAUNCH w: eventually attached").code, "result_line_unparsed");
 });

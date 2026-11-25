@@ -29,6 +29,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   attributeSmapiLog,
+  createSmapiLogReading,
   describeSmapiAttribution,
   lastOwnLine,
   smapiLogFiles,
@@ -214,4 +215,82 @@ test("the files are found by SMAPI's own naming, and a rotated crash log is not 
   );
   assert.equal(describeSmapiAttribution(reading)[0], "smapi_lines: this_run=5 other_run=0 unattributable=0");
   assert.equal(reading.source, "SMAPI-latest.player-2.txt + SMAPI-latest.txt");
+});
+
+/*
+ * ---- the save join: the SLOT a save line carries, never the farm name the run staged ----
+ *
+ * The ROUNDW run's own file (`D:\gb-runs\roundw-out\w-game-launch.txt`, quoted in `.tmp/lane-roundw.md` §5.4):
+ * this run's `Mods go here:` - its stage root, which no other run can produce - ONE session start, and one save
+ * line, `GameBuddyFarm_455317305`, the world this run's own game created (the save folder's own `SaveGameInfo`
+ * names farm name `GameBuddy Farm`). The driver pushed THAT FARM NAME into `ownWorldNames`, and the two strings
+ * can never be equal, so the reader called this run's own save line another run's and flipped the file to
+ * `contested` - which is what made the chain's rung 4 `save loaded - not reached` on a run that loaded it.
+ */
+const ROUNDW_STAGE = "D:\\gb-runs\\roundw-out.stage";
+const ROUNDW_MODS = `${ROUNDW_STAGE}\\root\\GameBuddy\\data\\stardew-private-bootstrap\\90d0728b-b979-423f-9c5c-21da22f156e5\\player-host\\Mods`;
+const ROUNDW_SLOT = "GameBuddyFarm_455317305";
+const ROUNDW_FARM_NAME = "GameBuddy Farm";
+
+/** The file as that run's game wrote it, down to the four header lines and the one save line. */
+const roundwFile = () =>
+  file([
+    "[05:01:45 INFO  SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15 build 24356 on Windows 11 (10.0.26300.0)",
+    `[05:01:45 INFO  SMAPI] Mods go here: ${ROUNDW_MODS}`,
+    "[05:01:45 TRACE SMAPI] (Using custom --mods-path argument. Game folder: D:\\Steam\\steamapps\\common\\Stardew Valley.)",
+    "[05:01:45 TRACE SMAPI] Log started at 2026-11-25T21:01:45 UTC",
+    `[05:01:53 TRACE game] Context: loaded save '${ROUNDW_SLOT}', starting spring 1 Y1, locale set to zh-CN.`,
+  ]);
+
+const roundwLog = () => ({ state: "read", logDir: "C:\\logs", reason: null, files: [roundwFile()] });
+
+test("a farm name is never a save slot: claiming it flips this run's own save line to contested", () => {
+  // THE DEFECT, exactly as the run recorded it: `this_run=1 other_run=1 unattributable=95`.
+  const reading = attributeSmapiLog({
+    ownMarkers: [ROUNDW_STAGE],
+    ownWorldNames: [ROUNDW_FARM_NAME],
+    logFiles: roundwLog(),
+  });
+  const [only] = reading.files;
+  assert.equal(only.decision, "contested");
+  assert.deepEqual(only.foreignSaves, [ROUNDW_SLOT], "this run's own world, read as somebody else's");
+  assert.deepEqual(reading.lines, { thisRun: 1, otherRun: 1, unattributable: 3 });
+  // And the rung the chain needed is then unreachable, with the reader naming the run's own save as foreign.
+  const claimed = createSmapiLogReading({
+    ownMarkers: [ROUNDW_STAGE],
+    ownWorldNames: [ROUNDW_FARM_NAME],
+    logFiles: roundwLog(),
+  }).claim(0);
+  assert.deepEqual(claimed.facts, {}, "no rung the game's log could prove");
+  assert.match(claimed.reason, /names another game's save \("GameBuddyFarm_455317305"\)/u);
+});
+
+test("the same file, joined on the slot the save line carries, is one session of this run and claims rung 4", () => {
+  const reading = attributeSmapiLog({
+    ownMarkers: [ROUNDW_STAGE],
+    ownWorldNames: [ROUNDW_SLOT],
+    logFiles: roundwLog(),
+  });
+  const [only] = reading.files;
+  assert.equal(only.decision, "one_session_of_this_run");
+  assert.deepEqual(only.foreignSaves, []);
+  assert.deepEqual(reading.lines, { thisRun: 5, otherRun: 0, unattributable: 0 });
+  const claimed = createSmapiLogReading({
+    ownMarkers: [ROUNDW_STAGE],
+    ownWorldNames: [ROUNDW_SLOT],
+    logFiles: roundwLog(),
+  }).claim(0);
+  assert.equal(claimed.facts["save loaded"].captured, ROUNDW_SLOT);
+  assert.equal(claimed.reason, null);
+  // The decision is printed with its field name and its own count, so "rung 4 unclaimable" is a reading.
+  const lines = describeSmapiAttribution(reading);
+  assert.match(
+    lines.at(-1),
+    /^rung4_join: field=save slot this_run=1 own_slots=\[GameBuddyFarm_455317305\] - `Context: loaded save '<slot>'` carries the save folder, and the farm name this run staged is display text that is never compared with it$/u,
+  );
+  // A run that has claimed no slot yet says so rather than silently joining on nothing.
+  assert.match(
+    describeSmapiAttribution(attributeSmapiLog({ ownMarkers: [ROUNDW_STAGE], logFiles: roundwLog() })).at(-1),
+    /this_run=0 own_slots=\[\]/u,
+  );
 });

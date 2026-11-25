@@ -279,7 +279,8 @@ function lastOwnLine(reading) {
 /**
  * The one line every reading prints, and the per-file decision behind it.
  * `smapi_lines:` is the count a reader compares across a run; the `smapi_attribution:` line per file says
- * how each file was decided, so "0 other_run" on a contested file is never mistaken for a clean one.
+ * how each file was decided, so "0 other_run" on a contested file is never mistaken for a clean one. The last
+ * line is the RUN'S WORLD JOIN, printed because it is the identity the chain's rung 4 rests on.
  */
 function describeSmapiAttribution(reading) {
   if (reading === null || reading === undefined) return ["smapi_lines: this_run=0 other_run=0 unattributable=0 (no SMAPI log was read)"];
@@ -300,7 +301,27 @@ function describeSmapiAttribution(reading) {
     ].filter((entry) => entry !== null);
     return `smapi_attribution: ${file.name} (${counts}, ${String(file.sessionStarts)} session start(s)) -> ${file.decision}: ${String(file.lines.thisRun)} line(s) name this run; ${others.length === 0 ? "no line names another game by name" : others.join(" and ")}; ${String(file.lines.unattributable)} line(s) cannot be attributed to either and are not used`;
   });
-  return [head, ...detail];
+  return [head, ...detail, describeSaveJoin(reading)];
+}
+
+/**
+ * Which identity a save line is joined to, and how many lines this run's own world was claimed from.
+ *
+ * `Context: loaded save '<x>'` carries a save SLOT - the game's folder name, which is the farm name the product
+ * staged filtered into a file name plus the unique id the game mints (`SaveGame.cs:448`). It never carries the
+ * farm name itself, so a run that claims its farm name as a world name compares two different things and calls
+ * its own save line another run's: measured 2026-11-26 (`.tmp/lane-roundw.md` §5.4), `other_run=1`,
+ * `unattributable=95`, and rung 4 unclaimable on a run whose save really was loaded. The claim is the slot
+ * (`capture/fixture-world.cjs` `ownWorldSlots`), and this line says which field it joined on and how many save
+ * lines it bound - printed even at zero, so "rung 4 could not be claimed" is a reading rather than an absence.
+ */
+function describeSaveJoin(reading) {
+  const slots = Array.isArray(reading?.ownWorldNames) ? reading.ownWorldNames : [];
+  const joined = (reading?.ownLines ?? []).filter((line) => {
+    const save = SAVE_LOADED.exec(line);
+    return save !== null && namesAny(save[1], slots);
+  });
+  return `rung4_join: field=save slot this_run=${String(joined.length)} own_slots=[${slots.join(", ")}] - \`Context: loaded save '<slot>'\` carries the save folder, and the farm name this run staged is display text that is never compared with it`;
 }
 
 /* ---------------------------------------------------------------- the rungs the game's log proves */

@@ -36,6 +36,48 @@ const CLIENT_IMAGE = /^Stardew ?Valley\.exe$/iu;
 const isGameRole = (role) => role === GAME_LOADER_ROLE || role === GAME_CLIENT_ROLE;
 
 /**
+ * THE OWNERSHIP RULE, SPELLED ONCE: a process belongs to this run when its own command line names this run's
+ * stage root, or when its parent's does.
+ *
+ * Why it is a function and not a line of `includes` wherever it is needed: two instruments ask this question on
+ * the same machine and disagreed by two answers. `lib/machine-quiet.mjs` refuses a launch beside another game by
+ * claiming a game through its `--mods-path <stage>/...`; a quiet POLLER watching the same machine carried its own
+ * copy (`CommandLine -match 'roundw-out|roundw-chain|roundw-quiet'`) and called this run's own relatively-spawned
+ * capture driver a FOREIGN GAME (`.tmp/lane-roundw.md` §5.3: `12408(node.exe)` in the driver list, while the run's
+ * own ledger named it `capture:w-game-launch`). A rule with two spellings drifts, and this one drifted into
+ * contaminating the very window it was watching.
+ *
+ * The PARENT half is the load-bearing one for a driver: the kit spawns a capture driver as
+ * `node <kit>/capture/w-game-launch.cjs` and its command line carries the kit, not the run's stage - the run's
+ * stage appears in the phase that spawned it (`node <kit>/phases/capture.mjs <stage>/state/run.json`). The game
+ * CLIENT is the same shape two steps down: `Stardew Valley.exe` carries no arguments at all.
+ *
+ * `rows` is the population the question is asked over: a parent can only be claimed when it is one of the rows.
+ */
+export function runOwnership({ stageRoot, rows = [] } = {}) {
+  const root = typeof stageRoot === "string" && stageRoot.length > 0 ? resolve(stageRoot) : null;
+  const compared = root === null ? null : normalized(root);
+  const byPid = new Map();
+  for (const row of rows)
+    if (row !== null && typeof row === "object" && Number.isSafeInteger(row.pid)) byPid.set(row.pid, row);
+  const namesRoot = (row) =>
+    compared !== null && typeof row?.commandLine === "string" && normalized(row.commandLine).includes(compared);
+  return Object.freeze({
+    stageRoot: root,
+    /** `"its command line names <root>"` / `"its parent <pid> names <root>"`, or `null` when it is not this run's. */
+    reasonFor(row) {
+      if (namesRoot(row)) return `its command line names ${root}`;
+      const parent = byPid.get(row?.parentPid);
+      if (parent !== undefined && namesRoot(parent)) return `its parent (pid ${String(parent.pid)}) names ${root}`;
+      return null;
+    },
+  });
+}
+
+/** A command line as it is compared: one separator, one case, because a path is spelled both ways on Windows. */
+const normalized = (text) => String(text).replace(/\//gu, "\\").toLowerCase();
+
+/**
  * The game processes THIS run caused, from one query for the game's own images.
  *
  * `null` means this machine could not be asked; `{ examined, rows: [] }` means it was asked and this run's
@@ -58,10 +100,10 @@ export function identifyRunGame({
   if (typeof stageRoot !== "string" || stageRoot.length === 0) return null;
   const measured = readGame();
   if (measured === null) return null;
-  const root = resolve(stageRoot).toLowerCase();
+  const ownership = runOwnership({ stageRoot, rows: measured.rows });
   const loaders = new Set(recorded.filter((record) => record.role === GAME_LOADER_ROLE).map((record) => record.pid));
   for (const row of measured.rows)
-    if (LOADER_IMAGE.test(row.name) && row.commandLine.toLowerCase().includes(root)) loaders.add(row.pid);
+    if (LOADER_IMAGE.test(row.name) && ownership.reasonFor(row) !== null) loaders.add(row.pid);
 
   const rows = measured.rows
     .filter((row) => loaders.has(row.pid) || (CLIENT_IMAGE.test(row.name) && loaders.has(row.parentPid)))

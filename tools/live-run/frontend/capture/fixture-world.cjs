@@ -233,6 +233,91 @@ function prepareOwnWorld({ declaredDataRoot, runRoot, policy = "own" }) {
   return { kind: "moved", ...reading };
 }
 
+/**
+ * THE SAVE SLOT THIS RUN'S WORLD OCCUPIES, read from the save folder itself - the identity a SMAPI line can be
+ * joined to.
+ *
+ * WHY NOT THE FARM NAME, which is what the driver used to claim. The product stages ONE world request carrying a
+ * farm name (`WorldCreation.FarmName`, `integrations/stardew/WorldCreationBootstrap.cs:296`) and the game then
+ * names the save FOLDER after it plus the unique id it mints when it writes the save (`SaveGame.cs:448`: the
+ * filtered farm name, one underscore, digits - the rule `integrations/stardew/WorldCreationDecision.cs:145-151`
+ * restates). SMAPI echoes that folder and only that folder: `Context: loaded save 'GameBuddyFarm_455317305'`.
+ * The farm name therefore never equals the string a save line carries, and comparing the two made this run's own
+ * save line ANOTHER RUN'S: measured 2026-11-26, `SMAPI-latest.txt` flipped to `contested` with
+ * `this_run=1 other_run=1 unattributable=95`, the chain's rung 4 read `save loaded - not reached`, and the
+ * reader's own reason line said so in as many words - "the SMAPI log names another game's save
+ * (\"GameBuddyFarm_455317305\"), not this run's (\"GameBuddy Farm\")" (`D:\gb-runs\roundw-out\w-game-launch.txt`,
+ * `.tmp/lane-roundw.md` §5.4).
+ *
+ * So the join is the SLOT, and it is not guessed from the name's shape: it is read from the save's own
+ * `SaveGameInfo` `<farmName>` - the file the product's own save index reads (`integrations/stardew/
+ * WorldSaveIndex.cs:49`) - and matched against the farm name this run's product staged. The farm name is display
+ * text; the slot is the fact.
+ *
+ * RE-READ, NOT REMEMBERED. A world the game CREATES during this launch has no slot until the game has written one
+ * (`prepareOwnWorld` moves the previous run's saves out of the way precisely so this happens), so the caller asks
+ * again on every launch tick and claims what appeared. `claimed` is the caller's live list and is appended to in
+ * place, so an identity learned once stays known for the rest of the run.
+ *
+ * The states are distinct on purpose: `absent` (no save folder on this machine), `unreadable` (a folder that
+ * listed nothing - not "no world") and `unknown` (no farm name to look for) are three different answers, and none
+ * of them is "this run owns nothing". `announce` puts that answer into `lines` on the caller's FIRST ask, so a
+ * run whose slot cannot be read says so once instead of on every tick.
+ */
+function ownWorldSlots({ farmName, claimed = [], announce = false, savesRoot = savesFolder() }) {
+  const notRead = (state, reason) => ({
+    state,
+    reason,
+    examined: null,
+    slots: [],
+    added: [],
+    unreadable: [],
+    lines: announce
+      ? [
+          `rung4_join: the run's own save slot is unknown - ${reason}; a save line is joined to a SLOT, so nothing is claimed until one can be read`,
+        ]
+      : [],
+    farmName: typeof farmName === "string" ? farmName : null,
+    savesRoot: typeof savesRoot === "string" ? savesRoot : null,
+  });
+  if (typeof farmName !== "string" || farmName.length === 0)
+    return notRead("unknown", "the product staged no farm name for this run, so no save folder can be bound to it");
+  if (typeof savesRoot !== "string" || savesRoot.length === 0)
+    return notRead("absent", "this machine has no APPDATA, so its save folder is unknown");
+  if (!existsSync(savesRoot)) return notRead("absent", `${savesRoot} does not exist, so this run has written no save there`);
+  const slots = saveSlots(savesRoot);
+  if (slots.length === 0)
+    return notRead("unreadable", `${savesRoot} listed no save folder, and a listing that examined nothing is not "no world here"`);
+
+  const own = [];
+  const unreadable = [];
+  for (const { slot, directory } of slots) {
+    const identity = farmNameOf(directory);
+    if (identity.farmName === null) {
+      unreadable.push({ slot, reason: identity.unreadable });
+      continue;
+    }
+    if (identity.farmName === farmName) own.push(slot);
+  }
+  const added = own.filter((slot) => !claimed.includes(slot));
+  // Appended in place: the caller's list is the one the log reader compares against on every refresh.
+  for (const slot of added) claimed.push(slot);
+  return {
+    state: "read",
+    reason: null,
+    examined: slots.length,
+    slots: own,
+    added,
+    unreadable,
+    farmName,
+    savesRoot,
+    lines: added.map(
+      (slot) =>
+        `own_world_slot: '${slot}' is this run's world - the save's own SaveGameInfo names farm name '${farmName}', and \`Context: loaded save '<slot>'\` carries that folder name, never the farm name (${String(slots.length)} save folder(s) examined under ${savesRoot})`,
+    ),
+  };
+}
+
 /** One line for the run's log: what the run did about its world, and on what population. */
 function describeOwnWorld(reading) {
   const kept = Array.isArray(reading?.kept) ? reading.kept.map((entry) => `${entry.slot}(${entry.farmName})`) : [];
@@ -253,4 +338,4 @@ function describeOwnWorld(reading) {
   ].join("; ");
 }
 
-module.exports = { prepareOwnWorld, describeOwnWorld, savesFolder };
+module.exports = { prepareOwnWorld, describeOwnWorld, ownWorldSlots, savesFolder };

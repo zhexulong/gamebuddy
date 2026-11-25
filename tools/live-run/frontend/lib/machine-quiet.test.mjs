@@ -27,6 +27,7 @@ import {
   MACHINE_NOT_QUIET,
   MACHINE_NOT_QUIET_UNREADABLE,
   describeQuietRefusal,
+  machinePollReading,
   machineQuietReading,
 } from "./machine-quiet.mjs";
 
@@ -142,4 +143,121 @@ test("a stage root nobody can name is a refusal, not an assumption", () => {
   const reading = machineQuietReading({ stageRoot: null, readGame: table([]) });
   assert.equal(reading.state, "unreadable");
   assert.match(reading.lines[0], new RegExp(`^${MACHINE_NOT_QUIET_UNREADABLE}: no stage root was given`, "u"));
+});
+
+/*
+ * ---- the poller's rule: the same ownership test the gate uses, over the population a poller needs ----
+ *
+ * ROUNDW's poller carried its own copy of "is this process this run's?" (`CommandLine -match
+ * 'roundw-out|roundw-chain|roundw-quiet'`) and, in the middle of the run it was measuring, listed this run's own
+ * capture driver as foreign - `drivers[own:38192 own:23736 own:40124 12408(node.exe)]`, while the run's own
+ * ledger named 12408 `capture:w-game-launch` (`.tmp/lane-roundw.md` §5.3). The rows below are that run's shapes:
+ * the stage root is `D:\gb-runs\roundw-out.stage`, the driver's own command line names only the kit, and the
+ * phase that spawned it names the stage.
+ */
+const POLL_STAGE = "D:\\gb-runs\\roundw-out.stage";
+const poll = (rows, examined = 364) => machinePollReading({ stageRoot: POLL_STAGE, readRows: table(rows, examined) });
+
+/** This run's capture phase: spawned as `node <kit>/phases/capture.mjs <stage>/state/run.json`. */
+const capturePhaseRow = (pid = 40124) =>
+  row(
+    pid,
+    23736,
+    "node.exe",
+    `"C:\\Program Files\\nodejs\\node.exe" "D:\\gb-runs\\roundw\\tools\\live-run\\frontend\\phases\\capture.mjs" "${POLL_STAGE}\\state\\run.json" --driver=w-game-launch --force`,
+  );
+
+/** This run's capture driver: a relative script path, so its command line carries the kit and no stage root. */
+const captureDriverRow = (pid, parentPid = 40124) =>
+  row(
+    pid,
+    parentPid,
+    "node.exe",
+    `"C:\\Program Files\\nodejs\\node.exe" "D:\\gb-runs\\roundw\\tools\\live-run\\frontend\\capture\\w-game-launch.cjs" 4173 9341`,
+    "2026-11-26T05:01:41.1234567+08:00",
+  );
+
+test("this run's own capture driver is own through its parent, which is what a command-line-only test misses", () => {
+  const reading = poll([capturePhaseRow(), captureDriverRow(12408), captureDriverRow(42876)]);
+  assert.equal(reading.state, "quiet", "nothing on this machine is anybody else's");
+  assert.deepEqual(reading.own, [40124, 12408, 42876]);
+  assert.deepEqual(reading.foreignDrivers, []);
+  // The driver's own line names the kit, and the reason says which row actually claimed it.
+  assert.match(
+    reading.lines[1],
+    /^machine_poll: 12408 node\.exe is this run's own - its parent \(pid 40124\) names D:\\gb-runs\\roundw-out\.stage$/u,
+  );
+  assert.match(reading.lines[0], /is this run's own - its command line names D:\\gb-runs\\roundw-out\.stage$/u);
+  assert.match(
+    reading.lines.at(-1),
+    /^machine_poll: examined 364 process\(es\) by image name \^\(Stardew\|node\|pwsh\|powershell\); state=quiet - 3 this run's own, 0 game\(s\) not this run's, 0 run\(s\) not this run's, 0 neither$/u,
+  );
+});
+
+test("a sibling lane's game and a sibling lane's driver are two different other people", () => {
+  // A sibling's capture phase: its own `--out`, which is not this run's stage root and is not inside it.
+  const sibling = row(
+    23736,
+    1,
+    "node.exe",
+    `"C:\\Program Files\\nodejs\\node.exe" "E:\\projects\\ai-game-companion\\tools\\live-run\\frontend\\phases\\capture.mjs" "E:\\projects\\ai-game-companion\\.live-runs\\other.stage\\state\\run.json"`,
+  );
+  // A sibling's game: SMAPI with ITS mods path, and the client under it carrying no arguments at all.
+  const loader = row(
+    43032,
+    40940,
+    "StardewModdingAPI.exe",
+    `"D:\\Steam\\steamapps\\common\\Stardew Valley\\StardewModdingAPI.exe" --mods-path "E:\\projects\\ai-game-companion\\.live-runs\\other.stage\\root\\GameBuddy\\data\\primary\\player-host\\Mods"`,
+  );
+  const client = row(43100, 43032, "Stardew Valley.exe", "");
+
+  const reading = poll([capturePhaseRow(), captureDriverRow(12408), sibling, loader, client]);
+  assert.equal(reading.state, "busy");
+  assert.deepEqual(reading.foreignGames, [43032, 43100]);
+  assert.deepEqual(reading.foreignDrivers, [23736]);
+  assert.match(
+    reading.lines.at(-1),
+    /state=busy - 2 this run's own, 2 game\(s\) not this run's, 1 run\(s\) not this run's, 0 neither$/u,
+  );
+  assert.match(
+    reading.lines[3],
+    /^machine_poll: 43032 StardewModdingAPI\.exe is a game that is not this run's \(started 2026-11-26T03:29:09\.1234567\+08:00\)$/u,
+  );
+});
+
+test("a node that is neither a game nor a live run is counted and not blamed on anybody", () => {
+  // This machine's controllers: a language server and an agent runner are `node.exe` too, and a poller that
+  // calls every one of them a competing run reports a busy machine forever.
+  const editor = row(
+    24016,
+    1,
+    "node.exe",
+    `"C:\\Program Files\\nodejs\\node.exe" "C:\\Tools\\tsserver\\index.js" --stdio`,
+  );
+  const runner = row(
+    34076,
+    1,
+    "node.exe",
+    `"C:\\Program Files\\nodejs\\node.exe" --experimental-vm-modules runner.mjs`,
+  );
+  const reading = poll([capturePhaseRow(), captureDriverRow(12408), editor, runner]);
+  assert.equal(reading.state, "quiet");
+  assert.deepEqual(reading.foreignDrivers, []);
+  assert.equal(reading.other, 2);
+  assert.equal(reading.lines.length, 3, "two own lines and the tally: a process of neither kind is not named");
+  assert.match(
+    reading.lines.at(-1),
+    /2 this run's own, 0 game\(s\) not this run's, 0 run\(s\) not this run's, 2 neither$/u,
+  );
+});
+
+test("a machine nobody could ask is not a quiet one, and a stage root nobody named is a refusal", () => {
+  const noTable = machinePollReading({ stageRoot: POLL_STAGE, readRows: () => null });
+  assert.equal(noTable.state, "unreadable");
+  assert.equal(noTable.examined, null);
+  assert.match(noTable.lines[0], /^machine_poll_unreadable: the process table did not answer/u);
+
+  const noStage = machinePollReading({ stageRoot: null, readRows: table([]) });
+  assert.equal(noStage.state, "unreadable");
+  assert.match(noStage.lines[0], /^machine_poll_unreadable: no stage root was given/u);
 });

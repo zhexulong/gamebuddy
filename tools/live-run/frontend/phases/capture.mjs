@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readBlockedByProduct, readNotMeasured } from "../capture/game-launch-verdict.mjs";
+import { readBlockedByProduct, readLaunchOutcome, readNotMeasured } from "../capture/game-launch-verdict.mjs";
 import { KIT_ROOT, loadRunConfig, REPO_ROOT, runPaths } from "../lib/config.mjs";
 import { recordRunGame } from "../lib/run-game.mjs";
 import { registerRunProcess } from "../lib/run-owner.mjs";
@@ -179,7 +179,15 @@ async function main() {
       log(`  DRIVER ${driver.key} FAILED (exit ${code})`);
     }
     await writeFile(doneMarker, JSON.stringify({ exit: code, elapsed }, null, 1), "utf8");
-    const verdict = readNotMeasured(await factsText(join(paths.outRoot, driver.out)));
+    /*
+     * The driver's facts file is read ONCE and classified three ways, from the fields it wrote: an unmeasured
+     * chain, a chain stopped at the product's own missing step, and - for the launch driver - whether this
+     * run ATTACHED. The last one is a field decision and not a text search, because the failure sentence a
+     * launch prints quotes its own target (`.tmp/lane-roundw.md` §5.6: `verdict=attached` over a run whose own
+     * verdict was `FAILED game_never_reached_ready`).
+     */
+    const facts = await factsText(join(paths.outRoot, driver.out));
+    const verdict = readNotMeasured(facts);
     if (verdict !== null) {
       notMeasuredCount += 1;
       notMeasuredKeys.push(`${driver.key}:${verdict.reason}`);
@@ -187,12 +195,17 @@ async function main() {
         `  NOT-MEASURED ${driver.key}: ${verdict.reason}${verdict.detail.length === 0 ? "" : ` - ${verdict.detail}`}`,
       );
     }
-    const gap = readBlockedByProduct(await factsText(join(paths.outRoot, driver.out)));
+    const gap = readBlockedByProduct(facts);
     if (gap !== null) {
       blockedByProductCount += 1;
       blockedByProductKeys.push(`${driver.key}:${gap.gap}`);
       log(`  BLOCKED-BY-PRODUCT ${driver.key}: ${gap.gap}${gap.detail.length === 0 ? "" : ` - ${gap.detail}`}`);
     }
+    const outcome = readLaunchOutcome(facts);
+    if (outcome.verdict !== "unreadable")
+      log(
+        `  LAUNCH-OUTCOME ${driver.key}: verdict=${outcome.verdict} attached=${outcome.attached ? "yes" : "no"} steps=${outcome.steps.join(">") || "none"} - ${outcome.reason}`,
+      );
   }
 
   // `skipped` used to mean "filtered out by --driver=", so a driver skipped by a done marker was counted as

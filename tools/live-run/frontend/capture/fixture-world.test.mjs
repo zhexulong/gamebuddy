@@ -32,7 +32,7 @@ import { test } from "node:test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { describeOwnWorld, prepareOwnWorld } = require("./fixture-world.cjs");
+const { describeOwnWorld, ownWorldSlots, prepareOwnWorld } = require("./fixture-world.cjs");
 
 /** The save info shape the game writes beside a save: only the one field this helper reads is populated. */
 function saveInfo(farmName) {
@@ -219,4 +219,73 @@ test("a save that cannot be copied is a refusal, and the save stays where it was
   assert.equal(reading.kind, "refused");
   assert.match(String(reading.reason), /^fixture_world_(copy_failed|marker_unwritable)/u);
   assert.equal(existsSync(ours), true, "nothing is deleted before the copy is verified");
+});
+
+/*
+ * ---- the slot a save line carries: asked again while the game creates its own world ----
+ *
+ * THE RUN THAT MEASURED THIS. `prepareOwnWorld` moves the previous world out of the machine's save folder so the
+ * game creates a fresh one, and the fresh save's folder name carries a unique id the game mints at write time
+ * (`GameBuddyFarm_455317305` on 2026-11-26, farm name `GameBuddy Farm`) - so the run's own slot does not exist
+ * when the fixture runs and is not one of the slots it moved or kept. The launch-chain driver asks for it on
+ * every launch tick, which is why the reading has to be re-readable and why the identity it returns must be the
+ * folder name and not the farm name: SMAPI's `Context: loaded save '<slot>'` carries the folder
+ * (`.tmp/lane-roundw.md` §5.4).
+ */
+test("the run's own save slot is read from the save itself, and asked again until the game has written one", () => {
+  const world = machine();
+  world.declaredDataRoot = writeStagedRequest(world.runRoot);
+  // The previous world of the same farm name: the fixture moves it out, so it cannot be joined to any later line.
+  writeSave(world.savesRoot, "GameBuddyFarm_455314260", { farmName: "GameBuddy Farm" });
+  writeSave(world.savesRoot, "GameBuddyFixtureStable_451844580", { farmName: "GameBuddyFixtureStable" });
+  assert.equal(prepare(world).kind, "moved");
+
+  process.env.APPDATA = world.appData;
+  try {
+    const before = ownWorldSlots({ farmName: "GameBuddy Farm" });
+    assert.equal(before.state, "read", "the machine's save folder was read, and it is a reading either way");
+    assert.equal(before.examined, 1);
+    assert.deepEqual(before.slots, [], "the world the game is about to create is not on disk yet");
+    assert.deepEqual(before.lines, [], "an empty claim is not a line - the launch's own rung line carries the zero");
+
+    // The game writes its world: a save folder named after the farm name plus the id the game minted.
+    writeSave(world.savesRoot, "GameBuddyFarm_455317305", { farmName: "GameBuddy Farm" });
+    const claimed = [];
+    const after = ownWorldSlots({ farmName: "GameBuddy Farm", claimed });
+    assert.deepEqual(after.slots, ["GameBuddyFarm_455317305"]);
+    assert.deepEqual(after.added, ["GameBuddyFarm_455317305"]);
+    assert.deepEqual(claimed, ["GameBuddyFarm_455317305"], "the caller's live list is what the log reader compares");
+    // The farm name itself is not a slot, and a world of another name is not this run's.
+    assert.equal(after.slots.includes("GameBuddy Farm"), false);
+    assert.equal(after.slots.includes("GameBuddyFixtureStable_451844580"), false);
+    assert.match(after.lines[0], /^own_world_slot: 'GameBuddyFarm_455317305' is this run's world/u);
+    assert.match(after.lines[0], /never the farm name \(2 save folder\(s\) examined/u);
+    // A second ask claims nothing twice: the driver asks on every launch tick.
+    assert.deepEqual(ownWorldSlots({ farmName: "GameBuddy Farm", claimed }).lines, []);
+    assert.deepEqual(claimed, ["GameBuddyFarm_455317305"]);
+  } finally {
+    process.env.APPDATA = HOST_APPDATA;
+  }
+});
+
+test("a slot that cannot be looked for is said once, and an unreadable folder is not an empty one", () => {
+  const world = machine();
+  // No farm name: the product staged no world request, so no save folder can be bound to this run.
+  const unknown = ownWorldSlots({ farmName: null, savesRoot: world.savesRoot, announce: true });
+  assert.equal(unknown.state, "unknown");
+  assert.match(unknown.lines[0], /^rung4_join: the run's own save slot is unknown - the product staged no farm name/u);
+  // No line unless the caller asks for the announcement: a tick that repeats it would bury the log.
+  assert.deepEqual(ownWorldSlots({ farmName: null, savesRoot: world.savesRoot }).lines, []);
+  // A save folder an earlier run removed, and a folder that exists and lists nothing, are two answers.
+  assert.equal(
+    ownWorldSlots({ farmName: "GameBuddy Farm", savesRoot: join(world.root, "no-saves-here") }).state,
+    "absent",
+  );
+  assert.equal(ownWorldSlots({ farmName: "GameBuddy Farm", savesRoot: world.savesRoot }).state, "unreadable");
+  // And the third: a folder with saves in it that are none of this run's.
+  writeSave(world.savesRoot, "MyFarm_1234", { farmName: "My Farm" });
+  const read = ownWorldSlots({ farmName: "GameBuddy Farm", savesRoot: world.savesRoot });
+  assert.equal(read.state, "read");
+  assert.deepEqual(read.slots, []);
+  assert.equal(read.examined, 1);
 });

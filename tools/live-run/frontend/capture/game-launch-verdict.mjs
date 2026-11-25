@@ -177,6 +177,79 @@ export function readBlockedByProduct(text) {
   return null;
 }
 
+/** The driver's own result line: prefix, driver, verdict word, then fields. `conclude` prints exactly one. */
+const GAME_LAUNCH_RESULT = /^GAME-LAUNCH \S+: (measured|not_measured|blocked_by_product|failed)(?: (.*))?$/u;
+
+/**
+ * What a FINISHED game-launch run measured, decided from its own result line and from nothing else.
+ *
+ * WHY THIS EXISTS, and it is not a tidiness argument. A run's log is mostly prose: the failure sentence a
+ * launch prints contains the chain's own target as a quotation - "the surface never reached
+ * instance=running/attachment=attached within 300000ms" - so a reader that asks "does this text say
+ * `attachment=attached`?" answers YES for a run that never attached. Measured 2026-11-26 (`.tmp/lane-roundw.md`
+ * §5.6): a retry loop `tee`-ing the capture log tested exactly that string, stopped one attempt early, and
+ * printed `RETRY END verdict=attached` over a run whose own verdict was
+ * `FAILED game_never_reached_ready:instance=crashed/attachment=none`. A pass that did not happen is the worst
+ * answer an instrument can give, so this is the one classifier and it reads a FIELD:
+ *
+ *   - the verdict word is the token after `<prefix> <driver>:`, out of the four the driver can print, and
+ *   - `attached` is that word being `measured` AND the chain on the same line carrying the `attach` rung.
+ *
+ * A text with no result line is `unreadable`, never a pass: a driver that wrote nothing measured nothing.
+ * `not_measured` and `blocked_by_product` are neither a pass nor a failure, exactly as they are everywhere else
+ * in this kit, and both are `attached: false`.
+ */
+export function readLaunchOutcome(text) {
+  const unreadable = (code, reason) =>
+    Object.freeze({ verdict: "unreadable", code, attached: false, steps: Object.freeze([]), reason });
+  if (typeof text !== "string")
+    return unreadable("no_facts_file", "no facts file was given, so nothing measured anything");
+  let line = null;
+  for (const raw of text.split("\n")) {
+    const trimmed = raw.trim();
+    // The LAST result line wins: a file an earlier execution left behind is followed by this one's.
+    if (trimmed.startsWith(`${GAME_LAUNCH_PREFIX} `)) line = trimmed;
+  }
+  if (line === null)
+    return unreadable(
+      "no_result_line",
+      `no line starts with ${GAME_LAUNCH_PREFIX}: the driver's own result is not in this text, and prose is not a verdict`,
+    );
+  const result = GAME_LAUNCH_RESULT.exec(line);
+  if (result === null)
+    return unreadable(
+      "result_line_unparsed",
+      `${JSON.stringify(line)} is not the shape ${GAME_LAUNCH_PREFIX} <driver>: <verdict> <code>; steps=<chain>`,
+    );
+  const verdict = result[1];
+  const tail = result[2] ?? "";
+  /*
+   * `steps=<chain> records=<cells>`, printed by the driver's own `conclude` (`capture/w-game-launch.cjs`): the
+   * chain is `>`-joined rung names, and the driver's cells follow it as the last field, so the chain ends where
+   * `records=` begins.
+   */
+  const stepsField = /(?:^|[;\s])steps=(.*)$/u.exec(tail)?.[1] ?? "";
+  const steps = Object.freeze(
+    stepsField
+      .split(" records=")[0]
+      .split(">")
+      .map((step) => step.trim())
+      .filter((step) => step.length > 0),
+  );
+  const named = tail.split(";")[0].trim().split(/\s+/u)[0] ?? "";
+  const code = verdict === VERDICTS.measured ? VERDICTS.measured : named;
+  const attached = verdict === VERDICTS.measured && steps.includes(CHAIN_STEPS.attach);
+  return Object.freeze({ verdict, code, attached, steps, reason: describeOutcome({ verdict, code, attached, steps }) });
+}
+
+/** Why the outcome is what it is, in the one sentence a report line carries it with. */
+function describeOutcome({ verdict, code, attached, steps }) {
+  if (verdict !== VERDICTS.measured)
+    return `the driver's own verdict is ${verdict}${code.length === 0 ? "" : ` (${code})`}, which is not an attachment`;
+  if (attached) return `the driver's own verdict is measured and its chain carries the ${CHAIN_STEPS.attach} rung`;
+  return `the verdict reads measured but the chain on the same line (${steps.join(">") || "no steps"}) does not carry ${CHAIN_STEPS.attach}, so this run did not reach an attachment`;
+}
+
 /** `{ reason, detail }` when the driver declared itself unmeasured; `null` when it measured. */
 export function readNotMeasured(text) {
   if (typeof text !== "string") return null;

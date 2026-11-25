@@ -142,7 +142,7 @@ const {
   responseStampForPress,
 } = require("./game-launch-verdict.mjs");
 const { pressStop, stepRecorder } = require("./game-surface-states.cjs");
-const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
+const { prepareOwnWorld, describeOwnWorld, ownWorldSlots } = require("./fixture-world.cjs");
 const { describeRunRecords, readRunRecords } = require("./run-records.cjs");
 const { readInstallationPanel, registerInstallation } = require("./installation-registration.cjs");
 const { agentAwakeOf, describeTurnAccount, readTurnAccount } = require("./turn-account.cjs");
@@ -631,11 +631,17 @@ async function hostAnswers(port) {
    *
    * `SMAPI-latest.txt` holds every game's lines on this machine (`capture/smapi-log-attribution.cjs`). The
    * two things that bind a line to THIS run are the paths only it can produce - the stage root the Host
-   * passes as `--mods-path`, the data root under it - and the world name its own fixture claimed. The stage
-   * root comes from the launch state (`stageRoot`, written by `phases/launch.mjs`), not from counting
-   * directories up from the state path.
+   * passes as `--mods-path`, the data root under it - and the save slot this run's world occupies (claimed
+   * below, once the save folder can be read). The stage root comes from the launch state (`stageRoot`, written
+   * by `phases/launch.mjs`), not from counting directories up from the state path.
    */
   const ownWorldNames = [];
+  // The world identity a SMAPI line joins to is the SAVE SLOT, never the farm name this run staged
+  // (`capture/fixture-world.cjs` `ownWorldSlots`; `.tmp/lane-roundw.md` §5.4). Asked again on every launch tick,
+  // because a world the game CREATES has no slot until the game writes one.
+  const claimOwnWorldSlots = (farmName, announce = false) => {
+    for (const line of ownWorldSlots({ farmName, claimed: ownWorldNames, announce }).lines) say(line);
+  };
   const smapiLog = createSmapiLogReading({
     ownMarkers: [launch.state?.stageRoot, launch.state?.declaredDataRoot, launch.state?.runRoot],
     ownWorldNames,
@@ -1322,6 +1328,7 @@ async function hostAnswers(port) {
      * the lines this run's own markers bind to it (`capture/smapi-log-attribution.cjs`). A save line naming
      * another game's world is NOT a rung: it is reported as the reason there is none.
      */
+    claimOwnWorldSlots(fixtureWorld.farmName);
     smapiLog.refresh();
     const gameLog = smapiLog.claim(launchBegan);
     for (const rung of [CHAIN_STEPS.saveLoaded, CHAIN_STEPS.cabinReady]) {
@@ -1427,10 +1434,9 @@ async function hostAnswers(port) {
       "fixture_world_not_prepared",
       `this run could not claim a world of its own, so a launch it measured would be a launch into whatever world the previous run left behind: ${describeOwnWorld(fixtureWorld)}`,
     );
-  // The world name is the second thing that binds a SMAPI log line to this run: `Context: loaded save '<name>'`
-  // is this run's save only when `<name>` is the world this run claimed (`fixture-world.cjs`).
-  if (typeof fixtureWorld.farmName === "string" && fixtureWorld.farmName.length > 0)
-    ownWorldNames.push(fixtureWorld.farmName);
+  // The world identity is the second thing that binds a SMAPI log line to this run: `Context: loaded save '<slot>'`
+  // is this run's save only when `<slot>` is the save folder this run's world occupies (`fixture-world.cjs`).
+  claimOwnWorldSlots(fixtureWorld.farmName, true);
 
   /*
    * ---- 2d. THE MACHINE ITSELF, immediately before the product's own launch control is pressed. ----
