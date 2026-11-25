@@ -119,6 +119,7 @@ public sealed partial class ModEntry : Mod
     private FarmhandProvisioner? farmhandProvisioner;
     private SleepAndAdvanceDayLifecycle? sleepLifecycle;
     private bool sleepLifecycleRejected;
+    private readonly HostPlayerScriptPump hostPlayerScriptPump = new();
     private bool embodimentInitialized;
     private bool hostRoleConfigured;
     private bool provisioningConfigurationRejected;
@@ -1517,6 +1518,14 @@ public sealed partial class ModEntry : Mod
         // Each owns only its own actor, so both are pumped here.
         if (this.sleepLifecycle is not null && this.sleepLifecycle.Update())
             this.sleepLifecycle = null;
+        // The Host player's script channel is the fixture's OTHER driver of the same actor: it walks her to a tile, waves
+        // and speaks so a paired run has a real second farmer to observe. The pump owns when it arms and yields to the
+        // cross-day lifecycle, because one actor cannot be walked to a bed and to a crop in the same frame.
+        this.hostPlayerScriptPump.Update(
+            this.Monitor,
+            this.config.HostAutomation?.HostPlayerScript,
+            this.hostAutomationServerStarted,
+            this.sleepLifecycle);
         if (this.farmhandProvisioner is not null && this.farmhandProvisioner.Update())
         {
             if (!this.farmhandProvisioner.IsReady)
