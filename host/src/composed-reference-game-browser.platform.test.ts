@@ -21,14 +21,21 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import { COMPOSED_PLATFORM_ROUTES_V1, composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import {
+  COMPOSED_PLATFORM_ROUTES_V1,
   type ComposedPlatformPreferenceV1,
+  composeReferenceGameBrowserProfile,
+} from "./composed-browser-contract/index.js";
+import {
   type ComposedReferenceGameBrowserPlatformSeam,
   createComposedReferenceGameBrowserRequestHandler,
 } from "./composed-reference-game-browser.js";
-import { composeGameProfile, GameBrowserFixtureV1 } from "./game-browser-contract/index.js";
-import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
+import { composeGameProfile, type GameBrowserStateV1, GameBrowserFixtureV1 } from "./game-browser-contract/index.js";
+import {
+  composeTavernProfile,
+  type TavernStateSnapshotV1,
+  TavernBrowserFixtureV1,
+} from "./tavern/browser-contract/index.js";
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const SESSION_COOKIE = "gb_composed_reference_game_session";
@@ -36,7 +43,15 @@ const profile = composeReferenceGameBrowserProfile({
   tavernProfile: composeTavernProfile({
     profileId: "gamebuddy.chat-core.reference-pipeline",
     releaseTier: "chat_core",
-    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "chat.submit",
+      "chat.cancel",
+      "chat.submission_status",
+      "events",
+    ],
     operationIds: ["chat.submit", "chat.cancel"],
     navigationItemIds: ["chat"],
   }),
@@ -49,13 +64,13 @@ const profile = composeReferenceGameBrowserProfile({
 });
 
 /** The projection each half publishes on this session. Profiles match, so both are accepted. */
-const chatState = (csrfToken: string, expiresAtMs: number) => ({
+const chatState = (csrfToken: string, expiresAtMs: number): TavernStateSnapshotV1 => ({
   ...TavernBrowserFixtureV1.snapshot(),
   build: { browserContract: "tavern_browser_api/v1", profileId: profile.tavernProfile.profileId },
   csrfToken,
   browserSession: { expiresAtMs },
 });
-const gameState = (csrfToken: string, expiresAtMs: number) => ({
+const gameState = (csrfToken: string, expiresAtMs: number): GameBrowserStateV1 => ({
   ...GameBrowserFixtureV1.state(),
   build: { browserContract: "game_browser_api/v1", profileId: profile.gameProfile!.profileId },
   csrfToken,
@@ -241,27 +256,45 @@ test("the platform's writes answer the record's one revision and refuse a stale 
     const { body, cookie } = await bootstrap(server.origin);
     const token = body.platform.csrfToken;
 
-    const written = await write(server.origin, "/api/platform/v1/appearance", cookie, {
-      expectedRevision: 0,
-      appearance: "light",
-    }, token);
+    const written = await write(
+      server.origin,
+      "/api/platform/v1/appearance",
+      cookie,
+      {
+        expectedRevision: 0,
+        appearance: "light",
+      },
+      token,
+    );
     assert.equal(written.status, 200);
     assert.deepEqual(await written.json(), { revision: 1, appearance: "light" });
     assert.equal(preference.appearance, "light");
 
-    const localised = await write(server.origin, "/api/platform/v1/locale", cookie, {
-      expectedRevision: 1,
-      locale: "zh-CN",
-    }, token);
+    const localised = await write(
+      server.origin,
+      "/api/platform/v1/locale",
+      cookie,
+      {
+        expectedRevision: 1,
+        locale: "zh-CN",
+      },
+      token,
+    );
     assert.equal(localised.status, 200);
     assert.deepEqual(await localised.json(), { revision: 2, locale: "zh-CN" });
 
     // One record, one revision: the appearance write's revision is the one the locale write CASed on, and a write
     // that presents the revision it already spent is refused.
-    const stale = await write(server.origin, "/api/platform/v1/appearance", cookie, {
-      expectedRevision: 0,
-      appearance: "dark",
-    }, token);
+    const stale = await write(
+      server.origin,
+      "/api/platform/v1/appearance",
+      cookie,
+      {
+        expectedRevision: 0,
+        appearance: "dark",
+      },
+      token,
+    );
     assert.equal(stale.status, 409);
     assert.deepEqual(await stale.json(), { code: "state_unavailable" });
     assert.equal(preference.appearance, "light", "a refused write changed nothing");
@@ -284,7 +317,13 @@ test("the platform's writes are admitted on this broker's own session and CSRF h
     const foreign = await write(server.origin, "/api/platform/v1/appearance", cookie, command, "F".repeat(43));
     assert.equal(foreign.status, 401, "nor is one carrying a token this session did not mint");
 
-    const expired = await write(server.origin, "/api/platform/v1/appearance", "wrong=1", command, body.platform.csrfToken);
+    const expired = await write(
+      server.origin,
+      "/api/platform/v1/appearance",
+      "wrong=1",
+      command,
+      body.platform.csrfToken,
+    );
     assert.equal(expired.status, 401, "nor one with no session cookie behind it");
   } finally {
     await server.close();
@@ -317,10 +356,11 @@ test("the platform's route family is not the Chat half's settings routes", async
 });
 
 test("the connection directory's availability is the composition's fact, not a record's", async () => {
+  const preference: ComposedPlatformPreferenceV1 = { revision: 0, appearance: "system", locale: null };
   const seam: ComposedReferenceGameBrowserPlatformSeam = Object.freeze({
-    read: async () => ({ revision: 0, appearance: "system", locale: null }),
-    updateAppearance: async () => ({ revision: 1, appearance: "system", locale: null }),
-    updateLocale: async () => ({ revision: 1, appearance: "system", locale: null }),
+    read: async () => ({ ...preference }),
+    updateAppearance: async () => ({ ...preference, revision: 1 }),
+    updateLocale: async () => ({ ...preference, revision: 1 }),
     connection: "unavailable",
   });
   const handler = handlerWith(seam);

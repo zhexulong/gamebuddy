@@ -16,7 +16,7 @@ import {
   type WorldFact,
 } from "./event-pump.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, programSettledDigest } from "./program-settlement-digest.js";
-import { type PlanAnswerNode } from "./program-status-wait.js";
+import type { PlanAnswerNode } from "./program-status-wait.js";
 import { EXECUTION_STATES } from "./protocol.js";
 
 /**
@@ -288,7 +288,16 @@ test("a settlement that REFUSED a node still opens the turn: a refusal is a deci
   const batch = turns.batches[0]!;
   assert.match(batch.text, /<execution-result>\n/u);
   assert.match(batch.text, /1\/2 步做成了/u, "the count says one of two done, not 'done'");
-  assert.match(batch.text, /move_to_tile 没做成（tool_not_held）/u, "and the refusal is named with the Mod's own code");
+  // THE SENTENCE IS WORDS AND THE CODE IS AN ADDRESS. `a-line-the-model-reads-is-not-a-machine-token.test.ts` is the
+  // invariant on the other side of this pair (`reason_codes_no_longer_reach_her_as_tokens, and stay addressable in the
+  // delivery`): no refusal code may stay in the prose she reads, and every one of them must still be on the address line,
+  // because that is the id the next argument copies. An inline code is the `round78` defect this pair exists to keep out.
+  assert.match(batch.text, /move_to_tile 没做成/u, "and the refusal is stated in words");
+  assert.match(
+    batch.text,
+    /可指代的字段：move_to_tile reasonCode=tool_not_held/u,
+    "with the Mod's own code addressable in the same block, beside the sentence and never inside it",
+  );
 });
 
 test("a settlement that only PARTIALLY did a node opens the turn too", async () => {
@@ -307,7 +316,8 @@ test("a settlement that only PARTIALLY did a node opens the turn too", async () 
   await pump.flush(turns.sink);
 
   assert.equal(pump.turnAccount.opened, 1, "a partial node is not a programme that did what it was told");
-  assert.match(turns.batches[0]!.text, /move_to_tile 没做成（partially_watered）/u);
+  assert.match(turns.batches[0]!.text, /move_to_tile 没做成/u, "the partial node is a sentence too");
+  assert.match(turns.batches[0]!.text, /可指代的字段：move_to_tile reasonCode=partially_watered/u);
 });
 
 test("a plan still running carries its finished steps, and no in-flight block is written", async () => {
@@ -372,7 +382,12 @@ test("a refusal inside a running programme is a decision, not progress - and it 
   );
   pump.enqueueFact(milestoneFact(), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
-  assert.match(turns.batches[0]!.text, /harvest_crop 没做成：tool_not_held/u, "and the refusal is stated to her");
+  assert.match(turns.batches[0]!.text, /harvest_crop 没做成/u, "and the refusal is stated to her");
+  assert.match(
+    turns.batches[0]!.text,
+    /可指代的字段：harvest_crop reasonCode=tool_not_held/u,
+    "while the code the next step copies stays on the block's address line",
+  );
 });
 
 // ---------------------------------------------------------------------------------------------------------------
