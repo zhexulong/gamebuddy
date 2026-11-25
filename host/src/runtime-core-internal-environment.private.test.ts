@@ -21,10 +21,7 @@ import {
   MAX_GAME_ENVIRONMENT_FACTS_BYTES,
   renderGameEnvironmentFactsObservation,
 } from "./game-world-vocabulary.js";
-import {
-  reloadMagicContextInRuntimeRoot,
-  resolveRuntimePaths,
-} from "./runtime-core.internal.js";
+import { reloadMagicContextInRuntimeRoot, resolveRuntimePaths } from "./runtime-core.internal.js";
 import { reflectCompanionSessionOnce } from "./composition/companion-session-reflection.js";
 import type { Snapshot } from "./protocol.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
@@ -194,33 +191,42 @@ test("formatGameClock localizes the clock as a 24h reading plus the game day's t
   assert.equal(formatGameClock(2600, true), "02:00（深夜）");
 });
 
-test("the localized clock fact can fire a book entry the English clock cannot", () => {
-  // The population is read from the owner's own compiled book, not a hand-kept
-  // list: an entry that is renamed or re-keyed turns this red by naming itself.
-  const gated = DEFAULT_COMPANION_PRESET.worldBook.entries.filter((entry) => entry.constant !== true);
-  const evening: GameEnvironmentFactsSource = {
-    timeOfDay: 1800,
-    dayOfMonth: 19,
-    seasonIndex: 2,
-    year: 1,
-    weather: "sunny",
-    location: "Farm",
-    tile: { x: 64, y: 15 },
-  };
-  const zhFacts = formatGameEnvironmentFacts(evening, true);
-  const enFacts = formatGameEnvironmentFacts(evening, false);
-  assert.ok(zhFacts.includes("18:00（傍晚）"), `the Chinese clock line carries the band: ${zhFacts}`);
-  const firedByZh = gated.filter((entry) => (entry.keys ?? []).some((key) => zhFacts.includes(key)));
-  assert.ok(
-    firedByZh.length > 0,
-    `the Chinese facts must carry a key of at least one book entry, or no entry can fire on the clock: ${zhFacts}`,
+/**
+ * THE CLOCK THE BOOK IS KEYED ON IS THE LOCALIZED ONE.
+ *
+ * The shipped book keys its late-night entry on native 24h readings (`23:`, `01:00`, `02:00`) - tokens a 12h `6:00 PM`
+ * line can never carry, which is why the Chinese clock renders the 24h reading at all. The population is that book's own
+ * clock keys, and the hour that renders each one is found by driving `formatGameClock` over its whole declared domain
+ * rather than restating clock arithmetic here: a key the localized clock never renders, or one the English clock renders
+ * too, is a book fact the clock cannot own. The earlier fixture pinned 18:00 and the band `傍晚`, from a book entry the
+ * preset no longer carries (its night entry is `constant: true` and keyed on the native 24h readings instead).
+ */
+test("every clock key in the shipped book is rendered by the localized clock and by no English one", () => {
+  // The formatter's own accepted domain (`h24 <= 26`, `minute <= 59`), so the search covers the input space the product
+  // declares instead of the one step a fixture happened to pick.
+  const clocks: number[] = [];
+  for (let hour = 0; hour <= 26; hour += 1)
+    for (let minute = 0; minute < 60; minute += 1) clocks.push(hour * 100 + minute);
+  const clockKeys = DEFAULT_COMPANION_PRESET.worldBook.entries.flatMap((entry) =>
+    (entry.keys ?? []).filter((key) => /^\d{2}:\d{2}?$/u.test(key)).map((key) => ({ title: entry.title, key })),
   );
-  for (const entry of firedByZh)
-    assert.equal(
-      (entry.keys ?? []).filter((key) => enFacts.includes(key)).length,
-      0,
-      `the English facts must carry none of ${entry.title}'s keys: ${enFacts}`,
+  assert.ok(
+    clockKeys.length > 0,
+    "the shipped book keys no entry on a clock reading at all, so the localized clock can fire nothing by the hour",
+  );
+  for (const { title, key } of clockKeys) {
+    const rendered = clocks.filter((clock) => formatGameClock(clock, true).includes(key));
+    assert.ok(
+      rendered.length > 0,
+      `"${title}" is keyed on ${key}, which the localized clock never renders: the key and the clock disagree`,
     );
+    for (const clock of rendered)
+      assert.equal(
+        formatGameClock(clock, false).includes(key),
+        false,
+        `"${title}" is keyed on ${key} and the English clock renders it too (${formatGameClock(clock, false)}): a book key both languages carry is not a clock fact`,
+      );
+  }
 });
 
 test("the shipped book answers a green-rain day, which the rendered weather fact can name", () => {
@@ -433,9 +439,14 @@ test("a turn's environment line names the tool in words while the observation ke
 });
 
 /**
- * An older Mod publishes a slot with no `category`, so there is no word to prefer. The fact must still say what
- * she is holding rather than vanish: an unnameable tool is a smaller loss than a silent one.
- */ test("a tool the wire publishes no word for keeps its identity rather than dropping the fact", () => {
+ * An older Mod publishes a slot with no `category`, so there is no word to prefer. The fact must still say what she is
+ * holding rather than vanish - an unnameable tool is a smaller loss than a silent one - and it may not say it with the
+ * item identity: `(T)Hoe` is the handle `equip_tool` compares against, and the line that handed it to her is the one
+ * that taught her to say "我们带着 (T)Hoe 去 Town". The population that holds every declared word to that rule lives in
+ * `game-world-vocabulary.test.ts` (`a_held_tool_is_named_by_the_word_the_wire_declares`); this is the one older-wire
+ * shape it cannot construct from the schema.
+ */
+test("a tool the wire publishes no word for is still reported, and never as its item id", () => {
   const facts = formatGameEnvironmentFacts(
     {
       timeOfDay: 900,
@@ -451,16 +462,18 @@ test("a turn's environment line names the tool in words while the observation ke
     },
     false,
   );
-  assert.ok(facts.includes("holding: (T)Hoe"), `an unnamed tool is still reported: ${facts}`);
+  assert.ok(facts.includes("holding: "), `an unnamed tool is still reported: ${facts}`);
+  assert.equal(facts.includes("(T)"), false, `and never as its item id: ${facts}`);
 });
 
 /**
  * The upgrade level is the fact the tool handlers check (an upgraded axe is not
- * the basic one), but it is only on the wire beside the slot that holds it. A
- * slot list that does not match the held tool must cost the upgrade, never the
- * name, and a snapshot with no held tool must cost the whole fact.
+ * the basic one), but it is only on the wire beside the slot that holds it. The
+ * word lives there too (`toolSlots[].category`), so a slot list that does not match
+ * the held tool costs the word and the level, never the fact - and a snapshot with
+ * no held tool costs the whole fact.
  */
-test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, and omits it when nothing is held", () => {
+test("formatGameEnvironmentFacts keeps the held tool's fact when its slot is unknown, and omits it when nothing is held", () => {
   const base = {
     timeOfDay: 900,
     dayOfMonth: 19,
@@ -475,8 +488,9 @@ test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, a
     { ...base, currentTool: "(T)Axe", currentToolSlot: 0, toolSlots: [{ slot: 2, label: "(T)Hoe" }] },
     false,
   );
-  assert.ok(unmatched.includes("holding: (T)Axe"), `the tool name survives an unknown slot: ${unmatched}`);
-  assert.ok(!unmatched.includes("holding: (T)Axe ("), `no invented upgrade level: ${unmatched}`);
+  assert.ok(unmatched.includes("holding: "), `the fact survives an unknown slot: ${unmatched}`);
+  assert.equal(unmatched.includes("(T)"), false, `and it carries no item identity: ${unmatched}`);
+  assert.equal(unmatched.includes(" (+"), false, `and no invented upgrade level: ${unmatched}`);
 
   for (const currentTool of [undefined, null, ""] as const) {
     // `exactOptionalPropertyTypes` forbids writing `undefined` into an optional field, so the absent case is
@@ -552,7 +566,15 @@ test("formatGameEnvironmentFacts names the villagers near her and the coordinate
  * belongs to, and `none` prints nothing because a line that said `皮埃尔[无]` would spend its bytes stating the absence.
  */
 test("formatGameEnvironmentFacts prints the marker over a villager's head, and says nothing for none", () => {
-  const villager = { targetId: "npc_relationship_Pierre", npcName: "Pierre", displayName: "皮埃尔", location: "Farm", x: 51, y: 50, inCurrentLocation: true };
+  const villager = {
+    targetId: "npc_relationship_Pierre",
+    npcName: "Pierre",
+    displayName: "皮埃尔",
+    location: "Farm",
+    x: 51,
+    y: 50,
+    inCurrentLocation: true,
+  };
   const relationship = (marker: "quest" | "special_order" | "dialogue" | "none") => ({
     targetId: "npc_relationship_Pierre",
     x: 51,
@@ -586,11 +608,17 @@ test("formatGameEnvironmentFacts prints the marker over a villager's head, and s
     line("special_order", true).includes("皮埃尔[订单]"),
     `the special order marker names itself: ${line("special_order", true)}`,
   );
-  assert.ok(line("dialogue", true).includes("皮埃尔[有话]"), `the dialogue marker names itself: ${line("dialogue", true)}`);
+  assert.ok(
+    line("dialogue", true).includes("皮埃尔[有话]"),
+    `the dialogue marker names itself: ${line("dialogue", true)}`,
+  );
   const none = line("none", true);
   assert.ok(none.includes("皮埃尔"), `a villager with no marker is still named: ${none}`);
   assert.ok(!none.includes("["), `and nothing is printed beside the name: ${none}`);
-  assert.ok(line("quest", false).includes("Pierre[quest]"), `the English line carries the wire's own word: ${line("quest", false)}`);
+  assert.ok(
+    line("quest", false).includes("Pierre[quest]"),
+    `the English line carries the wire's own word: ${line("quest", false)}`,
+  );
 });
 
 /**
@@ -699,7 +727,7 @@ test("formatGameEnvironmentFacts stays a bounded line even with pathological nam
   // Nor the neighbours: the per-name cap is what keeps an 128-character display
   // name from crowding the rest of the line out of the byte bound.
   assert.ok(facts.includes("附近: "), `the neighbour fact survives the bound: ${facts}`);
-  assert.ok(facts.includes("手持: (T)Hoe"), `the held-tool fact survives the bound: ${facts}`);
+  assert.ok(facts.includes("手持: "), `the held-tool fact survives the bound: ${facts}`);
 });
 
 /**
