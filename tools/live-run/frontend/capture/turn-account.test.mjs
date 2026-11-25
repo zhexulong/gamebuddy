@@ -35,11 +35,37 @@ const {
 } = require("./turn-account.cjs");
 
 /**
+ * The two marker tokens, spelled here as the producer prints them rather than imported from the reader.
+ *
+ * This is deliberate: the assertion is that a refusal CITES what the entry's stderr actually contains, so a reader that
+ * renamed its own export would otherwise change the fixture with it and prove nothing. The tokens are the log's
+ * vocabulary (`BODY_PROGRAM_MOUNT`, `host/src/companion-loop.ts`), not this module's.
+ */
+const TURN_DELIVERY_MARKER = "NATIVE_COMPANION_TURN_DELIVERY";
+const BODY_PROGRAM_MOUNT_MARKER = "BODY_PROGRAM_MOUNT";
+
+/**
  * The product entry's stderr, as a run that opened no turn leaves it: 142 bytes, quoted from
  * `D:\gb-modcheck\frontend--r24.stage\logs\launch.log` ("ENTRY STDERR BYTES (=0 required): 142", both lines).
  */
 const NO_TURN_STDERR =
   "[tavern-gate] runtime marker unavailable: no_reporter\nGameBuddy Stardew bootstrap registration reconcile: examined 0, released 0, finalised 0\n";
+
+/**
+ * The stderr `.tmp/lane-roundw2.md` §9 quotes whole: the body program mounted, a world-driven turn that delivered one
+ * 27-character bubble under its own lease - and NO `GAME_TURN_ACCOUNT` line at all.
+ *
+ * Quoted from the live run's own `state/entry-stderr.log` (3 231 B, 40 lines). Only the lines the two markers live on are
+ * kept, and they are kept verbatim: a rewritten fixture would prove the reader answers the shape it was handed rather
+ * than the one the producer prints.
+ */
+const SILENT_ABOUT_A_TURN = [
+  'BODY_PROGRAM_MOUNT {"unavailableReason":null,"mounted":true,"readers":"after_first_submission"}',
+  'PROVIDER_WAIT {"atMs":1795646211701,"locale":"zh-CN"}',
+  'COMPANION_ACTIVITY {"state":"thinking"}',
+  'NATIVE_COMPANION_TURN_DELIVERY {"textParts":1,"presented":1,"suppressed":{},"bubbles":1,"suppressedBubbles":{},"messages":{"count":1,"ids":[]},"bubble":{"chars":27,"truncatedChars":0,"sentencesDropped":0},"lease":{"admitted":true},"carried":["snapshot","world_fact"]}',
+  'COMPANION_ACTIVITY {"state":"idle","atMs":1795646328114}',
+].join("\n");
 
 /** `round66`'s account line, whole, as `turnAccountLine` printed it. */
 const ROUND66 =
@@ -70,6 +96,36 @@ test("a run whose stderr carries no account line is refused by name, not read as
     awake.detail.includes(ACCOUNT_LINE_SHAPE),
     "the refusal quotes the shape it looked for, so the next reader knows what is missing",
   );
+  assert.ok(
+    !awake.detail.includes("THE ACCOUNT IS SILENT ABOUT A TURN"),
+    "and nothing in THIS file proves a turn opened, so the absence stays a plain absence - the reading a window with no turn leaves must not be dressed up as a defect",
+  );
+});
+
+test("an account that is absent while the same stderr proves an opened, presented turn names both markers", () => {
+  const awake = agentAwakeOf(readTurnAccount(inTemporaryFile(SILENT_ABOUT_A_TURN)));
+  assert.equal(awake.kind, "absent", "the missing line is still what this step refuses");
+  assert.equal(
+    awake.reason,
+    "turn_account_absent",
+    "by the name it has always had, so a driver's verdict does not move",
+  );
+  assert.ok(
+    awake.detail.includes("THE ACCOUNT IS SILENT ABOUT A TURN THIS RUN OPENED AND PRESENTED"),
+    `the refusal has to say the producer contradicts itself, not that no turn happened: ${awake.detail}`,
+  );
+  assert.ok(awake.detail.includes(TURN_DELIVERY_MARKER), "citing the record that proved the turn");
+  assert.ok(
+    awake.detail.includes('carried ["snapshot","world_fact"]'),
+    "the batch it was made of: a batch is composed only on the pump's opened branch",
+  );
+  assert.ok(awake.detail.includes("presented 1") && awake.detail.includes("bubbles 1"), "and the bubble it presented");
+  assert.ok(awake.detail.includes("lease admitted true"), "under the turn's own presentation lease");
+  assert.ok(
+    awake.detail.includes(`${BODY_PROGRAM_MOUNT_MARKER} says mounted:true`),
+    `the second marker: the body program that opens world-driven turns was mounted: ${awake.detail}`,
+  );
+  assert.match(describeTurnAccount(awake), /^turn_account_absent: .*THE ACCOUNT IS SILENT/u);
 });
 
 test("a run whose stderr was never held is refused as unreadable, not read as zero turns", () => {

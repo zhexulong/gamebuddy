@@ -25,6 +25,20 @@ const { readFileSync } = require("node:fs");
 const TURN_ACCOUNT_FACT = "GAME_TURN_ACCOUNT";
 
 /**
+ * The producer's OTHER record of a turn, written once per turn that delivered: the witness a missing account line is
+ * measured against.
+ *
+ * A batch is composed on exactly one branch of `EventPump.flush` - the branch that increments `turns opened` - so a
+ * `NATIVE_COMPANION_TURN_DELIVERY` line whose `carried` names a batch cannot exist unless the pump opened a turn. That
+ * makes this line, and not the reader's hope, the proof that an absent account is a producer's silence rather than a
+ * window in which no turn opened.
+ */
+const TURN_DELIVERY_FACT = "NATIVE_COMPANION_TURN_DELIVERY";
+
+/** The companion body program's mount record: the second marker, and the one that says the world-driven path was live. */
+const BODY_PROGRAM_MOUNT_FACT = "BODY_PROGRAM_MOUNT";
+
+/**
  * The account's shape, in the words a refusal quotes, so a reader can see what was looked for:
  * `GAME_TURN_ACCOUNT turns opened 12 {player_input: 0, world_fact: 12 {adapter_ingress: 11}, due: 0}`.
  */
@@ -77,12 +91,66 @@ function producerCounts(text) {
   return counts;
 }
 
+/** The JSON a `FACT {…}` line carries, or `null` when the line carries none this reader can read. */
+function payloadOf(raw, fact) {
+  try {
+    const record = JSON.parse(raw.slice(fact.length));
+    return typeof record === "object" && record !== null ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The two markers in one block of stderr: what the Host DELIVERED, beside what it said about its turns.
+ *
+ * Kept apart from the account reader because they answer different questions. The account is the producer's statement
+ * about the turns it opened; these records are what it did, printed once per turn - so a reading that has the second and
+ * not the first is a contradiction the verdict has to name, never an answer of "no turns".
+ */
+function readTurnEvidence(complete) {
+  const deliveries = [];
+  let bodyProgramMounted = false;
+  for (const raw of complete) {
+    if (raw.startsWith(`${TURN_DELIVERY_FACT} `)) {
+      const record = payloadOf(raw, TURN_DELIVERY_FACT);
+      if (record === null) continue;
+      deliveries.push({
+        raw,
+        presented: Number(record.presented ?? 0),
+        bubbles: Number(record.bubbles ?? 0),
+        carried: Array.isArray(record.carried) ? record.carried : [],
+        leaseAdmitted: record.lease?.admitted === true,
+      });
+    } else if (raw.startsWith(`${BODY_PROGRAM_MOUNT_FACT} `)) {
+      bodyProgramMounted = payloadOf(raw, BODY_PROGRAM_MOUNT_FACT)?.mounted === true;
+    }
+  }
+  return { deliveries, bodyProgramMounted };
+}
+
+/**
+ * The sentence that names a silence the producer's own records contradict, or `null` when nothing in the file proves a
+ * turn.
+ *
+ * A delivery record proves one only when it names what its batch was made of (`carried`) or something it presented: the
+ * record exists for a turn that produced text, and a batch exists only on the pump's opened branch.
+ */
+function openedTurnEvidence(reading) {
+  const proving = reading.deliveries.filter((delivery) => delivery.carried.length > 0 || delivery.presented > 0);
+  if (proving.length === 0) return null;
+  const last = proving[proving.length - 1];
+  const mounted = reading.bodyProgramMounted
+    ? `${BODY_PROGRAM_MOUNT_FACT} says mounted:true in the same file`
+    : `no ${BODY_PROGRAM_MOUNT_FACT} line in the same file says the companion body program was mounted`;
+  return `THE ACCOUNT IS SILENT ABOUT A TURN THIS RUN OPENED AND PRESENTED: ${String(proving.length)} ${TURN_DELIVERY_FACT} record(s) in the same stderr name a composed batch and its presentation (the last: carried ${JSON.stringify(last.carried)}, presented ${String(last.presented)}, bubbles ${String(last.bubbles)}, lease admitted ${String(last.leaseAdmitted)}), and a batch is composed only on the pump's opened branch - so a turn opened and the missing line is the producer's own silence, not a window without a turn; ${mounted}: ${JSON.stringify(last.raw)}`;
+}
+
 /**
  * One account line as the reading it is, or `null` when the line carries no `turns opened` block.
  *
- * The block is brace-matched rather than matched by a pattern because `world_fact` prints its own producers
- * inside braces, so any `\{[^}]*\}` stops at the first nested `}` and reads `due` as a member of
- * `world_fact`.
+ * The block is brace-matched rather than matched by a pattern because `world_fact` prints its own producers inside
+ * braces, so any `\{[^}]*\}` stops at the first nested `}` and reads `due` as a member of `world_fact`.
  */
 function parseAccountLine(line) {
   const opened = OPENED.exec(line);
@@ -122,28 +190,49 @@ function parseAccountLine(line) {
  * no_reporter`) and none of them is a missing reading.
  */
 function readTurnAccountText(text) {
-  if (typeof text !== "string") return { lines: [], unreadable: [], last: null };
-  const complete = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n").slice(0, -1);
+  if (typeof text !== "string")
+    return { lines: [], unreadable: [], last: null, deliveries: [], bodyProgramMounted: false };
+  const complete = (text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n").slice(0, -1)).map((line) =>
+    line.replace(/\r$/u, ""),
+  );
   const lines = [];
   const unreadable = [];
-  for (const raw of complete.map((line) => line.replace(/\r$/u, ""))) {
+  for (const raw of complete) {
     if (!raw.startsWith(`${TURN_ACCOUNT_FACT} `)) continue;
     const parsed = parseAccountLine(raw);
     if (parsed === null) unreadable.push(raw);
     else lines.push(parsed);
   }
-  return { lines, unreadable, last: lines.length === 0 ? null : lines[lines.length - 1] };
+  return { lines, unreadable, last: lines.length === 0 ? null : lines[lines.length - 1], ...readTurnEvidence(complete) };
 }
 
 /** The run's stderr file, as `held` (could it be read at all), its bytes, and the account inside it. */
 function readTurnAccount(file) {
   if (typeof file !== "string" || file.length === 0)
-    return { path: null, held: false, bytes: 0, lines: [], unreadable: [], last: null };
+    return {
+      path: null,
+      held: false,
+      bytes: 0,
+      lines: [],
+      unreadable: [],
+      last: null,
+      deliveries: [],
+      bodyProgramMounted: false,
+    };
   let text;
   try {
     text = readFileSync(file, "utf8");
   } catch {
-    return { path: file, held: false, bytes: 0, lines: [], unreadable: [], last: null };
+    return {
+      path: file,
+      held: false,
+      bytes: 0,
+      lines: [],
+      unreadable: [],
+      last: null,
+      deliveries: [],
+      bodyProgramMounted: false,
+    };
   }
   return { path: file, held: true, bytes: Buffer.byteLength(text, "utf8"), ...readTurnAccountText(text) };
 }
@@ -152,7 +241,9 @@ function readTurnAccount(file) {
  * The step's verdict on one reading: awake only when a turn opened for a world fact.
  *
  * Four answers, and each names what was missing. `unreadable` is the harness's absence (no file was held);
- * `absent` is bytes with no account in them (the Host opened no turn at all); `member_absent` is an account
+ * `absent` is bytes with no account in them (the Host opened no turn at all) - and when those same bytes carry the
+ * producer's own record of a composed batch and its presentation, the refusal cites both markers, because a silent
+ * account about a turn that opened is the producer's defect and not a zero; `member_absent` is an account
  * whose `turns opened` block no longer prints `world_fact` (the producer's vocabulary moved); and
  * `no_world_fact` is an account that opened turns for other reasons only. None of the four is a zero.
  */
@@ -165,13 +256,15 @@ function agentAwakeOf(reading) {
       reading: reading ?? null,
     };
   const { last } = reading;
-  if (last === null)
+  if (last === null) {
+    const silent = openedTurnEvidence(reading);
     return {
       kind: "absent",
       reason: "turn_account_absent",
-      detail: `${String(reading.bytes)} byte(s) of the product entry's stderr were read and none of them is ${ACCOUNT_LINE_SHAPE}${reading.unreadable.length === 0 ? "" : ` (${String(reading.unreadable.length)} line(s) named ${TURN_ACCOUNT_FACT} and could not be parsed: ${JSON.stringify(reading.unreadable.slice(-1))})`}`,
+      detail: `${String(reading.bytes)} byte(s) of the product entry's stderr were read and none of them is ${ACCOUNT_LINE_SHAPE}${reading.unreadable.length === 0 ? "" : ` (${String(reading.unreadable.length)} line(s) named ${TURN_ACCOUNT_FACT} and could not be parsed: ${JSON.stringify(reading.unreadable.slice(-1))})`}${silent === null ? "" : `. ${silent}`}`,
       reading,
     };
+  }
   if (last.byReason[WORLD_FACT] === undefined)
     return {
       kind: "member_absent",
@@ -204,7 +297,9 @@ function describeTurnAccount(awake) {
 
 module.exports = {
   ACCOUNT_LINE_SHAPE,
+  BODY_PROGRAM_MOUNT_FACT,
   TURN_ACCOUNT_FACT,
+  TURN_DELIVERY_FACT,
   PLAYER_INPUT,
   WORLD_FACT,
   agentAwakeOf,
@@ -212,4 +307,5 @@ module.exports = {
   parseAccountLine,
   readTurnAccount,
   readTurnAccountText,
+  readTurnEvidence,
 };

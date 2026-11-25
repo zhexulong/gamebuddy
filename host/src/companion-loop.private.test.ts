@@ -2779,12 +2779,18 @@ test("assistant turns: a batch that speaks and then works silently reads as with
     // fixture is about what a TURN's two records are.
     loop.pump.enqueueFact(settledDigest("plan_60_two_records", "rejected"), FACT_PRODUCER.adapterIngress);
     await loop.flush();
+    // A SECOND TURN, because the account line is printed when a turn OPENS (`CompanionLoop.#reportOpenedTurn`): the first
+    // line is that turn's account at its opening, and the two records this turn produced reach a line as soon as another
+    // turn opens. Without the second turn the assertion below could not tell a production group that moved from one that
+    // stopped being printed.
+    loop.pump.enqueueFact(settledDigest("plan_60_two_records_second", "rejected"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
   } finally {
     process.stderr.write = stderrWrite;
   }
 
   const account = loop.pump.turnAccount;
-  assert.equal(account.opened, 1, "the premise: ONE delivered batch carried both records");
+  assert.equal(account.opened, 2, "the premise: each of the two delivered batches carried both records");
   assert.equal(
     loop.pump.turnProduction,
     TURN_PRODUCTION.worked,
@@ -2794,28 +2800,30 @@ test("assistant turns: a batch that speaks and then works silently reads as with
     account.assistantTurns.byProduction,
     {
       [TURN_PRODUCTION.worked]: 0,
-      [TURN_PRODUCTION.workedSilently]: 1,
-      [TURN_PRODUCTION.spoke]: 1,
+      [TURN_PRODUCTION.workedSilently]: 2,
+      [TURN_PRODUCTION.spoke]: 2,
       [TURN_PRODUCTION.saidNothing]: 0,
     },
     `each assistant record is one turn: ${turnAccountLine(account)}`,
   );
-  assert.equal(account.assistantTurns.examined, 2, "two records, one batch: the two numbers are not the same fact");
-  assert.equal(assistantTurnsWithText(account.assistantTurns), 1);
-  assert.equal(assistantTurnsToolOnly(account.assistantTurns), 1);
+  assert.equal(account.assistantTurns.examined, 4, "four records, two batches: the two numbers are not the same fact");
+  assert.equal(assistantTurnsWithText(account.assistantTurns), 2);
+  assert.equal(assistantTurnsToolOnly(account.assistantTurns), 2);
   assert.equal(
     account.silentSettled.total,
     0,
     "and the batch counter still reads 0 - which is why it could never have answered this question",
   );
+  const lines = printed.split("\n").filter((line) => line.startsWith("GAME_TURN_ACCOUNT "));
+  assert.equal(lines.length, 2, `one line per opened turn, printed when it opens: ${printed}`);
   assert.ok(
-    printed.includes(
+    lines[1]!.includes(
       `${ASSISTANT_TURNS_EXAMINED} 2 {worked: 0, worked_silently: 1, spoke: 1, said_nothing: 0} · ${ASSISTANT_TURNS_WITH_TEXT} 1 · ${ASSISTANT_TURNS_TOOL_ONLY} 1`,
     ),
-    `the run's own account line states it, in its own unit: ${printed}`,
+    `the run's own account line states the completed turn's two records, in their own unit: ${printed}`,
   );
   assert.ok(
-    printed.includes(`${PER_DELIVERED_BATCH} turns opened 1 {`),
+    lines[0]!.includes(`${PER_DELIVERED_BATCH} turns opened 1 {`),
     `and the batch group that follows is named as batches: ${printed}`,
   );
 });

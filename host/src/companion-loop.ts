@@ -321,6 +321,22 @@ export class CompanionLoop {
   public async flush(): Promise<CompanionTurnOutcome | undefined> {
     const flushed = await this.#pump.flush({
       deliver: async (batch) => {
+        // THE ACCOUNT IS PRINTED HERE, AT THE DECISION, and both halves of that matter.
+        //
+        // `deliver` is invoked once per turn the pump opens and never for a call that owes none, so this statement IS
+        // the opened turn; being the first statement, nothing that happens after it can take the line away - not a
+        // delivery that rejects on its way to the model, not a second call answered `held` while this turn is in flight
+        // (which clears the pump's mutable `lastDecision`). Read from `lastDecision` after the delivery instead, which is
+        // what this replaced, a turn that opened, delivered and presented was missing from a live run's log (`roundw2`:
+        // a 90 s attached window whose entry stderr held `NATIVE_COMPANION_TURN_DELIVERY {presented:1, bubbles:1,
+        // lease:{admitted:true}, carried:["snapshot","world_fact"]}` and no `GAME_TURN_ACCOUNT`).
+        //
+        // AND IT CANNOT WAIT FOR THE SETTLE, because a STOP does not: `abortAndClear` clears the pump while the turn it
+        // counted is still running, so an account read on the far side of the delivery reports a pump that no longer holds
+        // the turn it is describing. What this line therefore carries is the account AT THE OPENING - every completed
+        // turn's production, and this turn's own opener - while this turn's text and bubble land on its
+        // `NATIVE_COMPANION_TURN_DELIVERY` record and on the next turn's line.
+        this.#reportOpenedTurn();
         // Only the real Pi-consumed batch may activate presentation lineage.
         const sourceEventId = canonicalPresentationSource(batch);
         const batchId = isOpaqueSource(batch.batchId) ? batch.batchId : undefined;
@@ -353,7 +369,6 @@ export class CompanionLoop {
     // was owed" - the collapse this union exists to remove.
     switch (flushed.kind) {
       case "opened":
-        this.#reportTurnDecision();
         return flushed.turn;
       case "not_owed":
         this.#carryDecisions += 1;
@@ -378,11 +393,8 @@ export class CompanionLoop {
    * 126 times). What those calls did is counted in the account (`not owed N {reason: count}`), printed with the next turn
    * that opens, and the facts they declined are proved under `carried`.
    */
-  #reportTurnDecision(): void {
-    const account = this.#pump.turnAccount;
-    const decision = account.lastDecision;
-    if (decision === undefined || decision.kind !== "opened") return;
-    process.stderr.write(`GAME_TURN_ACCOUNT ${turnAccountLine(account)}\n`);
+  #reportOpenedTurn(): void {
+    process.stderr.write(`GAME_TURN_ACCOUNT ${turnAccountLine(this.#pump.turnAccount)}\n`);
   }
 
   /**
