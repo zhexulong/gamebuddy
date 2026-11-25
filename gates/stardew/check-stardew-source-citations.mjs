@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+// source-invariant: this gate reads our own source text to resolve a citation, and no compiler can express "this reason
+// names a symbol that the file it names still declares" - the claim is prose about code, so only a reader of the prose
+// can hold it. `tools/lib/source-citation.mjs` is the one resolver; this file is one of its callers.
+// source-expiry: 2027-03-01, or when a citation becomes checkable by the toolchain (a doc reference the compiler
+// resolves, or a linker that fails on a dangling symbol in a docblock) - whichever comes first, so this reading is
+// re-taken rather than trusted and the gate goes.
 /**
  * A claim about the Mod's code cites a SYMBOL, because a line range expires in silence.
  *
@@ -56,12 +62,6 @@
  *   node gates/stardew/check-stardew-source-citations.mjs            # the reading
  *   node gates/stardew/check-stardew-source-citations.mjs --json     # the report line alone
  *   node gates/stardew/check-stardew-source-citations.mjs --update   # rewrite the debt baseline from this run
- *
- * source-invariant: a claim about this repository's C# code is checkable only against a symbol, so a line range in the
- * tree's own text is a claim whose subject nobody re-reads - the invariant is that the debt count never grows and each
- * recorded row still matches the exact citation text it was recorded under.
- * source-expiry: when the last own-source line-range citation is converted, so the debt class is empty and the baseline
- * file is deleted - or 2027-03-01, whichever comes first, so this reading is re-taken rather than trusted.
  */
 
 export const gateDeclaration = {

@@ -16,8 +16,8 @@
  * WHICH BODY IT DRIVES, said here because it decides what the trace can claim
  * ------------------------------------------------------------------------
  * ONE bridge exists on the Player Host wiki/AI-Farmhand topology, it belongs to the AI-client process, and it binds
- * that process's own `Game1.player` (`integrations/stardew/ModEntry.cs:900-905` returns early for the Host role, so
- * the Host never constructs a `LocalPipeBridge`; the one instance is `ModEntry.cs:1078-1094`, and
+ * that process's own `Game1.player` (`integrations/stardew/ModEntry.cs` returns early for the Host role, so
+ * the Host never constructs a bridge; the one consumer is admitted by `LocalPipeBridge.cs:LocalPipeBridge`, and
  * `LocalPipeBridge.cs` admits a single consumer). So the probe acts on the SAME body as the companion, and the
  * concurrency this module can express is two request streams racing on ONE actor - not two farmers. The only second
  * body the harness can move at all is the Host player, through the file-armed `SleepLifecycle`, and that is where
@@ -132,6 +132,16 @@ export function chestWithItem(snapshot) {
 /**
  * The probe's fixed script for one slice, as a pure function of the world reading it was handed.
  *
+ * EVERY STEP'S `args` IS THE ACTION'S OWN WIRE ARGUMENT SET, not a projection of the snapshot field it was read from.
+ * The two declarations of that set are `BridgeProtocol.ExecutionArgumentProperties`
+ * (`integrations/stardew/src/Core/Protocol/BridgeProtocol.cs:2487`) on the Mod and `EXECUTION_REQUEST_ARGUMENT_RULES`
+ * (`host/src/protocol.ts:4679`) on the Host. A SNAPSHOT FIELD NAME IS NOT AN ARGUMENT NAME: the crop's published
+ * `harvestTargets[].targetId` travels as `expectedTargetId` (the same `BuildCropTargetId` string), a chest's
+ * `chests[].chestId` travels as `chestId`, and the item's `qualifiedItemId`/`qualifiedHarvestItemId` travels as
+ * `expectedQualifiedItemId`. `targetRef` was none of those, so the first harvest or chest step this planned was refused
+ * at the bridge while a stub-dispatching test stayed green; `tools/lib/stardew-player-probe-driver.test.mjs` now holds
+ * every step against the Host's own validator.
+ *
  * ONE SCRIPT, NOT ONE STEP PER SLICE, and the split is forced by what each slice measures:
  *   `s1_attention` - move to the ripe crop's tile, point at it with the emote, and say one line. It NEVER harvests:
  *                    the crop is the shared subject of the attention slice and the claim slice, and consuming it in
@@ -191,7 +201,7 @@ export function planProbeScript({ snapshot, slice, targetIndex = 0 }) {
       Object.freeze({
         stepId: "chest",
         action: "chest_retrieve",
-        args: Object.freeze({ targetRef: chest.chestId, expectedQualifiedItemId: item.qualifiedItemId }),
+        args: Object.freeze({ chestId: chest.chestId, expectedQualifiedItemId: item.qualifiedItemId }),
       }),
     );
     return Object.freeze({ slice, tile, steps: Object.freeze(steps), dropped: Object.freeze([]) });
@@ -201,7 +211,16 @@ export function planProbeScript({ snapshot, slice, targetIndex = 0 }) {
       slice,
       tile,
       steps: Object.freeze([
-        Object.freeze({ stepId: "claim", action: "harvest_crop", args: Object.freeze({ targetRef: crop.targetId }) }),
+        Object.freeze({
+          stepId: "claim",
+          action: "harvest_crop",
+          args: Object.freeze({
+            x: crop.x,
+            y: crop.y,
+            expectedQualifiedItemId: crop.qualifiedHarvestItemId,
+            expectedTargetId: crop.targetId,
+          }),
+        }),
       ]),
       dropped: Object.freeze([]),
     });

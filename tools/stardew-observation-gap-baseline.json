@@ -1,6 +1,6 @@
 {
   "schema": "gamebuddy-stardew-observation-gap-baseline/v1",
-  "note": "Every entry is a measured reading, not an accepted gap. An entry whose subject is now read (or whose mutation no longer exists) must be deleted or the report fails as stale_baseline_entry. collection_never_read:largeTerrainFeatures is absent for a different reason: the report named it on its first run, the bush discovery and TryGetHarvestableBush were made to read location.largeTerrainFeatures (where a bush actually stands), and the finding is therefore gone rather than excused. The 95 collection entries added with the owner-widened population are the same kind of reading: each names a member of GameLocation, Farmer or Game1 that no Discover* body reads, and states the concrete fact that makes it unread (a draw-order or light cache the map rebuilds, a Data/* content cache, a ledger no action chooses from, or a family published by a body the Discover*-named scan does not match). They are not an endorsement that these 95 can never matter.",
+  "note": "Every entry is a measured reading, not an accepted gap. An entry whose subject is now read (or whose mutation no longer exists) must be deleted or the report fails as stale_baseline_entry. collection_never_read:largeTerrainFeatures is absent for a different reason: the report named it on its first run, the bush discovery and TryGetHarvestableBush were made to read location.largeTerrainFeatures (where a bush actually stands), and the finding is therefore gone rather than excused. The 95 collection entries added with the owner-widened population are the same kind of reading: each names a member of GameLocation, Farmer or Game1 that no Discover* body reads, and states the concrete fact that makes it unread (a draw-order or light cache the map rebuilds, a Data/* content cache, a ledger no action chooses from, or a family published by a body the Discover*-named scan does not match). They are not an endorsement that these can never matter: `Game1.otherFarmers` has already left the set, because `DiscoverOtherFarmers` reads it and the roster is published as `otherFarmers`.",
   "entries": [
     {
       "kind": "collection",
@@ -210,7 +210,7 @@
     {
       "kind": "collection",
       "id": "farmers",
-      "reason": "the farmhands standing on the location (`FarmerCollection`). This surface has one embodied actor and `Game1.otherFarmers` is the same roster; the Mod reads `location.farmers` only as an execution guard for proximity (`farmhandexecutioncontroller.cs:1111`), never as a target"
+      "reason": "the location's view of the farmhand roster (`FarmerCollection`). The roster itself is published as `otherFarmers`, read from `Game1.otherFarmers` by `DiscoverOtherFarmers`; `location.farmers` is the same players seen through one location, so a separate family would be a second spelling of one fact. The Mod reads it only as an execution guard for proximity (`farmhandexecutioncontroller.cs:1111`), never as a target"
     },
     {
       "kind": "collection",
@@ -616,11 +616,6 @@
       "kind": "collection",
       "id": "Game1.onScreenMenus",
       "reason": "the open menu stack (`IList<IClickableMenu>`). The engine's modal state; what an action needs is the open menu's identity, published by `dismiss_modal`/`answer_dialogue` from `Game1.activeClickableMenu`"
-    },
-    {
-      "kind": "collection",
-      "id": "Game1.otherFarmers",
-      "reason": "the multiplayer farmhand roster (`NetRootDictionary<long, Farmer>`). This surface has one embodied actor (`Game1.player`) and the companion is not a farmer; the same roster is excused as `farmers` on the location"
     },
     {
       "kind": "collection",
