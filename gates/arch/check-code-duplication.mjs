@@ -191,8 +191,14 @@
  * REASON, and an EXPIRY. What it is not:
  *
  *   - not a reclassification. A declared group stays STRUCTURAL, stays in `duplication`, stays in its sites total and is
- *     printed one line per run (`declared:<hash>: ... · <owner> · <reason> :: <first line>`). The census reads
- *     `duplication 165 (741 sites) · declared 29`, so the door can never hide what walked through it;
+ *     printed one line per run (`declared:<hash>: ... , <standing> · <owner> · <reason> :: <first line>`), where the
+ *     standing is `at its declared N sites`, `GREW from the declared N sites` or `SHRANK from the declared N sites`. The
+ *     census reads `duplication 165 (741 sites) · declared 29`, so the door can never hide what walked through it. THE
+ *     STANDING IS NOT DECORATION: this row is printed for every declared group, including the ones the same run fails,
+ *     and until it carried the standing a failing group printed a row that read exactly like an accepted one - which is
+ *     how a `clone_group_grew` was read as `declared:` and the gate's own output was believed over its verdict. A row
+ *     that cannot say whether the door held is a row that lies, and `declaredStanding` is the one comparison the
+ *     finding and the row both read so they cannot disagree;
  *   - not a ratchet entry. Nothing writes this file but a hand: `--write-baseline` records the UNDECLARED population and
  *     says how many declared groups it left out, and `--record-shrinks` does not read it at all. A lane that wants its
  *     own new duplication accepted has nowhere to put it, because the file is not a write target;
@@ -211,8 +217,8 @@
  * them and a declaration there would be a fix it declined to make.
  *
  *   6. a group DECLARED in `tools/duplicate-code-declarations.json` at the same site count passes and is printed with its
- *      owner and reason; one that gained a site is `clone_group_grew`, one that lost a site or left the population is
- *      `stale_clone_declaration` (THE DECLARATION DOOR, above).
+ *      standing, owner and reason; one that gained a site is `clone_group_grew`, one that lost a site or left the
+ *      population is `stale_clone_declaration` (THE DECLARATION DOOR, above).
  *
  * WHAT IT ASSERTS, per clone group - the sites jscpd reports for one repeated text, grouped by that text:
  *
@@ -258,6 +264,20 @@
  * from the comparison. Nothing dropped prints nothing; something dropped says so. A tree that is not a git work tree
  * has no index to be outside of, so that reading is `blocked` with `git_index_unreadable:<root>` instead of being
  * widened to whatever is on disk - this gate's own fixtures are `git init`ed for the same reason.
+ *
+ * THE RECORDING TREE IS THE INDEX, AND A VERDICT READS THE TREE YOU STAND IN. The paragraph above filters the population
+ * to paths git holds, which closes half of one defect: a file a lane has written but not staged is not measured - but the
+ * other half stayed open, because a TRACKED file edited in the worktree was still measured from the worktree. Measured
+ * 2026-11-25, as the same defect the complexity gate's `--update` had: `--write-baseline` and `--record-shrinks` recorded
+ * numbers read from the directory, while the pre-commit hook judges the record over the INDEX tree - so a record could
+ * name sites whose bytes no commit carries, and a `--record-shrinks` a lane ran could describe somebody else's
+ * half-finished edit. Both writes now measure a checkout of the index (`tools/lib/index-tree.mjs`, the module the hook
+ * builds its own tree with) and REFUSE, naming the paths, when a path the scanner would read holds worktree bytes the
+ * index does not (`baseline_would_record_uncommitted_measurements:<file>`, exit 1): an author who records before staging
+ * has measured the index and meant their directory. `--root <dir>` fixtures are git repositories for the same reason the
+ * index is read at all, and a root with no index is `code_duplication_blocked: git_index_unreadable:<root>` instead of a
+ * reading of disk. The record is still written to the WORKTREE (`tools/duplicate-code-baseline.json` is the file the
+ * author stages), and the plain verdict still measures the worktree - "is my tree red?" is a question about the directory.
  *
  * THE POPULATION IS PRINTED THREE WAYS, so none of the facts can hide inside another: `clone groups N · of which
  * facade-only M · syntax-floor A (B sites) · duplication K (L sites)`. K is the structural population the ratchet
@@ -337,10 +357,12 @@
  *                    `debt: 2 groups · 4 sites · of which runners 1 groups / 3 sites`
  *
  * red-proof: inject  a structural group at three sites with a matching declaration -> the census reads `declared 1` and
- *                    `new 0`, status `passed`, and `declared:<hash>: 3 sites at 50 tokens · <owner> · <reason> :: <first
- *                    line>` is printed; a fourth copy of the same text -> `clone_group_grew:<hash>: now 4 sites at 50
- *                    tokens, tools/duplicate-code-declarations.json declared 3 sites (<owner>)`; the same text at two
- *                    sites -> `stale_clone_declaration:<hash>`; an entry whose hash the tree does not have ->
+ *                    `new 0`, status `passed`, and `declared:<hash>: 3 sites at 50 tokens, at its declared 3 sites ·
+ *                    <owner> · <reason> :: <first line>` is printed; a fourth copy of the same text ->
+ *                    `clone_group_grew:<hash>: now 4 sites at 50 tokens, tools/duplicate-code-declarations.json declared
+ *                    3 sites (<owner>)` AND that group's own row reads `declared:<hash>: 4 sites at 50 tokens, GREW from
+ *                    the declared 3 sites` rather than the satisfied form; the same text at two sites ->
+ *                    `stale_clone_declaration:<hash>`; an entry whose hash the tree does not have ->
  *                    `stale_clone_declaration:<hash>`; an entry with no `reason` ->
  *                    `duplicate_code_declarations_malformed:reason:<hash>`; and `--write-baseline` records the undeclared
  *                    population only, saying how many it left out.
@@ -376,6 +398,11 @@
  *                    entry is removed and a later run never adds it back; a group that GREW -> its entry stays
  *                    byte-identical, `clone_group_grew` still fails the gate, and nothing is banked; no baseline file at
  *                    all -> `baseline_shrink_refused: there is no tools/duplicate-code-baseline.json to shrink`.
+ * red-proof: inject  a tracked source file whose worktree bytes are not the index's -> `--write-baseline` and
+ *                    `--record-shrinks` print `baseline_would_record_uncommitted_measurements:<file>`, exit 1 and write
+ *                    nothing; staging the same bytes records the STAGED reading; an unstaged `*.test.ts` or
+ *                    `integrations/stardew/tests/*.cs` (a path the scanner never reads) refuses nothing
+ *                    (tools/check-code-duplication.test.mjs, tools/scripts/pre-commit.test.mjs)
  * red-proof: inject  three controller partials whose methods share an envelope and one `AdmitLocalExecution(...)`
  *                    delegation, with no baseline -> `clone groups 1 · of which facade-only 1 · duplication 0`, status
  *                    `passed`, and `facade-only:<hash>: 3 sites at <n> tokens :: public LocalExecutionReceipt
@@ -406,6 +433,7 @@ import { fileURLToPath } from "node:url";
 
 import { RUNNER_FILE } from "../stardew/check-native-local-runner-scaffold.mjs";
 import { GATE_TREE_ROOTS } from "../../gates/directories.mjs";
+import { materializeIndexTree, refuseUncommittedMeasurements } from "../../tools/lib/index-tree.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const BASELINE = "tools/duplicate-code-baseline.json";
@@ -448,6 +476,25 @@ export const IGNORES = Object.freeze([
 
 /** The formats this tree writes source in. `csharp` is why the Mod appears at all. */
 export const FORMATS = Object.freeze(["javascript", "typescript", "csharp"]);
+
+/**
+ * The extensions each declared format tokenises, so "would a recording read this path" can be asked of a worktree change
+ * without tokenising it.
+ *
+ * jscpd 5 here is a Rust binary (`jscpd/run-jscpd.js` only dispatches to it), so there is no format table to import, and
+ * this is the one mirror in this gate that `jscpd_config_disagrees` cannot check. It is deliberately a SUPERSET: an
+ * extension named here that the scanner skips costs an author one `git add`, while one it omits costs a record measured
+ * on bytes no commit carries - and a format declared in `FORMATS` with no entry here refuses the write
+ * (`duplicate_code_format_unreadable:<format>`) instead of under-reporting the paths it would read.
+ */
+const FORMAT_EXTENSIONS = new Map([
+  ["javascript", [".js", ".jsx", ".mjs", ".cjs"]],
+  ["typescript", [".ts", ".tsx", ".mts", ".cts"]],
+  ["csharp", [".cs"]],
+]);
+
+/** Globs the ignore reader below translates. A shape it does not (`[a-z]`, `{a,b}`, `!x`) refuses the write. */
+const IGNORE_GLOB_SHAPE = /[[\]{}!]/u;
 
 /** `E:\...` / `\\?\E:\...` / `a\b.cs` -> `a/b.cs`, relative to the tree that was examined. */
 export function normaliseSitePath(name, root = REPO) {
@@ -708,7 +755,8 @@ export function evaluateGroups({ groups, baseline, declarations = [], minTokens 
     const declaration = declared.get(group.hash);
     if (declaration !== undefined) {
       declaredGroups.push(group);
-      if (group.sites.length > declaration.sites)
+      const standing = declaredStanding(group, declaration);
+      if (standing === "grew")
         findings.push(
           violation(
             "clone_group_grew",
@@ -717,7 +765,7 @@ export function evaluateGroups({ groups, baseline, declarations = [], minTokens 
             group,
           ),
         );
-      else if (group.sites.length < declaration.sites)
+      else if (standing === "shrank")
         findings.push({
           code: "stale_clone_declaration",
           hash: group.hash,
@@ -1001,6 +1049,52 @@ export function untrackedSources({ root = REPO, trees = SOURCE_TREES, spawn = sp
   };
 }
 
+/** One ignore glob as a predicate over a `root`-relative path, or `null` for a shape this reader does not translate. */
+function ignoreRegExp(pattern) {
+  if (IGNORE_GLOB_SHAPE.test(pattern)) return null;
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === "*" && pattern[index + 1] === "*") {
+      index += 1;
+      if (pattern[index + 1] === "/") {
+        index += 1;
+        source += "(?:[^/]+/)*";
+      } else source += ".*";
+      continue;
+    }
+    if (character === "*") source += "[^/]*";
+    else if (character === "?") source += "[^/]";
+    else source += character.replace(/[.+^${}()|\\]/gu, "\\$&");
+  }
+  return new RegExp(`^${source}$`, "u");
+}
+
+/**
+ * Would a recording read this worktree change? The declared trees, the declared formats' extensions, the config that
+ * declares them - and nothing the scanner's own ignore list skips.
+ *
+ * `IGNORES` is jscpd's list rather than a second opinion: `jscpd_config_disagrees` proves `jscpd.json` declares exactly
+ * these paths, formats, ignores and thresholds on every run, so matching it here is reading the owner's declaration. It
+ * has to be matched at all because a shared checkout carries unstaged `*.test.ts`, `integrations/stardew/tests/*.cs` and
+ * `tools/lib/*` constantly, none of which the scanner reads - refusing on those would make this command refuse always
+ * and teach the author to reach for `--no-verify`, which is the defect the refusal exists to prevent.
+ */
+function measuredByRecording(path) {
+  if (path === JSCPD_CONFIG) return true;
+  if (!SOURCE_TREES.some((tree) => path.startsWith(`${tree}/`))) return false;
+  const unreadable = FORMATS.filter((format) => !FORMAT_EXTENSIONS.has(format));
+  if (unreadable.length > 0) throw new Error(`duplicate_code_format_unreadable:${unreadable.join(",")}`);
+  if (!FORMATS.flatMap((format) => FORMAT_EXTENSIONS.get(format)).some((extension) => path.endsWith(extension)))
+    return false;
+  for (const pattern of IGNORES) {
+    const matched = ignoreRegExp(pattern);
+    if (matched === null) throw new Error(`duplicate_code_ignore_unreadable:${pattern}`);
+    if (matched.test(path)) return false;
+  }
+  return true;
+}
+
 /**
  * The last commit that touched a file: `{ commit, date, subject }`, or `{ unrecorded: <reason> }` when no commit holds
  * it. This is the attribution unit, and it is a FILE-LEVEL reading that says so in its own words (ATTRIBUTION, above):
@@ -1041,7 +1135,14 @@ export function attributeGroups(groups, { root = REPO, spawn = spawnSync } = {})
   });
 }
 
-/** The whole reading, for the CLI and for the test: population, rule, findings, verdict. */
+/**
+ * The whole reading, for the CLI and for the test: population, rule, findings, verdict.
+ *
+ * `root` is the tree the scanner tokenises and `attributionRoot` is the repository whose history a finding's `last
+ * touched` is read from. They differ for exactly one caller: a WRITE (`--write-baseline`, `--record-shrinks`) measures a
+ * checkout of the index (`tools/lib/index-tree.mjs`), and that directory is a repository with no commits - a group
+ * attributed there would name `no commit holds <file>` for every site in the tree.
+ */
 export function checkCodeDuplication({
   root = REPO,
   trees = SOURCE_TREES,
@@ -1051,6 +1152,7 @@ export function checkCodeDuplication({
   declarations = readDeclarations({ root }),
   spawn = spawnSync,
   config,
+  attributionRoot = root,
 } = {}) {
   const disagreements = configDisagreements({
     config: config ?? JSON.parse(fs.readFileSync(path.join(root, JSCPD_CONFIG), "utf8")),
@@ -1106,7 +1208,7 @@ export function checkCodeDuplication({
     })),
     ...reading.findings,
   ];
-  const findings = attachAttribution(ruleFindings, { groups: reading.counted, root, spawn });
+  const findings = attachAttribution(ruleFindings, { groups: reading.counted, root: attributionRoot, spawn });
   return {
     status: findings.length === 0 ? "passed" : "failed",
     examined,
@@ -1180,10 +1282,27 @@ export function tokenCountLine(entry) {
   );
 }
 
-/** One declared group, printed every run: the door is only honest while a reader can see who walked through it. */
+/** Whether one declared group is at, above or below the site count its entry declares. The one comparison both the
+ * finding and the printed row read, so the row cannot say "held" while the verdict says `clone_group_grew`. */
+export function declaredStanding(group, declaration) {
+  if (group.sites.length > declaration.sites) return "grew";
+  if (group.sites.length < declaration.sites) return "shrank";
+  return "held";
+}
+
+/** One declared group, printed every run: the door is only honest while a reader can see who walked through it AND
+ * whether it held. A row that reads `declared:` whether the door held or not is how a grown group was read as an
+ * accepted one. */
 export function declaredLine(group, declaration) {
+  const standing = declaredStanding(group, declaration);
+  const clause =
+    standing === "held"
+      ? `at its declared ${declaration.sites} sites`
+      : standing === "grew"
+        ? `GREW from the declared ${declaration.sites} sites, so the copies it did not buy are a finding`
+        : `SHRANK from the declared ${declaration.sites} sites, so the entry outlived its copies`;
   return (
-    `  declared:${group.hash}: ${group.sites.length} sites at ${group.tokens} tokens · ${declaration.owner} · ` +
+    `  declared:${group.hash}: ${group.sites.length} sites at ${group.tokens} tokens, ${clause} · ${declaration.owner} · ` +
     `${declaration.reason} :: ${firstLineOf(group.fragment)}`
   );
 }
@@ -1297,9 +1416,40 @@ export function attributionLine(attribution) {
   return `${attribution.commit} ${attribution.date} ${attribution.subject} (${attribution.site.file}:${attribution.site.line})`;
 }
 
+/**
+ * The reading a WRITE records: the INDEX's, through the module the pre-commit hook builds its own tree with, and refused
+ * when a path the scanner reads holds worktree bytes the index does not.
+ *
+ * `null` is the refusal: it has already been printed, and the caller's only job is the exit code. `root` stays the tree
+ * whose history attributes the findings and whose record files are read and written - the checkout of the index is a
+ * repository with no commits, so a `last touched` read there would name no commit for every site in the tree.
+ */
+function recordingReading({ root, baseline }) {
+  const index = materializeIndexTree({ root, repository: true });
+  if (index.error !== undefined) throw new Error(index.error);
+  try {
+    const refusal = refuseUncommittedMeasurements({
+      root,
+      measures: measuredByRecording,
+      sink: (line) => process.stdout.write(`${line}\n`),
+    });
+    if (refusal.error !== undefined) throw new Error(refusal.error);
+    if (refusal.refused) return null;
+    return checkCodeDuplication({
+      root: index.root,
+      attributionRoot: root,
+      baseline,
+      declarations: readDeclarations({ root }),
+    });
+  } finally {
+    index.dispose();
+  }
+}
+
 function main(argv) {
   const writeBaseline = argv.includes("--write-baseline");
   const recordingShrinks = argv.includes("--record-shrinks");
+  const writing = writeBaseline || recordingShrinks;
   const showingResiduals = argv.includes("--residuals");
   // `--root <dir>`: which tree's baseline (and `jscpd.json`) is read and written. Fixtures use it; the rule is the same.
   const root = argv.includes("--root") ? argv[argv.indexOf("--root") + 1] : REPO;
@@ -1307,14 +1457,24 @@ function main(argv) {
   let baseline;
   try {
     baseline = readBaseline({ root });
-    reading = checkCodeDuplication({ root, baseline });
+    // A WRITE measures the index - the bytes a commit carries; a verdict measures the tree the reader stands in, which is
+    // what "is my work red?" means.
+    reading = writing
+      ? recordingReading({ root, baseline })
+      : checkCodeDuplication({ root, baseline, declarations: readDeclarations({ root }) });
   } catch (error) {
     process.stdout.write(`code_duplication_blocked: ${String(error?.message ?? error)}\n`);
     process.stdout.write(`${reportLine({ status: "blocked", examined: 0 })}\n`);
     process.exitCode = 2;
     return;
   }
+  if (reading === null) {
+    process.exitCode = 1;
+    return;
+  }
   const lines = [censusLine(reading), debtLine(reading)];
+  if (writing)
+    lines.push("measured the index (this is the tree a commit carries): the record is written to the worktree below");
   for (const group of reading.facade ?? []) lines.push(facadeLine(group));
   const declarations = new Map((readDeclarations({ root }) ?? []).map((entry) => [entry.hash, entry]));
   for (const group of reading.declared ?? []) lines.push(declaredLine(group, declarations.get(group.hash)));

@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, relative, sep } from "node:path";
+import { dirname, extname, join, relative } from "node:path";
 import { SOURCE_TREES } from "../../gates/arch/check-code-duplication.mjs";
+import { materializeIndexTree } from "../lib/index-tree.mjs";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 import { CEILINGS_BY_EXTENSION, verdict as complexityVerdict } from "./check-file-complexity-gate.mjs";
 
@@ -237,9 +238,12 @@ const checkStagedLineCeilings = (stagedTexts) => {
  * moves - the defect this section exists to end, not one to add.
  *
  * THE TREE IS THE INDEX. The worktree holds several lanes' work in flight, and this hook may only speak about the
- * bytes about to be committed, so the index is checked out into a throwaway tree (which honours `GIT_INDEX_FILE`, so
- * a lane's private index is the tree read here) and the gates read that tree - the record files included as staged, so
- * a re-record is judged where it will land.
+ * bytes about to be committed, so the index is checked out into a throwaway tree (`tools/lib/index-tree.mjs`, which
+ * honours `GIT_INDEX_FILE`, so a lane's private index is the tree read here) and the gates read that tree - the record
+ * files included as staged, so a re-record is judged where it will land. The SAME module builds the tree `--update`,
+ * `--write-baseline` and `--record-shrinks` measure, because two readings disagreeing about which tree they measure is
+ * what made a re-record impossible to satisfy (measured 2026-11-25: the hook refused
+ * `complexity_baseline_stale_for_this_commit:<file>` for a record `--update` had just written from the worktree).
  *
  * THE SCOPE IS THE COMMIT. A finding blocks only when it names a path this commit touches, or when the record carrying
  * it is itself staged: a tree already red from an earlier commit must not block the next author. That is the scoping
@@ -478,14 +482,15 @@ const ratchetRecordCommands = (rows) => {
  * The step: the records are read over the index tree this commit creates, and a disagreement that names a touched path
  * refuses the commit.
  *
- * THE COST, measured on this tree on 2026-11-25 (4275 tracked files, repeated runs): 1.6-1.8s to check the index out,
- * 2.5-2.8s to make that tree a repository, 4.4-5.9s for the complexity measurement (565 `.cs` through tree-sitter and
- * biome over the 316 `host/src` modules) and 5.0-5.2s for the duplication scan - 12-17s end to end, and only on a
- * commit that touches a measured tree. Two thirds of that is the gates measuring the whole tree, which is what these
- * two ratchets ARE: a class is its partials and a clone is its sites, so a reading of the changed files alone is not
- * the gate's reading. Nothing is cached between runs: a reading kept from an earlier commit is a reading of an earlier
- * tree, which is the staleness this step exists to catch, and a reading cached per file would be wrong for a class the
- * last commit grew in a different partial.
+ * THE COST, measured on this tree on 2026-11-25 (4275 tracked files, repeated runs): 1.8-2.9s to check the index out and
+ * 0.34-0.52s to remove it, 1.00-1.10s to make that tree a repository (the duplication gate asks git which files the index
+ * does not hold, and a directory that is not a repository cannot answer), 4.4-5.9s for the complexity measurement (565
+ * `.cs` through tree-sitter and biome over the 316 `host/src` modules) and 5.0-5.2s for the duplication scan - 13-18s
+ * end to end, and only on a commit that touches a measured tree. Two thirds of that is the gates measuring the whole
+ * tree, which is what these two ratchets ARE: a class is its partials and a clone is its sites, so a reading of the
+ * changed files alone is not the gate's reading. Nothing is cached between runs: a reading kept from an earlier commit is
+ * a reading of an earlier tree, which is the staleness this step exists to catch, and a reading cached per file would be
+ * wrong for a class the last commit grew in a different partial.
  *
  * WHY NOTHING NARROWER IS READ, measured over the last 60 commits before this landed: a path a record row names is
  * touched by 30% of them, but the rows that matter are MERGED - `cs:ModEntry` is 61 files and its row names one,
@@ -507,24 +512,19 @@ const checkRatchetRecords = async (touched) => {
   const started = Date.now();
   const rows = [];
   const blockers = [];
-  let scratch;
+  const index = materializeIndexTree({ root: process.cwd(), repository: true });
   try {
-    scratch = mkdtempSync(join(tmpdir(), "pre-commit-records-"));
-    execFileSync("git", ["checkout-index", "-a", `--prefix=${scratch}${sep}`], { stdio: ["ignore", "pipe", "pipe"] });
-    // The duplication gate asks git which files the index does not hold. A tree checked out FROM the index holds none,
-    // and a repository has to exist to answer at all: that is the only reason this tree is a repository.
-    execFileSync("git", ["init", "-q"], { cwd: scratch });
-    execFileSync("git", ["add", "-N", "."], { cwd: scratch });
+    if (index.error !== undefined) throw new Error(index.error);
     const touchedSet = new Set(touched);
     for (const read of [complexityDisagreements, duplicationDisagreements]) {
-      const outcome = await read(scratch, touchedSet);
+      const outcome = await read(index.root, touchedSet);
       if (outcome.blocked !== undefined) blockers.push(outcome.blocked);
       rows.push(...(outcome.rows ?? []));
     }
   } catch (error) {
     blockers.push(`the reading could not be taken (${error instanceof Error ? error.message : String(error)})`);
   } finally {
-    if (scratch !== undefined) rmSync(scratch, { recursive: true, force: true });
+    index.dispose();
   }
 
   const elapsed = Date.now() - started;

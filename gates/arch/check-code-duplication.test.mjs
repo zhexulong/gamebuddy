@@ -39,6 +39,11 @@
  * red-proof: inject  a tree whose three copies are committed -> the finding carries `attribution.commit`,
  *                    `attribution.date` and the commit subject beside its `detail`; the same tree with no commit ->
  *                    `unrecorded (no commit holds <file>)` and the verdict is unchanged.
+ * red-proof: inject  a tracked source file whose worktree bytes are not the index's -> `--write-baseline` and
+ *                    `--record-shrinks` print `baseline_would_record_uncommitted_measurements:<file>`, exit 1 and write
+ *                    nothing; an unstaged `*.test.cs` (a path the scanner never reads) refuses nothing, and the same
+ *                    bytes once staged are measured and refused as the growth they are
+ *                    (tools/check-code-duplication.test.mjs, tools/scripts/pre-commit.test.mjs)
  * red-proof: inject  a group recorded in the baseline whose text is an import preamble ->
  *                    `syntax_floor_clone_baselined:<hash>`, status `failed`, and `--record-shrinks` deletes that entry
  *                    (`removed 1`) without adding anything.
@@ -780,9 +785,11 @@ test("the runner predicate is the family's own population, and the template is n
 
 /**
  * A throwaway tree shaped like this repository: every declared source tree exists (jscpd fails on a path that is not
- * there), and each tokenised format has one file of its own, because the CLI reads the real `SOURCE_TREES`/`FORMATS` and a
- * format with no file is a blocked reading rather than a small one. They are twelve lines because jscpd does not count a
- * shorter file as a source at all, and they share no shape with each other or with the families under test.
+ * there - `path does not exist: gates` was this fixture's own red until the markers below were derived from
+ * `SOURCE_TREES` rather than hand-listed), and each tokenised format has one file of its own, because the CLI reads the
+ * real `SOURCE_TREES`/`FORMATS` and a format with no file is a blocked reading rather than a small one. They are twelve
+ * lines because jscpd does not count a shorter file as a source at all, and they share no shape with each other or with
+ * the families under test.
  */
 const repoShaped = (files) =>
   workspace(
@@ -818,11 +825,7 @@ const repoShaped = (files) =>
         "export default anchorLevels;",
         "",
       ].join("\n"),
-      "integrations/stardew/anchor.md": "# anchor\n",
-      "host/scripts/anchor.md": "# anchor\n",
-      "dialogue-web/src/anchor.md": "# anchor\n",
-      "packages/anchor.md": "# anchor\n",
-      "desktop/anchor.md": "# anchor\n",
+      ...Object.fromEntries(SOURCE_TREES.map((tree) => [`${tree}/anchor.md`, "# anchor\n"])),
     },
     { trees: SOURCE_TREES, formats: FORMATS },
   );
@@ -919,6 +922,55 @@ test("--write-baseline still refuses an unrecorded group, and still creates the 
   assert.equal(refused.status, 1, refused.stdout);
   assert.match(refused.stdout, /baseline_write_refused: [1-9]\d* group\(s\) are new or grew/);
   assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "an unrecorded group is never banked");
+});
+
+test("--record-shrinks measures the index, and refuses a source change the index does not hold", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  const created = cli(root, "--write-baseline");
+  assert.equal(created.status, 0, created.stdout);
+  assert.match(created.stdout, /measured the index \(this is the tree a commit carries\)/u);
+  const recorded = readFileSync(baselineFileOf(root), "utf8");
+
+  // A TEST file is outside the population, so an unstaged one refuses nothing: the refusal is about the paths the scanner
+  // reads, not about every unstaged file - a shared checkout is full of those, and refusing on them is how a command
+  // teaches its author to reach for `--no-verify`.
+  writeFileSync(join(root, "host/src/Delta.test.cs"), pipeline("Delta", "Execute"), "utf8");
+  const unaffected = cli(root, "--record-shrinks");
+  assert.equal(unaffected.status, 0, unaffected.stdout);
+  assert.doesNotMatch(unaffected.stdout, /baseline_would_record_uncommitted_measurements/u);
+
+  // A SOURCE file is inside it: the record would describe bytes no commit carries, and the refusal names it.
+  writeFileSync(join(root, "host/src/Delta.cs"), pipeline("Delta", "Execute"), "utf8");
+  const refused = cli(root, "--record-shrinks");
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stdout, /baseline_would_record_uncommitted_measurements:host\/src\/Delta\.cs/u);
+  assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "a refused recording writes nothing");
+
+  // Staged, the same bytes ARE measured - and the fourth copy is then the growth it is, refused by its own name.
+  git(root, ["add", "host/src/Delta.cs"]);
+  const grown = cli(root, "--write-baseline");
+  assert.equal(grown.status, 1, grown.stdout);
+  assert.match(grown.stdout, /baseline_write_refused: 1 group\(s\) are new or grew/u);
+  assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "and the growth is never banked either");
+});
+
+test("the CLI's --record-shrinks lowers what the index holds, and writes the record the author stages", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  assert.equal(cli(root, "--write-baseline").status, 0);
+  assert.deepEqual(
+    readBaseline({ root }).groups.map((entry) => entry.sites.length),
+    [3],
+  );
+
+  // One copy removed from BOTH trees: the index holds the two sites a commit would carry, so the entry has no group left.
+  rmSync(join(root, "host/src/Charlie.cs"));
+  git(root, ["rm", "-q", "--cached", "host/src/Charlie.cs"]);
+  const lowered = cli(root, "--record-shrinks");
+  assert.equal(lowered.status, 0, lowered.stdout);
+  assert.match(lowered.stdout, /shrinks recorded: 1 · removed 1 · nothing added/u);
+  assert.deepEqual(readBaseline({ root }).groups, [], "the record the author stages is the one the index justifies");
+  const green = cli(root);
+  assert.equal(green.status, 0, green.stdout);
 });
 
 test("the debt site count moves by the copies that moved, which is the unit it claims to be", () => {
@@ -1210,7 +1262,7 @@ test("a declared group passes at its declared size, stays in the duplication cen
   );
   assert.match(
     declaredLine(groups[0], declarationOf(groups[0].hash, 3)),
-    /^ {2}declared:[0-9a-f]{12}: 3 sites at 50 tokens · a lane that owns the partial · the copies share an admission preamble that lane folds :: function replay\(receipt\) \{$/,
+    /^ {2}declared:[0-9a-f]{12}: 3 sites at 50 tokens, at its declared 3 sites · a lane that owns the partial · the copies share an admission preamble that lane folds :: function replay\(receipt\) \{$/,
   );
 });
 
@@ -1227,6 +1279,11 @@ test("a declared group that gained a site is red: a declaration never buys the c
     reading.findings[0].detail,
     /^clone_group_grew:[0-9a-f]{12}: now 3 sites at 50 tokens, tools\/duplicate-code-declarations\.json declared 2 sites \(a lane that owns the partial\)/,
   );
+  assert.match(
+    declaredLine(groups[0], declarationOf(groups[0].hash, 2)),
+    /^ {2}declared:[0-9a-f]{12}: 3 sites at 50 tokens, GREW from the declared 2 sites, so the copies it did not buy are a finding · /,
+    "a row printed for a group this run fails must say it GREW, or the row reads as an accepted declaration",
+  );
 });
 
 test("a declared group that lost a site, or left the population, is a stale declaration the reader must delete", () => {
@@ -1239,6 +1296,7 @@ test("a declared group that lost a site, or left the population, is a stale decl
   assert.equal(shrank.findings[0].code, "stale_clone_declaration");
   assert.match(shrank.findings[0].detail, /declares 4 sites and the tree has 3/);
   assert.equal(shrank.staleDeclarations, 1);
+  assert.match(declaredLine(groups[0], declarationOf(groups[0].hash, 4)), /SHRANK from the declared 4 sites/u);
   const gone = evaluateGroups({
     groups: [],
     baseline: { groups: [] },
@@ -1309,7 +1367,10 @@ test("a declared group turns the CLI green with its owner printed, and the entry
   const green = cli(root);
   assert.equal(green.status, 0, green.stdout);
   assert.match(green.stdout, /declared 1 · new 0 · grown 0/u);
-  assert.match(green.stdout, new RegExp(` {2}declared:${hash}: 3 sites at \\d+ tokens · another lane · `, "u"));
+  assert.match(
+    green.stdout,
+    new RegExp(` {2}declared:${hash}: 3 sites at \\d+ tokens, at its declared 3 sites · another lane · `, "u"),
+  );
   assert.match(green.stdout, /"declared":1/u);
 
   writeFileSync(join(root, "host/src/Delta.cs"), copies(["Delta"])["host/src/Delta.cs"], "utf8");
@@ -1317,4 +1378,8 @@ test("a declared group turns the CLI green with its owner printed, and the entry
   const grew = cli(root);
   assert.equal(grew.status, 1, grew.stdout);
   assert.match(grew.stdout, new RegExp(`clone_group_grew:${hash}: now 4 sites`, "u"));
+  assert.match(
+    grew.stdout,
+    new RegExp(` {2}declared:${hash}: 4 sites at \\d+ tokens, GREW from the declared 3 sites`, "u"),
+  );
 });

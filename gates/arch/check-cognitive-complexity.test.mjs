@@ -6,6 +6,10 @@
  * from SonarSource's published S3776 rules and written next to the source that produces them, which is the point:
  * a change in the walker has to disagree with arithmetic written by hand.
  *
+ * EVERY ROOT WITH A RECORDING IN IT IS A GIT REPOSITORY, and its measured files are staged as they are written, because
+ * `--update` records the index - the bytes a commit carries - rather than the directory. A case that wants the two trees
+ * to differ writes and does not stage, which is what the `--update` refusals below are about.
+ *
  * red-proof: inject  a third `if` nested two levels deep into a fixture method -> `function_over_bound` naming
  *   `cs:Fixture.Type.Run(int)` with the value the hand-computed nesting predicts (this file)
  * red-proof: inject  a second partial file declaring the same class -> `class_complexity_over_bound:
@@ -14,10 +18,15 @@
  *   (this file)
  * red-proof: inject  a size record whose `parts`/`methods` predate the tree -> `class_size_record_stale` naming both
  *   disagreeing fields, while 30 more lines on the same shape stays `class_size_grew` (this file)
+ * red-proof: inject  a source file whose worktree bytes are not the index's -> `--update` prints
+ *   `baseline_would_record_uncommitted_measurements:<file>`, exits 1 and writes no record; staging the same bytes records
+ *   them (this file, and the commit that stages what it wrote in tools/scripts/pre-commit.test.mjs)
+ * red-proof: inject  a root that is not a git work tree -> `complexity blocked: git_index_unreadable:<root>`, exit 2
+ *   (this file)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -462,16 +471,38 @@ test("ratchet: a recorded function that grows into Biome's ceiling is red, and i
 // ----------------------------------------------------------------------------------------------------------
 
 /** A throwaway root with the two producers' own inputs; the caller adds what each case is about. */
-function fixtureRoot() {
+function fixtureRoot({ index = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), "gb-cognitive-"));
   mkdirSync(join(root, "host", "src"), { recursive: true });
   mkdirSync(join(root, "integrations", "stardew"), { recursive: true });
+  // `--update` records the INDEX, so a fixture that records anything has to have one - and a fixture without one is the
+  // case that proves the recording refuses rather than measuring whatever is on disk.
+  if (index) git(root, ["init", "-q"]);
   return root;
 }
 
-function writeBiomeConfig(root, maxAllowedComplexity = 1) {
-  writeFileSync(
-    join(root, "biome.json"),
+/** `git` in a fixture tree, failing the case rather than the gate when the fixture itself is wrong. */
+function git(root, args) {
+  const result = spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });
+  assert.equal(result.status, 0, `git ${args.join(" ")} in ${root} failed:\n${result.stdout}${result.stderr}`);
+  return String(result.stdout ?? "");
+}
+
+/**
+ * Write one fixture file AND stage it, because that is the state a recording measures. A case about the two trees
+ * differing writes with `stage: false` - or with `writeFileSync` directly - which is exactly the difference it is about.
+ */
+function write(root, relative, content, { stage = true } = {}) {
+  const target = join(root, relative);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, content);
+  if (stage) git(root, ["add", "--", relative]);
+}
+
+function writeBiomeConfig(root, maxAllowedComplexity = 1, { stage = true } = {}) {
+  write(
+    root,
+    "biome.json",
     `${JSON.stringify(
       {
         files: { includes: ["host/src/**"] },
@@ -485,18 +516,20 @@ function writeBiomeConfig(root, maxAllowedComplexity = 1) {
       null,
       2,
     )}\n`,
+    { stage },
   );
 }
 
 /** One TypeScript function with `branches` sequential `if`s, so its complexity is `branches`. */
-function writeTypeScriptSource(root, branches) {
+function typeScriptSource(branches) {
   const body = Array.from({ length: branches }, (_, index) => `  if (value > ${index}) {\n    value -= 1;\n  }`).join(
     "\n",
   );
-  writeFileSync(
-    join(root, "host", "src", "fixture.ts"),
-    `export function run(value: number): number {\n${body}\n  return value;\n}\n`,
-  );
+  return `export function run(value: number): number {\n${body}\n  return value;\n}\n`;
+}
+
+function writeTypeScriptSource(root, branches) {
+  write(root, "host/src/fixture.ts", typeScriptSource(branches));
 }
 
 /**
@@ -507,8 +540,9 @@ function writeTypeScriptSource(root, branches) {
 function writeAnonymousLambdaSource(root, branches, padLines = 0) {
   const pad = Array.from({ length: padLines }, (_, index) => `// padding ${index}`).join("\n");
   const body = Array.from({ length: branches }, (_, index) => `    if (input > ${index}) { total -= 1; }`).join("\n");
-  writeFileSync(
-    join(root, "host", "src", "fixture.ts"),
+  write(
+    root,
+    "host/src/fixture.ts",
     `${pad}${padLines === 0 ? "" : "\n"}export function run(value: number): number {\n` +
       `  return [value].map((input) => {\n    let total = input;\n${body}\n    return total;\n  })[0];\n}\n`,
   );
@@ -548,7 +582,7 @@ test("cli: a missing biome.json is named, because the number has one owner", () 
   const root = fixtureRoot();
   try {
     writeTypeScriptSource(root, 2);
-    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
     const result = run(root);
     assert.equal(result.status, 2);
     assert.match(result.stderr, /ts_biome_config_missing:biome\.json/u);
@@ -562,7 +596,7 @@ test("cli: without a baseline an over-bound function is red, and --update record
   try {
     writeBiomeConfig(root, 1);
     writeTypeScriptSource(root, 2);
-    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
     const red = run(root);
     assert.equal(red.status, 1);
     assert.match(red.stderr, /function_over_bound: ts:host\/src\/fixture\.ts#run/u);
@@ -591,8 +625,8 @@ test("cli: the record says it is debt and names the worst member of each produce
   try {
     writeBiomeConfig(root, 1);
     writeTypeScriptSource(root, 12);
-    writeFileSync(join(root, "integrations", "stardew", "Deep.cs"), csharpPartial("Deep", 1, 31));
-    writeFileSync(join(root, "integrations", "stardew", "Wide.cs"), csharpPartial("Wide", 30, 8));
+    write(root, "integrations/stardew/Deep.cs", csharpPartial("Deep", 1, 31));
+    write(root, "integrations/stardew/Wide.cs", csharpPartial("Wide", 30, 8));
     assert.equal(run(root, ["--update"]).status, 0);
     const baseline = JSON.parse(readFileSync(join(root, "tools", "cognitive-complexity-baseline.json"), "utf8"));
     // The worst is derived from the entries the record itself holds, never from a second hand-written copy of them.
@@ -617,7 +651,7 @@ test("cli: a recorded function that grows is red, and one that disappears leaves
   try {
     writeBiomeConfig(root, 1);
     writeTypeScriptSource(root, 2);
-    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
     assert.equal(run(root, ["--update"]).status, 0);
     writeTypeScriptSource(root, 5);
     const grown = run(root);
@@ -639,8 +673,8 @@ test("cli: the class ceiling adds up the partials, not the files", () => {
     writeTypeScriptSource(root, 0);
     // 6 methods of complexity 20 per partial: no member reaches the function bound of 30, and neither part reaches
     // the class bound of 200 on its own (6 x 20 = 120), while the class sums 240.
-    writeFileSync(join(root, "integrations", "stardew", "Against.cs"), csharpPartial("Alpha", 6, 20));
-    writeFileSync(join(root, "integrations", "stardew", "For.cs"), csharpPartial("Beta", 6, 20));
+    write(root, "integrations/stardew/Against.cs", csharpPartial("Alpha", 6, 20));
+    write(root, "integrations/stardew/For.cs", csharpPartial("Beta", 6, 20));
     const result = run(root);
     assert.match(result.stdout, /classes examined 1 · merged from partials 2 · over the class bound 200: 1/u);
     assert.match(result.stdout, /worst Fixture\.Big @ integrations\/stardew\/Against\.cs:3 parts 2 = 240/u);
@@ -672,10 +706,7 @@ test("cli: a class over the line ceiling is red and recorded", () => {
     writeBiomeConfig(root);
     writeTypeScriptSource(root, 0);
     const padding = Array.from({ length: CLASS_LINE_CEILING }, (_, index) => `    // line ${index}`).join("\n");
-    writeFileSync(
-      join(root, "integrations", "stardew", "Long.cs"),
-      `namespace Fixture\n{\n  public class Long\n  {\n${padding}\n  }\n}\n`,
-    );
+    write(root, "integrations/stardew/Long.cs", `namespace Fixture\n{\n  public class Long\n  {\n${padding}\n  }\n}\n`);
     const result = run(root);
     assert.match(
       result.stderr,
@@ -692,8 +723,9 @@ test("cli: a class that changed shape is a stale size record, while one that onl
   const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
   const padding = (count) => Array.from({ length: count }, (_, index) => `    // line ${index}`).join("\n");
   const writeLong = (lines) =>
-    writeFileSync(
-      join(root, "integrations", "stardew", "Long.cs"),
+    write(
+      root,
+      "integrations/stardew/Long.cs",
       `namespace Fixture\n{\n  public class Long\n  {\n${padding(lines)}\n  }\n}\n`,
     );
   try {
@@ -720,8 +752,9 @@ test("cli: a class that changed shape is a stale size record, while one that onl
     // exists in that form. The finding is `class_size_record_stale` naming both disagreeing fields, and it is
     // still a failure - stale is not a way to pass - with `--update` as the remedy rather than a smaller class.
     assert.equal(run(root, ["--update"]).status, 0);
-    writeFileSync(
-      join(root, "integrations", "stardew", "Long.Second.cs"),
+    write(
+      root,
+      "integrations/stardew/Long.Second.cs",
       "namespace Fixture\n{\n  public partial class Long\n  {\n    public void Alpha(int a)\n    {\n      if (a > 0) { a -= 1; }\n    }\n  }\n}\n",
     );
     const stale = run(root);
@@ -748,7 +781,7 @@ test("cli: biome's ceiling is printed as a floor in the reading line, the findin
     writeBiomeConfig(root, 1);
     // 300 sequential `if`s: biome's score is a byte, so it reports 255 for this and for any larger function.
     writeTypeScriptSource(root, BIOME_COMPLEXITY_SATURATION + 45);
-    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
     const red = run(root);
     assert.equal(red.status, 1);
     assert.match(red.stdout, /saturating 1 of 1 \(>=255 \(biome saturates at 255\)\)/u);
@@ -799,7 +832,7 @@ test("cli: an anonymous member's identity is where it is, not which line it is o
   try {
     writeBiomeConfig(root, 1);
     writeAnonymousLambdaSource(root, 2);
-    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
     const red = run(root);
     assert.equal(red.status, 1);
     // Biome scores a lambda nested in a call at nesting 1, so each `if` costs 2 there and two of them read 4. The
@@ -845,7 +878,7 @@ test("cli: --update keeps the reason recorded for an entry", () => {
   try {
     writeBiomeConfig(root, 1);
     writeTypeScriptSource(root, 2);
-    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
     assert.equal(run(root, ["--update"]).status, 0);
     const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
     baseline.members[0].reason = "bought by a correctness fix in fixture commit";
@@ -872,8 +905,9 @@ test("cli: --update keeps a reason on the row it explains, not on the same id in
       { length: 11 },
       (_, index) => `    public void Run${index}(int a)\n    {\n${csharpMember(20)}\n    }`,
     ).join("\n");
-    writeFileSync(
-      join(root, "integrations", "stardew", "Big.cs"),
+    write(
+      root,
+      "integrations/stardew/Big.cs",
       `namespace Fixture\n{\n  public class Big\n  {\n${padding}\n${methods}\n  }\n}\n`,
     );
     assert.equal(run(root, ["--update"]).status, 0);
@@ -900,6 +934,96 @@ test("cli: --update keeps a reason on the row it explains, not on the same id in
       [undefined],
       "a line-shaped reason is not a class one",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ----------------------------------------------------------------------------------------------------------
+// The recording tree: the index, which is what a commit carries
+// ----------------------------------------------------------------------------------------------------------
+
+test("cli: --update records the index, so an unstaged source edit is refused instead of measured", () => {
+  const root = fixtureRoot();
+  const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
+  try {
+    writeBiomeConfig(root, 1);
+    writeTypeScriptSource(root, 2);
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP);
+    // The worktree moves to five branches and is NOT staged: the index still holds the two a commit would carry.
+    writeFileSync(join(root, "host", "src", "fixture.ts"), typeScriptSource(5), "utf8");
+
+    const refused = run(root, ["--update"]);
+    assert.equal(refused.status, 1, "a record of bytes no commit carries is refused, not written");
+    assert.match(refused.stderr, /baseline_would_record_uncommitted_measurements:host\/src\/fixture\.ts/u);
+    assert.match(refused.stderr, /measured on the index/u, "the refusal says which tree the number would describe");
+    assert.equal(existsSync(baselinePath), false, "a refused recording writes no record at all");
+
+    // The same bytes staged: the same command records them - and stages them WITH the record, which is the move the
+    // pre-commit test proves the hook accepts.
+    git(root, ["add", "--", "host/src/fixture.ts"]);
+    assert.equal(run(root, ["--update"]).status, 0);
+    assert.deepEqual(
+      JSON.parse(readFileSync(baselinePath, "utf8")).members.map((entry) => [entry.id, entry.value]),
+      [["ts:host/src/fixture.ts#run", 5]],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: --update refuses a foreign uncommitted .cs that touches a recorded class, and names it", () => {
+  const root = fixtureRoot();
+  const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
+  try {
+    writeBiomeConfig(root);
+    writeTypeScriptSource(root, 0);
+    // One class in two partials, each over the class bound on its own only when summed: 12 x 20 = 240.
+    write(root, "integrations/stardew/Against.cs", csharpPartial("Alpha", 6, 20));
+    write(root, "integrations/stardew/For.cs", csharpPartial("Beta", 6, 20));
+    assert.equal(run(root, ["--update"]).status, 0);
+    const recorded = readFileSync(baselinePath, "utf8");
+    assert.deepEqual(
+      JSON.parse(recorded).classes.map((entry) => [entry.id, entry.parts, entry.value]),
+      [["cs:Fixture.Big", 2, 240]],
+    );
+
+    // Another lane's half-finished edit to the SAME class, in a partial this record measures, in the worktree only.
+    writeFileSync(join(root, "integrations", "stardew", "For.cs"), csharpPartial("Beta", 7, 20), "utf8");
+    const refused = run(root, ["--update"]);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /baseline_would_record_uncommitted_measurements:integrations\/stardew\/For\.cs/u);
+    assert.equal(
+      readFileSync(baselinePath, "utf8"),
+      recorded,
+      "a refused recording leaves the record byte-identical - it is somebody else's number to record",
+    );
+
+    // Staging those bytes makes the same command record them, at the value the index now holds.
+    git(root, ["add", "--", "integrations/stardew/For.cs"]);
+    assert.equal(run(root, ["--update"]).status, 0);
+    assert.deepEqual(
+      JSON.parse(readFileSync(baselinePath, "utf8")).classes.map((entry) => [entry.parts, entry.value]),
+      [[2, 260]],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: a root with no index is blocked, never recorded from the directory", () => {
+  const root = fixtureRoot({ index: false });
+  try {
+    writeBiomeConfig(root, 1, { stage: false });
+    write(root, "host/src/fixture.ts", typeScriptSource(2), { stage: false });
+    write(root, "integrations/stardew/Empty.cs", EMPTY_CSHARP, { stage: false });
+
+    // The VERDICT reads the directory: "is my tree red?" is a question about the worktree.
+    assert.equal(run(root).status, 1);
+
+    const blocked = run(root, ["--update"]);
+    assert.equal(blocked.status, 2, "a recording with no index cannot answer which bytes a commit carries");
+    assert.match(blocked.stderr, /complexity blocked: git_index_unreadable:/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

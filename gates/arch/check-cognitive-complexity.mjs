@@ -95,6 +95,24 @@
  * carries its specifier. `file` and `line` travel in the baseline for the reader and are refreshed by
  * `--update`, which is its own commit.
  *
+ * WHAT `--update` MEASURES, AND WHY IT IS THE INDEX. Measured 2026-11-25, as a defect rather than a preference: an
+ * author ran `--update` in a checkout carrying 150 files from other lanes, the gate measured the WORKTREE and recorded
+ * what it found there, and the pre-commit hook - which measures the INDEX, because the index is what the commit carries -
+ * refused the commit with `complexity_baseline_stale_for_this_commit:…BodyProgramAuthorityTests.cs:…`. No re-record could
+ * satisfy it, because the two commands had chosen two trees, and the author's next move was `--no-verify`. So `--update`
+ * now measures the index through `tools/lib/index-tree.mjs` - the same module the hook checks out its tree with, so the
+ * two cannot choose differently again - and it refuses loudly (`baseline_would_record_uncommitted_measurements:<file>`,
+ * exit 1) when a path this gate measures holds worktree bytes the index does not: an author who records before staging
+ * has measured the index and meant their directory, and the numbers would describe code no commit holds. The record is
+ * still WRITTEN INTO THE WORKTREE (`git add` it with the change), because that is the file the author reviews and stages;
+ * what changes is which tree its numbers were read from. A root with no index cannot be recorded at all: it is `blocked`
+ * with `git_index_unreadable:<root>` rather than silently measured from disk, which is the reading this file had.
+ * The cost, measured here on 4,300 tracked files: 1.8-2.9 s to check the index out, 0.17 s to compare the worktree with
+ * it, 0.03 s to enumerate both populations and 0.30-0.52 s to remove the tree - so `--update` goes from one 4.4-5.9 s
+ * measurement to that measurement plus 2.4-3.6 s. It is ONE TREE PER INVOCATION: nothing here pays the checkout twice,
+ * because the recording is the same reading the printing line reports, and the `git init`/`git add -N` half (1.00-1.10 s)
+ * is paid only by the gate that queries git inside its tree, which this one does not.
+ *
  * THE FUNCTION HALF HAS NO SUCH AMBIGUITY, said out loud rather than assumed: a member's record is ONE scalar taken
  * from one measurement of one body, so `measured > recorded` for the same identity can only mean that member gained
  * branches - there is no second field the record and the tree could have got from different commits. Its other fact
@@ -136,7 +154,7 @@
  *
  * USAGE:
  *   node tools/check-cognitive-complexity.mjs              # the verdict; exit 1 on any finding
- *   node tools/check-cognitive-complexity.mjs --update     # re-record the baseline (its own commit)
+ *   node tools/check-cognitive-complexity.mjs --update     # re-record the baseline from the INDEX (its own commit)
  *   node tools/check-cognitive-complexity.mjs --root <dir>  # the gate's own fixture tree
  *
  * red-proof: inject  a fourth `if` inside a `for` inside a method -> `function_over_bound:cs:Fixture.Type.Run(int)`,
@@ -149,6 +167,12 @@
  *   (tools/check-cognitive-complexity.test.mjs)
  * red-proof: inject  a baseline entry for a member the tree no longer has -> `stale_complexity_baseline:<member>`
  *   (tools/check-cognitive-complexity.test.mjs)
+ * red-proof: inject  a measured `.cs` edited in the worktree and left unstaged -> `--update` prints
+ *   `baseline_would_record_uncommitted_measurements:integrations/stardew/<file>.cs`, exits 1 and leaves the record
+ *   byte-identical; staging the same bytes makes the same command record them, and the hook then accepts a commit that
+ *   stages what it wrote (tools/scripts/pre-commit.test.mjs)
+ * red-proof: inject  a root that is not a git work tree -> `complexity blocked: git_index_unreadable:<root>`, exit 2,
+ *   never a recording measured from the directory (gates/arch/check-cognitive-complexity.test.mjs)
  * red-proof: inject  a class-size record whose `parts`/`methods` predate the tree (recorded 56 partials against its
  *   58, or 267 methods against its 335) -> `class_size_record_stale` naming the disagreeing fields, never
  *   `class_size_grew`; equal structure and 30 more lines is `class_size_grew`
@@ -171,6 +195,7 @@ import { fileURLToPath } from "node:url";
 import { Language, Parser } from "web-tree-sitter";
 
 import { isProductionSource, listSources, sourcePath } from "../../tools/lib/host-production-sources.mjs";
+import { materializeIndexTree, refuseUncommittedMeasurements } from "../../tools/lib/index-tree.mjs";
 import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
 import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
@@ -1094,6 +1119,9 @@ function listCSharpSources(root) {
  * The whole reading of one tree: every ts member Biome reports, every cs member and type this gate parses, and the
  * bounds they are judged against. Exported because the pre-commit hook judges the same entries against the same
  * baselines and must not carry a second copy of how a member is measured.
+ *
+ * It measures whatever tree it is handed, which is the property `--update` and the hook rely on: both check the index
+ * out into a directory (`tools/lib/index-tree.mjs`) and hand that directory here.
  */
 export async function measure(root) {
   const typesBound = readTypeScriptBound(root);
@@ -1213,6 +1241,57 @@ function readRevision(root) {
   return String(result.stdout ?? "").trim() || "unknown";
 }
 
+/** A reading that could not be taken at all: the reason, the report line, and exit 2 - never a green over nothing. */
+function blocked(detail) {
+  console.error(`complexity blocked: ${detail}`);
+  report("blocked", 0, [{ id: "population", status: "blocked", detail }], {});
+  return 2;
+}
+
+/**
+ * Every path `measure` reads from one tree: the two populations it walks, plus the file that owns the ts bound.
+ *
+ * It is derived by calling the same two functions the measurement calls, so a population that widens (a new extension,
+ * a new tree) widens the refusal with it and no list here can drift from what is measured.
+ */
+function measuredPaths(root) {
+  return [...listCSharpSources(root), ...typeScriptPopulation(root), "biome.json"];
+}
+
+/**
+ * `--update`: the record is measured from the INDEX, refused when the worktree holds measured bytes the index does not,
+ * and written into the worktree path so it is staged and reviewed as the commit that carries the change.
+ *
+ * WHY THE TWO TREES ARE BOTH ENUMERATED. The refusal has to name a path the index holds and the worktree deleted just as
+ * much as one the worktree added: the first would be recorded from the index and never committed in that shape, the
+ * second is somebody's work in flight. Taking the union of the two populations is the only enumeration that covers both
+ * directions without asking the record to know which way a path moved.
+ */
+async function update(root) {
+  const index = materializeIndexTree({ root });
+  if (index.error !== undefined) return blocked(index.error);
+  try {
+    const measured = new Set([...measuredPaths(root), ...measuredPaths(index.root)]);
+    const refusal = refuseUncommittedMeasurements({ root, measures: (path) => measured.has(path) });
+    if (refusal.error !== undefined) return blocked(refusal.error);
+    if (refusal.refused) return 1;
+    const reading = await measure(index.root);
+    if (reading.error !== undefined) return blocked(reading.error);
+    printReading(describe(reading.members, reading.types, reading.bounds), reading.bounds, reading.tsFilesRead);
+    for (const entry of reading.drift) {
+      console.error(`complexity_unmeasured_member:${entry.kind} @ ${entry.file}:${entry.line}`);
+    }
+    const baseline = recordBaseline(root, reading);
+    console.log(
+      `complexity baseline recorded: members=${baseline.members.length} classes=${baseline.classes.length} ` +
+        `sizes=${baseline.sizes.length} revision=${baseline.revision} (measured the index, which is what a commit carries)`,
+    );
+    return reading.drift.length === 0 ? 0 : 1;
+  } finally {
+    index.dispose();
+  }
+}
+
 function report(status, examined, checks, extra) {
   const line = {
     gate: "cognitive-complexity",
@@ -1226,24 +1305,14 @@ function report(status, examined, checks, extra) {
 
 async function main(argv) {
   const root = resolve(valueOf(argv, "--root") ?? REPOSITORY_ROOT);
+  if (argv.includes("--update")) return await update(root);
   const measured = await measure(root);
-  if (measured.error !== undefined) {
-    console.error(`complexity blocked: ${measured.error}`);
-    report("blocked", 0, [{ id: "population", status: "blocked", detail: measured.error }], {});
-    return 2;
-  }
+  if (measured.error !== undefined) return blocked(measured.error);
   printReading(describe(measured.members, measured.types, measured.bounds), measured.bounds, measured.tsFilesRead);
   if (measured.drift.length > 0) {
     for (const entry of measured.drift) {
       console.error(`complexity_unmeasured_member:${entry.kind} @ ${entry.file}:${entry.line}`);
     }
-  }
-  if (argv.includes("--update")) {
-    const baseline = recordBaseline(root, measured);
-    console.log(
-      `complexity baseline recorded: members=${baseline.members.length} classes=${baseline.classes.length} sizes=${baseline.sizes.length} revision=${baseline.revision}`,
-    );
-    return measured.drift.length === 0 ? 0 : 1;
   }
   const baselinePath = join(root, BASELINE_PATH);
   const baseline = existsSync(baselinePath)

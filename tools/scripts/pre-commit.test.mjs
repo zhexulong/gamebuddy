@@ -30,7 +30,7 @@
  *                     `rewriteFormattedBlobs` to see it)
  * red-proof: inject  a staged class growth with the record left where it was -> `✖ a staged growth that leaves its
  *                     re-record behind is refused by name`, refused with
- *                     `complexity_baseline_stale_for_this_commit:integrations/stardew/Fixture.cs:cs:Fixture:`
+ *                     `complexity_baseline_stale_for_this_commit:<file>:<class or member>:`
  *                     `<recorded>-><current>`; drop the `checkRatchetRecords` step from the hook and it goes green
  * red-proof: inject  a staged record that is not readable JSON -> `✖ a record that cannot be read refuses the commit
  *                     with the reason`, `ratchet_record_unreadable_for_this_commit:...`
@@ -84,6 +84,7 @@ const COPIED_FILES = [
   "tools/lib/assert-non-vacuous.mjs",
   "tools/lib/gate-population.mjs",
   "tools/lib/host-production-sources.mjs",
+  "tools/lib/index-tree.mjs",
   "tools/lib/indexed-sources.mjs",
   "tools/lib/javascript-ast.mjs",
   "tools/lib/repository-root.mjs",
@@ -290,7 +291,6 @@ const rerecord = (root) => {
   });
   assert.equal(update.status, 0, `the gate's --update failed:\n${combined(update)}`);
 };
-
 test("a commit carries the staged bytes when the worktree holds a foreign hunk", () => {
   const { root, write, git, ok } = fixture();
   write(SCENARIO, "export const base = { a: 1 };\nexport const lane = { b: 2 };\n");
@@ -574,6 +574,52 @@ testAcrossCommits("a staged growth that leaves its re-record behind is refused b
     ok(["show", `HEAD:${COMPLEXITY_RECORD}`]),
     readFileSync(join(root, COMPLEXITY_RECORD), "utf8"),
     "the commit carries the record the gate wrote, byte for byte",
+  );
+});
+
+/**
+ * THE RECORDING TREE, END TO END: `--update` records the INDEX, which is what the commit carries and what the hook
+ * measures. Two things follow, and both are asserted here rather than trusted: a measured path whose worktree bytes are
+ * not the index's makes the recording REFUSE (naming it) instead of recording numbers for code no commit holds, and the
+ * commit that stages the record it wrote passes the hook - the pair that had become impossible, where `--update`
+ * measured the directory and the hook measured the index, so no re-record could ever satisfy it.
+ */
+testAcrossCommits("--update records the index, so it refuses unstaged bytes and the staged pair commits", () => {
+  const { root, write, git, ok } = fixture();
+
+  // The class is staged as it crosses its ceiling; the worktree then moves on again, and that second size is not staged.
+  write(MOD_CLASS, modClass(1002));
+  ok(["add", "--", MOD_CLASS]);
+  write(MOD_CLASS, modClass(1006));
+
+  const recorded = readFileSync(join(root, COMPLEXITY_RECORD), "utf8");
+  const refused = spawnSync("node", ["gates/arch/check-cognitive-complexity.mjs", "--update"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+  });
+  assert.equal(refused.status, 1, `a recording of bytes no commit carries must be refused:\n${combined(refused)}`);
+  assert.match(
+    combined(refused),
+    /baseline_would_record_uncommitted_measurements:integrations\/stardew\/Fixture\.cs/,
+    "the refusal names the measured file whose worktree bytes the index does not hold",
+  );
+  assert.equal(
+    readFileSync(join(root, COMPLEXITY_RECORD), "utf8"),
+    recorded,
+    "a refused recording leaves the record byte-identical",
+  );
+
+  // Stage what the commit is about, record again, stage the record: the hook accepts the pair.
+  ok(["add", "--", MOD_CLASS]);
+  rerecord(root);
+  ok(["add", "--", COMPLEXITY_RECORD]);
+  const committed = git(["commit", "-m", "the class grows, recorded from the index"]);
+  assert.equal(committed.status, 0, combined(committed));
+  assert.equal(
+    ok(["show", `HEAD:${COMPLEXITY_RECORD}`]),
+    readFileSync(join(root, COMPLEXITY_RECORD), "utf8"),
+    "the commit carries the record the recording wrote, byte for byte",
   );
 });
 
