@@ -120,7 +120,27 @@ public sealed record LocalExecutionReceipt(
     /// step that has not settled (`accepted`, `running`) names none: it has consumed nothing yet.
     /// </para>
     /// </summary>
-    string? Chore = null
+    string? Chore = null,
+    /// <summary>
+    /// The addresses this terminal proved the world reading no longer describes - the row ids it took out, or the tiles
+    /// whose state it changed - or null when it proved neither.
+    ///
+    /// <para>
+    /// The SAME fact `evidence.evicted` publishes, and this field is where it is minted: `RememberTerminal` derives it from
+    /// two declarations rather than from any action's own prose (an address the request named, plus the reason code's
+    /// `_gone` word or the action's own `Chore` claim that its success consumes that row), the receipt carries it, and the
+    /// projection spells it into the wire evidence. A reader of the delivery
+    /// (`host/src/fact-brief.ts#provedGoneTargets`) subtracts these from the row list it already holds, which is why the
+    /// fact may not live only in the `;`-separated detail: the four keys it used to scan (`target=`, `expected=`,
+    /// `removed=`, `changed=`) made a formatting change look like "nothing was removed".
+    /// </para>
+    /// <para>
+    /// A terminal of any outcome may carry it - a rejection answered `_gone` is a proof in the same sense a success that
+    /// consumed the row is - and each entry is one address in the union
+    /// <see cref="Core.BodyProgramValidation.IsEvictedAddress"/> admits.
+    /// </para>
+    /// </summary>
+    IReadOnlyList<string>? Evicted = null
 );
 
 public sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -228,13 +248,12 @@ public sealed record FarmhandActionDescriptorWire(
     // snapshot publishes. Published so a refusal can name the family to re-read instead of leaving the caller to
     // guess at a vocabulary it cannot see.
     string? TargetFamily = null,
-    // What the action is CALLED and the sentence a model reads about it, from the Mod's one declaration
-    // (`FarmhandActionPresentation`). Absent on the actions that publish none, because their tool text is still written
-    // in the Host's own mount block - and an absent member is that statement, where an empty string would be a label
-    // nobody wrote. `TargetKinds` is the same declaration's third member: the words `stardew_search_interactions` matches
-    // a caller's own query against.
+    // What the action is CALLED and the kinds of thing it acts on, from the Mod's one declaration
+    // (`FarmhandActionPresentation`). Absent on the actions that publish none, because their tool is still written in the
+    // Host's own mount block - and an absent member is that statement, where an empty string would be a label nobody
+    // wrote. `TargetKinds` is the words `stardew_search_interactions` matches a caller's own query against. The SENTENCE a
+    // model reads about either is not here: prose about the model's experience of the tool is the Host's.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? TargetKinds = null
 );
 
@@ -742,7 +761,7 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 public sealed record BridgeVillagerWhereabouts(string TargetId, string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
 /// <summary>
-/// One OTHER HUMAN PLAYER in the co-op session, standing where this observation can see them.
+/// One OTHER HUMAN PLAYER in the co-op session, standing on the same map as the actor.
 ///
 /// <para>
 /// THE COLLECTION IS <c>Game1.otherFarmers</c> and nothing else. It is the engine's dictionary of the players who are not
@@ -1368,14 +1387,15 @@ public sealed record BridgeSnapshot(
     // The OTHER HUMAN PLAYERS this observation can see - the one fact nothing in this record used to carry. Crops, weeds,
     // objects, chests, animals, villagers, buildings and ground were all published; the person standing at (33,17) facing
     // left with a watering can was on no field at all, so a co-op session read as an empty farm with a companion in it.
-    // Read from `Game1.otherFarmers` (see `BridgeOtherFarmerTarget`), window-limited like every other entity family, and
-    // NOT gated on an advertised capability: there is no action to gate it behind, and a perception fact that appears only
-    // once some action is unlocked is a fact about the action surface rather than about the world.
+    // Read from `Game1.otherFarmers` (see `BridgeOtherFarmerTarget`), bounded by the MAP rather than by the discovery
+    // radius, and NOT gated on an advertised capability: there is no action to gate it behind, and a perception fact that
+    // appears only once some action is unlocked is a fact about the action surface rather than about the world.
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
     IReadOnlyList<BridgeOtherFarmerTarget>? OtherFarmers = null,
-    // The other farmers the window left out: this family is radius-bounded like its siblings, so a farm with one human
-    // standing at the far end must not read as a farm with nobody else on it. Null when the family was not measured, an
-    // empty array's count being the measured zero.
+    // The other farmers the bound left out: everyone on ANOTHER map, plus everyone this map held past the family's row
+    // budget (`ExecutionManager.OtherFarmerLimit`). The list is not radius-bounded any more - a person across the farm is
+    // on this map and is published - so this count is the row budget and the location bound, and nothing else. Null when
+    // the family was not measured, an empty array's count being the measured zero.
     int? OtherFarmersOmitted = null);
 
 public sealed record BridgeActiveExecution(
@@ -1420,7 +1440,10 @@ public sealed record BridgeReceipt(
     string State,
     string ReasonCode,
     long Revision,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
+    // THE EVIDENCE MAP HOLDS THE RECEIPT'S OWN TYPED FIELDS, not only strings as of `evicted`: a reader that had to parse
+    // `key=val;` text out of `detail` was one space away from reading silence (see `LocalExecutionReceipt.Evicted`), and a
+    // list of addresses has no `key=val` spelling that survives a single separator. `detail` and `chore` stay strings.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, object?>? Evidence,
     BridgeExecutionOrigin Origin,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null,
@@ -2123,7 +2146,20 @@ string? PostconditionVerification = null,
 /// and same legality as <see cref="Evidence"/> (a node that proved no effect may not name a chore it did not finish),
 /// and bounded by the journal's own identifier grammar. Omitted when null.
 /// </para>
-string? Chore = null
+string? Chore = null,
+/// <summary>
+/// The addresses this node's work proved the reading no longer describes - the journal's
+/// `BodyProgramJournalNode.Evicted`, verbatim.
+///
+/// <para>
+/// A `for_each` pass unions its rows' evictions into this one list, because the settlement is the only shape a programme's
+/// proofs reach her in (`host/src/fact-brief.ts#provedGoneTargets` reads the nodes, not the folded receipts). Without it the
+/// typed address a receipt carries would stop at the receipt, every programme's row subtraction would go silent again, and
+/// `round80`'s 54 `soil_already_tilled` in eighteen minutes would come back while every receipt-level test stayed green.
+/// Each entry is an opaque row id or a tile (`BodyProgramValidation.IsEvictedAddress`), legal exactly where
+/// <see cref="Chore"/> is, omitted when null.
+/// </para>
+IReadOnlyList<string>? Evicted = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

@@ -1134,8 +1134,8 @@ internal sealed class FarmhandTargetDiscovery
     internal const string OtherFarmerHeldNone = "none";
 
     /// <summary>
-    /// The other HUMAN PLAYERS standing where this observation can see them, nearest first, bounded to the same window
-    /// every entity family uses (<see cref="ExecutionManager.TargetDiscoveryRadius"/>).
+    /// The other HUMAN PLAYERS standing on this actor's map, nearest first, bounded by the MAP and by the family's own
+    /// row budget - never by <see cref="ExecutionManager.TargetDiscoveryRadius"/>.
     ///
     /// <para>
     /// ONE ROW PER FARMER IN <c>Game1.otherFarmers</c>, which is the engine's dictionary of the players who are not the
@@ -1145,15 +1145,30 @@ internal sealed class FarmhandTargetDiscovery
     /// (Game1.cs:9471-9475) - because her body already is the snapshot's tile, tool, stamina and disposition.
     /// </para>
     /// <para>
-    /// THE WINDOW IS THE RADIUS AND NOT <c>IsPublishedTargetTileInRadius</c>. That predicate also demands an addressable
-    /// tile - on the map, with a passable neighbour - which is what a TARGET family needs and what this family must not
-    /// apply: no action takes a farmer as a target, so withholding a person for standing on a tile no action could be
-    /// dispatched at would hide the very fact the family exists for.
+    /// WHY THE BOUND IS THE MAP AND NOT THE ITEM RADIUS. <see cref="ExecutionManager.TargetDiscoveryRadius"/> answers "what
+    /// could I reach from here" - six tiles of crops, chests and debris - and it is the wrong question about a person. One
+    /// other player waving from across the farm is ON THIS MAP, is visible to the human watching the screen, and is
+    /// exactly whom a companion should answer; the radius published her as one <c>otherFarmersOmitted</c> instead, so a
+    /// co-op session in which the two players were twenty tiles apart read as a farm with nobody else on it. A person is
+    /// perceived at whatever distance the map shows them, so the honest answer to "who is on my map" is the map
+    /// (<c>ReferenceEquals(other.currentLocation, location)</c>, the engine's own location book) and the row budget below.
+    /// </para>
+    /// <para>
+    /// THE ROW BUDGET IS THE FAMILY'S OWN, and it is a budget rather than a filter: <see cref="ExecutionManager.OtherFarmerLimit"/>
+    /// caps the rows (the wire's declared <c>otherFarmers.maxItems</c>), the rows are ordered nearest-first BEFORE the cap
+    /// so it can only ever cost the furthest player, and <paramref name="omitted"/> states how many the map held and the
+    /// list did not - so <c>[]</c> with a count never reads as a lone farmer.
+    /// </para>
+    /// <para>
+    /// NO ADDRESSABILITY TEST EITHER: <c>IsPublishedTargetTileInRadius</c> also demands an addressable tile (on the map,
+    /// with a passable neighbour), which is what a TARGET family needs and what this family must not apply - no action
+    /// takes a farmer as a target, so withholding a person for standing on a tile no action could be dispatched at would
+    /// hide the very fact the family exists for.
     /// </para>
     /// <para>
     /// <paramref name="omitted"/> is every other farmer this observation did NOT publish - on another map, or on this one
-    /// past the window, or past the row cap - so a session whose other human is across the farm reads as one omitted
-    /// rather than as nobody. Only farmers are counted: the local actor is not a subject of this family at all.
+    /// past the row budget - so a session whose other human is somewhere else in the world reads as one omitted rather
+    /// than as nobody. Only farmers are counted: the local actor is not a subject of this family at all.
     /// </para>
     /// </summary>
     internal static IReadOnlyList<BridgeOtherFarmerTarget> DiscoverOtherFarmers(Farmer player, out int omitted)
@@ -1169,7 +1184,6 @@ internal sealed class FarmhandTargetDiscovery
             .ThenBy(other => other.UniqueMultiplayerID))
         {
             if (!ReferenceEquals(other.currentLocation, location)
-                || !ExecutionManager.IsTileWithinChebyshevRadius(player, (int)other.Tile.X, (int)other.Tile.Y, ExecutionManager.TargetDiscoveryRadius)
                 || result.Count >= ExecutionManager.OtherFarmerLimit)
             {
                 omitted += 1;

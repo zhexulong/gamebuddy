@@ -3281,13 +3281,13 @@
             "$ref": "#/$defs/otherFarmer"
           },
           "maxItems": 16,
-          "description": "The other HUMAN PLAYERS this observation can see (`Game1.otherFarmers`, the engine's dictionary of the players that are not the local one), bounded to the Mod's own discovery window like every entity family. A perception fact only: no published action takes a human player as its target, so a row carries no address."
+          "description": "The other HUMAN PLAYERS standing on this observation's own map (`Game1.otherFarmers`, the engine's dictionary of the players that are not the local one), nearest first, bounded by the MAP and by this family's row budget rather than by the discovery radius: a person waving from across the farm is on this map and is published. A perception fact only: no published action takes a human player as its target, so a row carries no address."
         },
         "otherFarmersOmitted": {
           "type": "integer",
           "minimum": 0,
           "maximum": 1000,
-          "description": "How many other farmers this observation did NOT publish - on another map, or on this one past the window - so a session whose other human is across the farm reads as one omitted rather than as nobody."
+          "description": "How many other farmers this observation did NOT publish - on another map, or on this one past the family's row budget - so a session whose other human is elsewhere reads as one omitted rather than as nobody."
         },
         "petTargets": {
           "type": "array",
