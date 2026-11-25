@@ -6,6 +6,8 @@ using System.Text.Json;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Locations;
+using StardewValley.Menus;
 using StardewValley.Objects;
 using StardewValley.Pathfinding;
 
@@ -25,6 +27,9 @@ internal enum HostPlayerScriptStepKind
 
     /// <summary>Say one line into the lobby's own chat egress.</summary>
     Say,
+
+    /// <summary>Go to bed: into the player's own house, onto the engine's bed tile, through the engine's own prompts.</summary>
+    Sleep,
 }
 
 /// <summary>
@@ -117,6 +122,11 @@ internal sealed record HostPlayerScriptDocument(IReadOnlyList<HostPlayerScriptSt
 /// <item><c>chest_take</c> becomes the container's own state: the row she reads afterwards is the chest's contents, and
 /// the step takes the same <c>Chest.GetMutex()</c> lock the product's container actions take, so the two farmers contend
 /// rather than race.</item>
+/// <item><c>sleep</c> becomes the night itself: the farmer is walked into her own house and onto the engine's bed tile
+/// (<c>FarmHouse.GetPlayerBedSpot</c>), the engine raises its own Sleep prompt, and the answer is the one spelling the
+/// cross-day lifecycle already uses (<see cref="NativeSleepPrompt.TryAccept"/>). In a shared world that declares THIS
+/// farmer ready and nothing more - the engine's <c>ReadyCheckDialog</c> crosses the day once every farmer has - so the
+/// step starts a night and never claims to have crossed one.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -130,11 +140,12 @@ internal sealed class HostPlayerScriptChannel
     /// </summary>
     private const int ReloadIntervalFrames = 15;
 
-    /// <summary>The four actions a script may name; a fifth is a different protocol, not a step this file guesses at.</summary>
+    /// <summary>The five actions a script may name; a sixth is a different protocol, not a step this file guesses at.</summary>
     private const string WalkStep = "walk_to_tile";
     private const string EmoteStep = "emote";
     private const string ChestStep = "chest_take";
     private const string SayStep = "say";
+    private const string SleepStep = "sleep";
 
     /// <summary>
     /// The walk's node budget. The cross-day bed search spends the engine settler walk's own 10000
@@ -320,7 +331,7 @@ internal sealed class HostPlayerScriptChannel
     }
 
     /// <summary>
-    /// The script's own protocol: one schema, one closed set of four actions, one position per step, and a named reason
+    /// The script's own protocol: one schema, one closed set of five actions, one position per step, and a named reason
     /// for anything else.
     ///
     /// <para>
@@ -482,6 +493,12 @@ internal sealed class HostPlayerScriptChannel
                     $"{StringOf(entry, "targetRef") ?? string.Empty}|{StringOf(entry, "expectedQualifiedItemId") ?? string.Empty}");
                 reason = string.Empty;
                 return true;
+            case SleepStep:
+                // No payload: WHICH bed is the engine's own answer (`FarmHouse.GetPlayerBedSpot`), and a step that named a
+                // tile would be a second spelling of it - one the fixture would have to keep in step with the save's rooms.
+                step = new HostPlayerScriptStep(seq, stepId, HostPlayerScriptStepKind.Sleep, string.Empty, 0, 0, false, string.Empty);
+                reason = string.Empty;
+                return true;
             default:
                 reason = $"step={stepId};action={action}";
                 return false;
@@ -518,6 +535,7 @@ internal sealed class HostPlayerScriptChannel
             HostPlayerScriptStepKind.Emote => this.PerformEmote(step),
             HostPlayerScriptStepKind.Say => this.PerformSay(step),
             HostPlayerScriptStepKind.ChestTake => this.PerformChestTake(step),
+            HostPlayerScriptStepKind.Sleep => this.PerformSleep(step),
             _ => "script_step_unavailable",
         };
         if (refusal is not null)
@@ -708,6 +726,110 @@ internal sealed class HostPlayerScriptChannel
         .Cast<int?>()
         .FirstOrDefault();
 
+    /// <summary>
+    /// Go to bed: into the player's own house, onto the engine's bed tile, and through the engine's own prompt.
+    ///
+    /// <para>
+    /// WHY A STEP AND NOT A PRE-ARMED LIFECYCLE. A co-op night crosses only when BOTH farmers are ready - <c>Sleep_Yes</c>
+    /// runs <c>startSleep</c>, which declares this farmer ready and installs the engine's <c>ReadyCheckDialog</c> - so a
+    /// Host night armed before the run has nobody to wait for but at a moment nothing chose: it either meets a player who is
+    /// nowhere near a bed or waits for a slice that is not the night it is measuring. The step is dispatched in the slice's
+    /// OWN window, so the night it starts is the night a judgement can read.
+    /// </para>
+    ///
+    /// <para>
+    /// NOBODY IS SUBSTITUTED. The bed is <c>FarmHouse.GetPlayerBedSpot()</c> - the reading the cross-day lifecycle walks to -
+    /// the walk is this channel's own native path plan, and the answer is <see cref="NativeSleepPrompt.TryAccept"/>, the one
+    /// spelling of "yes" this Mod has. Nothing here touches <c>netReady</c>, marks another farmer ready, or calls
+    /// <c>NewDay</c>: the engine's barrier owns the crossing.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT THE STEP CLAIMS, AND WHAT IT LEAVES TO THE WORLD. It settles once the night has STARTED for this body - the
+    /// answer dispatched and the engine's own consequence in place - and the record then carries the day and the hour the
+    /// answer was given. Whether the night CROSSED is not stated here: the world states that, and the run reads it from the
+    /// world's own facts rather than from this step.
+    /// </para>
+    /// </summary>
+    private string? PerformSleep(HostPlayerScriptStep step)
+    {
+        GameLocation? location = Game1.player.currentLocation;
+        if (location is null)
+            return "sleep_no_location";
+
+        // THE ANSWERED BODY WAITS FOR THE ENGINE, AND NOTHING ELSE. The prompt is gone by now, so a plan or a drivable-body
+        // wait would have nothing to act on; the night has either taken the farmer or it never will, and this step's budget
+        // is what reports the second case.
+        if (this.sleepAnswerClock is not null)
+        {
+            if (Game1.activeClickableMenu is ReadyCheckDialog || Game1.player.isInBed.Value || Game1.newDay
+                || !NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox))
+            {
+                this.Settle(step, "sleeping", this.sleepAnswerClock);
+            }
+            return null;
+        }
+
+        // THE BED PROMPT IS THIS STEP'S WORK, NOT AN OBSTACLE: `WaitForADrivableBody` answers `player_in_menu` for the very
+        // box this step exists to answer, so a standing prompt is read first.
+        if (Game1.activeClickableMenu is DialogueBox box && NativeSleepPrompt.IsStanding(box))
+        {
+            if (!NativeSleepPrompt.TryAccept(box, out bool answered, out string refusal))
+                return refusal;
+            // THE HOUR AND THE DAY ARE TAKEN HERE, BEFORE THE ANSWER RESOLVES. `Game1.NewDay` resets `timeOfDay` to 600, and
+            // in a single-player night the crossing runs inside the answer - so a record written after it would report the
+            // hour the farmer WOKE as the hour she went to bed (the mistake `bedTimeBeforeTheCrossing` exists to avoid).
+            this.sleepAnswerClock = new HostPlayerScriptClock(Game1.Date?.TotalDays ?? 0, Game1.timeOfDay);
+            this.monitor.Log(
+                $"GameBuddy HostPlayerScript answered the native sleep prompt; step={step.StepId};answered={answered};"
+                    + $"day={this.sleepAnswerClock.Day};timeOfDay={this.sleepAnswerClock.TimeOfDay}.",
+                LogLevel.Info);
+            return null;
+        }
+
+        if (this.WaitForADrivableBody() is { } waitReason)
+        {
+            this.NoteWait(waitReason);
+            return null;
+        }
+        this.lastWaitReason = null;
+
+        // INTO THE HOUSE THE SAVE SAYS THIS FARMER SLEEPS IN. A cabin derives from `FarmHouse`, so a Farmhand's own door
+        // answers here too; the warp is found by the ENGINE's answer for what stands behind it, never by a name list.
+        if (SleepAndAdvanceDayLifecycle.HomeOf(location) is not { } home)
+        {
+            Warp? door = location.warps.FirstOrDefault(candidate =>
+                !candidate.npcOnly.Value && Game1.getLocationFromName(candidate.TargetName) is FarmHouse);
+            if (door is null)
+                return $"sleep_no_route_home:{location.NameOrUniqueName}";
+            // Standing on the door tile is a wait: the engine's own warp collision is what moves a player inside.
+            if (Game1.player.TilePoint.X == door.X && Game1.player.TilePoint.Y == door.Y)
+                return null;
+            return this.ContinuePlan(location, new[] { new Vector2(door.X, door.Y) }, $"sleep_no_route_home_door:{door.X},{door.Y}");
+        }
+
+        // ONTO THE BED, OR NOWHERE: `GetPlayerBedSpot` answers the map's ENTRY tile when the room holds no bed, so a house
+        // without one is refused by name rather than walked into as if standing there could raise a prompt.
+        if (home.GetPlayerBed() is null)
+            return $"sleep_bed_missing:{home.NameOrUniqueName}";
+        Point bedSpot = home.GetPlayerBedSpot();
+        if (Game1.player.TilePoint.X == bedSpot.X && Game1.player.TilePoint.Y == bedSpot.Y)
+        {
+            // The engine raises its own Sleep question once the farmer stands on the bed tile; this frame is the wait for it.
+            return null;
+        }
+        return this.ContinuePlan(home, new[] { new Vector2(bedSpot.X, bedSpot.Y) }, $"sleep_bed_unreachable:{bedSpot.X},{bedSpot.Y}");
+    }
+
+    /// <summary>
+    /// The world's own clock at one moment: the day and the hour. Carried by a step that must state a reading it took
+    /// BEFORE the engine moved the clock, so the record says what was observed rather than what a later frame shows.
+    /// </summary>
+    private sealed record HostPlayerScriptClock(int Day, int TimeOfDay);
+
+    /// <summary>The clock read when this step's answer was given; null until then, and cleared by <see cref="Settle"/>.</summary>
+    private HostPlayerScriptClock? sleepAnswerClock;
+
     /// <summary>The lobby's own chat egress: the same call the published <c>send_multiplayer_chat</c> action makes.</summary>
     private string? PerformSay(HostPlayerScriptStep step)
     {
@@ -808,19 +930,24 @@ internal sealed class HostPlayerScriptChannel
         HostPlayerScriptStepKind.Emote => EmoteStep,
         HostPlayerScriptStepKind.ChestTake => ChestStep,
         HostPlayerScriptStepKind.Say => SayStep,
+        HostPlayerScriptStepKind.Sleep => SleepStep,
         _ => "unknown",
     };
 
-    /// <summary>Close the current step as done and advance. The world's own clock and the achieved tile travel with it.</summary>
-    private void Settle(HostPlayerScriptStep step, string reasonCode)
+    /// <summary>
+    /// Close the current step as done and advance. The world's own clock and the achieved tile travel with it - unless the
+    /// step took its own reading (`clock`), in which case that reading is what the record states.
+    /// </summary>
+    private void Settle(HostPlayerScriptStep step, string reasonCode, HostPlayerScriptClock? clock = null)
     {
-        this.WriteRecord(step, ActionOf(step), "succeeded", reasonCode);
+        this.WriteRecord(step, ActionOf(step), "succeeded", reasonCode, null, clock);
         this.stepIndex++;
         this.stepDeadline = null;
         this.controller = null;
         this.controllerLocation = null;
         this.candidateIndex = 0;
         this.candidates = Array.Empty<Vector2>();
+        this.sleepAnswerClock = null;
     }
 
     /// <summary>
@@ -840,10 +967,11 @@ internal sealed class HostPlayerScriptChannel
     /// One record per settled step, in the flat shape a bridge receipt already has (<c>state</c>/<c>reasonCode</c>) so a
     /// judgement can read both sides of a slice the same way. <c>seq</c> is the step's position in the document, which is
     /// what makes a record attributable to the slice that appended it; a channel-level record carries none. The clock is
-    /// the world's own <c>Game1.timeOfDay</c> - the same integer the snapshot publishes - and the tile is where the player
-    /// actually stood when the step settled.
+    /// the world's own <c>Game1.timeOfDay</c> - the same integer the snapshot publishes - or, for a step that took its own
+    /// reading before the engine moved the clock, <paramref name="clock"/>; and the tile is where the player actually stood
+    /// when the step settled.
     /// </summary>
-    private void WriteRecord(HostPlayerScriptStep? step, string action, string state, string reasonCode, string? detail = null)
+    private void WriteRecord(HostPlayerScriptStep? step, string action, string state, string reasonCode, string? detail = null, HostPlayerScriptClock? clock = null)
     {
         try
         {
@@ -856,8 +984,8 @@ internal sealed class HostPlayerScriptChannel
                 ["action"] = action,
                 ["state"] = state,
                 ["reasonCode"] = reasonCode,
-                ["dayOfMonth"] = Game1.Date?.TotalDays ?? 0,
-                ["timeOfDay"] = Game1.timeOfDay,
+                ["dayOfMonth"] = clock?.Day ?? Game1.Date?.TotalDays ?? 0,
+                ["timeOfDay"] = clock?.TimeOfDay ?? Game1.timeOfDay,
                 ["location"] = location?.NameOrUniqueName,
                 ["x"] = Game1.player is null ? 0 : (int)Game1.player.Tile.X,
                 ["y"] = Game1.player is null ? 0 : (int)Game1.player.Tile.Y,

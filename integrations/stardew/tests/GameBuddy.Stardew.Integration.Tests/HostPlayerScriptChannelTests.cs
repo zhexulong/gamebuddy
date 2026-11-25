@@ -47,23 +47,24 @@ public sealed class HostPlayerScriptChannelTests
         HostPlayerScriptChannel.Schema.Should().Be("gamebuddy-host-player-script/v2");
 
     [Fact]
-    public void TryParseScript_ReadsAllFourActionsTheChannelCanPerform()
+    public void TryParseScript_ReadsAllFiveStepsTheChannelCanPerform()
     {
         bool parsed = HostPlayerScriptChannel.TryParseScript(
             Script(
                 "{\"seq\":1,\"stepId\":\"walk\",\"action\":\"walk_to_tile\",\"location\":\"Farm\",\"x\":39,\"y\":17,\"nearby\":true}",
                 "{\"seq\":2,\"stepId\":\"emote\",\"action\":\"emote\",\"emote\":\"exclamation\"}",
                 "{\"seq\":3,\"stepId\":\"say\",\"action\":\"say\",\"text\":\"东边那棵树先留着。\"}",
-                "{\"seq\":4,\"stepId\":\"chest\",\"action\":\"chest_take\",\"targetRef\":\"chest_Farm_30_20\",\"expectedQualifiedItemId\":\"(O)24\"}"),
+                "{\"seq\":4,\"stepId\":\"chest\",\"action\":\"chest_take\",\"targetRef\":\"chest_Farm_30_20\",\"expectedQualifiedItemId\":\"(O)24\"}",
+                "{\"seq\":5,\"stepId\":\"sleep\",\"action\":\"sleep\"}"),
             out HostPlayerScriptDocument document,
             out string reasonCode,
             out string detail);
 
         parsed.Should().BeTrue(detail);
         reasonCode.Should().BeEmpty();
-        document.Steps.Should().HaveCount(4);
+        document.Steps.Should().HaveCount(5);
         document.Steps.Select(step => step.Seq).Should().Equal(
-            new[] { 1, 2, 3, 4 },
+            new[] { 1, 2, 3, 4, 5 },
             "a step's position IS its identity, and it is 1-based");
         document.Steps[0].Kind.Should().Be(HostPlayerScriptStepKind.WalkToTile);
         document.Steps[0].Location.Should().Be("Farm");
@@ -75,6 +76,11 @@ public sealed class HostPlayerScriptChannelTests
         document.Steps[2].Argument.Should().Be("东边那棵树先留着。");
         document.Steps[3].Kind.Should().Be(HostPlayerScriptStepKind.ChestTake);
         document.Steps[3].Argument.Should().Be("chest_Farm_30_20|(O)24", "one payload per step, and the container is an address plus the item it holds");
+        // WHICH BED IS THE ENGINE'S ANSWER, so the one step that starts a night carries no payload at all: a tile here
+        // would be a second spelling of `FarmHouse.GetPlayerBedSpot()` that the fixture would have to keep in step with a
+        // save it does not own.
+        document.Steps[4].Kind.Should().Be(HostPlayerScriptStepKind.Sleep);
+        document.Steps[4].Argument.Should().BeEmpty();
         document.Sealed.Should().BeFalse("a writer that has not finished appending is a channel that may still be given steps");
     }
 

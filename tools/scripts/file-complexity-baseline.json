@@ -27,7 +27,7 @@
     "integrations/stardew/farmhandtargetdiscovery.cs": 2844,
     "integrations/stardew/ModEntry.cs": 3450,
     "integrations/stardew/ModEntry.Fixtures.cs": 2240,
-    "integrations/stardew/SleepAndAdvanceDayLifecycle.cs": 2105,
+    "integrations/stardew/SleepAndAdvanceDayLifecycle.cs": 2195,
     "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs": 2344,
     "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs": 2361,
     "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs": 2646,

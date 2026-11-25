@@ -1641,20 +1641,13 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
         if (!this.answerDispatched)
         {
-            Response? yes = dialogueBox.responses?.FirstOrDefault(
-                    response => string.Equals(response.responseKey, NativeSleepPrompt.AcceptResponseKey, StringComparison.Ordinal))
-                ?? Game1.questionChoices?.FirstOrDefault(
-                    response => string.Equals(response.responseKey, NativeSleepPrompt.AcceptResponseKey, StringComparison.Ordinal));
-            if (yes is null)
+            // ONE SPELLING OF "YES": the same call the Host player's script `sleep` step takes, because answering this box
+            // is what ends a day and two implementations of it would be two owners of the same ending.
+            if (!NativeSleepPrompt.TryAccept(dialogueBox, out bool answered, out string refusal))
             {
-                this.Finish("blocked", "yes_choice_missing", null);
+                this.Finish("blocked", refusal, null);
                 return true;
             }
-
-            // The exact two public steps the native input paths use, in order.
-            GameLocation location = Game1.currentLocation;
-            bool answered = location.answerDialogue(yes);
-            dialogueBox.beginOutro();
             this.answerDispatched = true;
             this.trace.Add($"answered={answered};answered_via=answerDialogue;outro=beginOutro");
             this.monitor.Log($"GameBuddy sleep lifecycle answered the native Sleep prompt; answered={answered}.", LogLevel.Info);

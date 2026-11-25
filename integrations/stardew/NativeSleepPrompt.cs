@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using StardewValley;
 using StardewValley.Menus;
 
@@ -51,6 +52,48 @@ internal static class NativeSleepPrompt
     /// </summary>
     internal static bool IsStanding(DialogueBox? box) =>
         box is { isQuestion: true } && IsQuestionKeySleep(CurrentQuestionKey());
+
+    /// <summary>
+    /// Answer the standing prompt with the engine's own <c>Yes</c>: the exact two public steps the native input paths take,
+    /// in order - <c>GameLocation.answerDialogue(Response)</c> dispatches <c>Sleep_Yes</c> (<c>GameLocation.cs:12692</c>) and
+    /// <c>DialogueBox.beginOutro()</c> runs the box's own close on the answer.
+    ///
+    /// <para>
+    /// ONE SPELLING, TWO CALLERS. The cross-day lifecycle answers this box (<c>SleepAndAdvanceDayLifecycle.AnswerSleepPrompt</c>)
+    /// and so does the Host player's script step (<c>HostPlayerScriptChannel.PerformSleep</c>), and the box admits exactly one
+    /// answer: a second implementation would be a second owner of the day ending this call is.
+    /// </para>
+    ///
+    /// <para>
+    /// The answer is found by the engine's key (<see cref="AcceptResponseKey"/>) in the box's own responses, then in
+    /// <c>Game1.questionChoices</c> - the two places a yes/no box keeps it. A box that offers no <c>Yes</c> is refused by name
+    /// rather than answered with whatever else it offers.
+    /// </para>
+    /// </summary>
+    /// <returns>False when nothing was dispatched, with <paramref name="refusal"/> naming what a reader must fix.</returns>
+    internal static bool TryAccept(DialogueBox box, out bool answered, out string refusal)
+    {
+        answered = false;
+        refusal = string.Empty;
+        Response? yes = box.responses?.FirstOrDefault(
+                response => string.Equals(response.responseKey, AcceptResponseKey, StringComparison.Ordinal))
+            ?? Game1.questionChoices?.FirstOrDefault(
+                response => string.Equals(response.responseKey, AcceptResponseKey, StringComparison.Ordinal));
+        if (yes is null)
+        {
+            refusal = "yes_choice_missing";
+            return false;
+        }
+        GameLocation? location = Game1.currentLocation;
+        if (location is null)
+        {
+            refusal = "sleep_no_location";
+            return false;
+        }
+        answered = location.answerDialogue(yes);
+        box.beginOutro();
+        return true;
+    }
 
     private static string? CurrentQuestionKey()
     {

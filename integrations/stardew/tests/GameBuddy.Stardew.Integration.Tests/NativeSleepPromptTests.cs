@@ -76,6 +76,8 @@ public sealed class NativeSleepPromptTests
     // The shared admission moved to its own type; the seam is its body, not the projector the action bodies call.
     [InlineData("integrations/stardew/ExecutionAdmission.cs", "internal AdmissionOutcome Admit(")]
     [InlineData("integrations/stardew/farmhandexecutioncontroller.modalactions.cs", "public LocalExecutionReceipt RequestLocalAnswerDialogue(")]
+    // The Host player's script channel is the fixture's OTHER body on the same actor: its `sleep` step meets the prompt too.
+    [InlineData("integrations/stardew/HostPlayerScript.cs", "private string? PerformSleep(")]
     public void EverySeamThatCouldTakeTheBedPromptAsksTheOneIdentity(string file, string signature)
     {
         string body = MethodBody(StripComments(ReadSource(file)), signature);
@@ -104,14 +106,26 @@ public sealed class NativeSleepPromptTests
     [Fact]
     public void TheAnswerIsTheEnginesOwnAcceptKeyOnce()
     {
-        // The key the engine offers is the property of the prompt's identity, not of the lifecycle: a second literal
-        // "Yes" here would let the two answer different questions after the engine's vocabulary moves.
-        string answer = MethodBody(
-            StripComments(ReadSource("integrations/stardew/SleepAndAdvanceDayLifecycle.cs")),
-            "private bool AnswerSleepPrompt()");
+        // THE ANSWER HAS ONE OWNER, AND IT IS THE PROMPT'S TYPE: two callers answer this box - the cross-day lifecycle and
+        // the Host player's script `sleep` step - and the box admits exactly one answer, so the key they answer with lives
+        // beside the key that identifies it. A literal "Yes" anywhere here would be a second spelling, and two spellings can
+        // answer different questions the moment the engine's vocabulary moves.
+        string accept = MethodBody(
+            StripComments(ReadSource("integrations/stardew/NativeSleepPrompt.cs")),
+            "internal static bool TryAccept(");
 
-        answer.Should().Contain("NativeSleepPrompt.AcceptResponseKey");
-        answer.Should().NotContain("\"Yes\"");
+        accept.Should().Contain("AcceptResponseKey");
+        accept.Should().NotContain("\"Yes\"");
+
+        // AND EVERY CALLER GOES THROUGH IT: the lifecycle may not answer the box itself, and the script step may not either.
+        foreach (string file in new[] { "integrations/stardew/SleepAndAdvanceDayLifecycle.cs", "integrations/stardew/HostPlayerScript.cs" })
+        {
+            string source = StripComments(ReadSource(file));
+            source.Should().Contain(
+                "NativeSleepPrompt.TryAccept(",
+                $"{file} answers the bed prompt, and only one body may spell the answer");
+            source.Should().NotContain("AcceptResponseKey", $"{file} must not reach for the key itself");
+        }
     }
 
     private static string ReadSource(string relative)
