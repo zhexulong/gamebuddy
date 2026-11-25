@@ -860,7 +860,11 @@ test("Game materializer assembles canonical Game context through the tested asse
   // System assembly, not caller/script injection: the materializer delegates to
   // the shared seam inside the runtime constructor and forwards both resolved
   // values to the runtime core.
-  assert.match(materializerSource, /const context = await assembleGameRuntimeContext\(\{/);
+  assert.match(
+    materializerSource,
+    /const context = await tracedStep\(runTrace, RUN_SPAN_NAMES\.promptContext, \{ surface: "game" \}, \(\) => assembleGameRuntimeContext\(\{/,
+    "the seam that answers `context` is the shared assembly, awaited inside the prompt-context span",
+  );
   assert.match(materializerSource, /const assembledProfile = context\.profile/);
   assert.match(materializerSource, /const assembledWorldBook = context\.worldBook/);
   assert.match(materializerSource, /const assembledScenario = context\.scenario/);
@@ -1094,6 +1098,8 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
   wateringCanFacts: "named beside `toolSlots` as the held can's own water facts",
   lanternSlots: "the pack's lantern slots; light_lantern names a tile",
   villagerWhereabouts: "a roster of where villagers are, addressed through npcRelationshipTargets",
+  otherFarmers:
+    "the other human players this observation can see - a perception fact whose rows carry no address, and no published action takes a human player as its target",
   wateringWhereabouts:
     "a per-location summary of how thirsty each map is, read by the fact line and addressed through cropTargets",
   harvestWhereabouts: "a per-location summary, addressed through harvestTargets",
