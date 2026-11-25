@@ -5,23 +5,28 @@ using Xunit;
 namespace GameBuddy.Stardew.Core.Tests;
 
 /// <summary>
-/// What each published action is called, the sentence a model reads about it, and the kinds it acts on
-/// (<see cref="FarmhandActionPresentationCatalog"/>).
+/// What each published action is called and the kinds of thing it acts on (<see cref="FarmhandActionPresentationCatalog"/>),
+/// and what it does NOT publish (the sentence a model reads, which is the Host's).
 ///
 /// <para>
-/// WHY THIS GATE EXISTS. Those three facts were the Host's, in two tables keyed by action id, and nothing in this assembly
-/// held them to anything: an action could be renamed in the Host and no test on this side could notice, because this side
+/// WHY THIS GATE EXISTS. The two facts were the Host's, in two tables keyed by action id, and nothing in this assembly held
+/// them to anything: an action could be renamed in the Host and no test on this side could notice, because this side
 /// declared no name at all. The assertions below are the producer's half - every row names a catalog action, every row
-/// reaches the projection, and the count of rows without one is PRINTED rather than assumed - while the cross-language
-/// half (exactly the actions whose mounted tool reads a row, and no others) is
-/// `host/src/action-tool-presentation-derivation.test.ts`, which is the side that knows which mounts project a
-/// declaration.
+/// reaches the projection, the projection carries no description, and the count of rows is PRINTED rather than assumed -
+/// while the cross-language half (exactly the actions whose mounted tool reads a row, and no others, with its sentence from
+/// the Host's own table) is `host/src/action-tool-presentation-derivation.test.ts`.
 /// </para>
 ///
 /// <para>
-/// AN ACTION WITH NO ROW IS A STATEMENT, NOT A HOLE. Fifty-eight registrations carry none today: their tool text is still
+/// AN ACTION WITH NO ROW IS A STATEMENT, NOT A HOLE. Fifty-eight registrations carry none today: their tool is still
 /// written in its own mount block on the Host side, and the unit that deletes those mounts adds their rows. This test
 /// counts both sides so that a row disappearing and a row arriving are both visible in the run's own output.
+/// </para>
+///
+/// <para>
+/// THE BOUNDARY IS ASSERTED HERE, not just in the Host: the projection has no <c>Description</c> member to publish, so a
+/// sentence that came back would have to arrive as a new member - which the Host's exact-key gate refuses
+/// (<c>action-publication-carries-facts-not-prose.test.ts</c>), and which the record here could not compile.
 /// </para>
 /// </summary>
 public sealed class FarmhandActionPresentationTests
@@ -48,41 +53,51 @@ public sealed class FarmhandActionPresentationTests
         {
             FarmhandActionDescriptorProjection row = projected[actionId];
             row.Label.Should().Be(presentation.Label, $"{actionId} publishes the label the catalog declares");
-            row.Description.Should().Be(presentation.Description, $"{actionId} publishes the sentence the catalog declares");
             row.TargetKinds.Should().Equal(presentation.TargetKinds, $"{actionId} publishes the kinds the catalog declares");
             projectedRows++;
         }
 
         projectedRows.Should().Be(declared.Count);
 
-        // The three travel together on every row and on every projection: a label with no sentence is a tool a model can call
-        // and not understand, and a kinds list with no label names an action nothing can address.
+        // The pair travels together on every projection: a kinds list with no label names an action nothing can address,
+        // and a label with no kinds is a name with nothing to say about what it acts on.
         foreach (FarmhandActionDescriptorProjection row in projected.Values)
         {
             bool presented = row.Label is not null;
-            (row.Description is not null).Should().Be(presented, $"{row.ActionId} publishes all three presentation members or none");
-            (row.TargetKinds is not null).Should().Be(presented, $"{row.ActionId} publishes all three presentation members or none");
+            (row.TargetKinds is not null).Should().Be(presented, $"{row.ActionId} publishes both fact members or neither");
         }
 
         // Printed on every run: the table's own coverage, so a row that arrives or leaves says so where a reader looks.
         Console.WriteLine(
             $"actions registered {FarmhandActionCatalog.Registrations.Count} · publishing a label {declared.Count} · " +
-            $"publishing none {FarmhandActionCatalog.Registrations.Count - declared.Count}");
+            $"publishing none {FarmhandActionCatalog.Registrations.Count - declared.Count} · " +
+            $"projection members {typeof(FarmhandActionDescriptorProjection).GetProperties().Length}");
     }
 
     [Fact]
-    public void ADeclaredPresentationIsANameAndASentenceWithinThePublishedBounds()
+    public void ADeclaredPresentationIsANameAndKindsWithinThePublishedBounds()
     {
         // The catalog refuses these at construction, so this asserts the bounds that are actually in force are the ones the
-        // readers apply - and that no row leans on the ceiling: a label is a name, and every sentence here is shorter than
-        // the bound that admits it.
+        // readers apply - and that no row leans on the ceiling: a label is a name, and every kind is one lower_snake word.
         foreach ((string actionId, FarmhandActionPresentation presentation) in FarmhandActionPresentationCatalog.ByActionId)
         {
             presentation.Label.Length.Should().BeInRange(1, FarmhandActionPresentationCatalog.MaximumLabelLength, actionId);
-            presentation.Description.Length.Should().BeInRange(1, FarmhandActionPresentationCatalog.MaximumDescriptionLength, actionId);
-            presentation.Description.Should().NotContain("\n", $"{actionId} publishes one sentence, not a block");
+            presentation.Label.Should().NotContain("\n", $"{actionId} publishes one name, not a block");
             presentation.TargetKinds.Should().NotBeEmpty($"{actionId} acts on something, or its target family says it addresses none");
             presentation.TargetKinds.Should().OnlyHaveUniqueItems($"{actionId} names each kind once");
         }
+    }
+
+    [Fact]
+    public void TheProjectionCarriesNoSentenceAModelReads()
+    {
+        // The member that left on 2026-11-25. Asserted against the RECORD rather than a comment, so a re-added member fails
+        // here by name: the Mod publishes what the action IS - its name, the kinds it acts on, its arguments and their
+        // bounds - and every description a model reads is the Host's table (`game-tools.ts`).
+        Type projection = typeof(FarmhandActionDescriptorProjection);
+        projection.GetProperty("Description").Should().BeNull(
+            "the action descriptor publishes no sentence a model reads: that prose is the Host's");
+        projection.GetProperty("Label").Should().NotBeNull("the label is a fact the action owns");
+        projection.GetProperty("TargetKinds").Should().NotBeNull("the kinds it acts on are a fact the action owns");
     }
 }

@@ -47,33 +47,32 @@ export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze([
   // `audit-stardew-decision-closure.test.mjs` reads this array as a member vocabulary, and a quoted word inside a comment
   // reads as an entry the Mod does not declare.
   "effects",
-  // What the action is CALLED, the sentence a model reads about it, and the kinds of thing it acts on. Published because
-  // both facts were written in the HOST, keyed by action id, and the one consumer that builds a tool out of a
-  // declaration rather than out of a name it recognizes needs them on the declaration. Absent on the actions that
-  // publish none, and the absence is that statement: an empty string is a label nobody wrote, and the validator refuses
-  // it. These three are also the artifact-side spelling of the same members the hello_ack wire carries.
+  // What the action is CALLED and the kinds of thing it acts on. Published because both facts were written in the
+  // HOST, keyed by action id, and the one consumer that builds a tool out of a declaration rather than out of a name it
+  // recognizes needs them on the declaration. Absent on the actions that publish none, and the absence is that
+  // statement: an empty string is a label nobody wrote, and the validator refuses it. These two are also the
+  // artifact-side spelling of the same members the hello_ack wire carries - and the SENTENCE a model reads about the
+  // action is not among them, because that is prose the Host owns (`game-tools.ts`).
   "label",
-  "description",
   "targetKinds",
 ]);
 export const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
 /**
- * Longest prose the artifact may carry in one place: an argument's `description`, or an action's own.
+ * Longest prose the artifact may carry in one place: an ARGUMENT'S `description`.
  *
  * Separate from `ACTION_SURFACE_MAX_IDENTIFIER_LENGTH` because the two measure different things. An identifier is a
- * NAME and 128 characters is generous; a description is a SENTENCE, and the whole point of publishing it is that the
- * Mod's own words reach the model instead of a Host-side paragraph covering every action at once. The bound still exists
- * so a future build cannot spend the agent's context by accident.
+ * NAME and 128 characters is generous; an argument's description is a SENTENCE, and the whole point of publishing it is
+ * that the words the handler enforces reach the model instead of a Host-side paragraph about a shared argument name that
+ * is false for some action. The bound exists so a future build cannot spend the agent's context by accident.
  *
- * IT WAS 512, AND 512 WAS THE BOUND FOR ONE ARGUMENT'S MEANING. Measured 2026-11-24, when the action's own sentence joined
- * the argument's here: nineteen of the forty-eight published tool descriptions are longer than 512 and the longest is
- * 1,437 (`pet_farm_animal`), so the old ceiling would have refused the artifact outright - or, worse, been read as a
- * reason to shorten a sentence a model already reads. 2,048 is above the measurement and still bounds an accident, which
- * is what this number is for; the Mod's own `FarmhandActionPresentationCatalog.MaximumDescriptionLength` declares the same
- * ceiling at the producer, so a value that passes there cannot be refused here.
+ * IT WAS 2,048 FOR ONE RELEASE, AND THAT WAS NOT THIS FIELD'S BOUND. 2026-11-24 the action's own sentence joined the
+ * artifact, nineteen of the forty-eight were longer than 512 and the longest was 1,437, so the ceiling was raised to
+ * cover them. The action's sentence left again on 2026-11-25 (it is Host prose, the Host owns it), which leaves the
+ * argument's 512 as the only prose this artifact carries - the same ceiling the Host's `isValidActionDescriptor`
+ * applies to an argument description.
  */
-const ACTION_SURFACE_MAX_DESCRIPTION_LENGTH = 2048;
+const ACTION_SURFACE_MAX_DESCRIPTION_LENGTH = 512;
 /** A label is a NAME, so it keeps the identifier bound the Host's wire validator applies. */
 const ACTION_SURFACE_MAX_LABEL_LENGTH = 128;
 const MAX_TARGET_KINDS = 8;
@@ -85,9 +84,9 @@ const ACTION_SURFACE_MAX_DATA_NODES = 2048;
 /**
  * How many members ONE published object may carry, DERIVED from the action vocabulary rather than typed.
  *
- * It was a flat 16, and the action shape outgrew it the moment `label`, `description` and `targetKinds` were published: an
- * action carrying every optional member (approach, targetFamily, nativeBinding, synthetic, effects and the three
- * presentation facts) has 17, so the whole artifact became unreadable with `bounds` while nothing in the message said
+ * It was a flat 16, and the action shape outgrew it the moment `label` and `targetKinds` were published: an
+ * action carrying every optional member (approach, targetFamily, nativeBinding, synthetic, effects and the two fact
+ * members) has 16, so the whole artifact became unreadable with `bounds` while nothing in the message said
  * which object had grown. The widest legal object IS the action, so the bound is the two vocabularies added together and
  * a new member raises it by construction. The nested objects - a resource claim, a postcondition, one effect, one argument
  * entry - are all narrower than that and are checked by their own readers.
@@ -667,12 +666,11 @@ function validateAction(value, seenActionIds) {
 
   if (value.effects !== undefined) validateEffects(value.effects);
 
-  if (value.label !== undefined || value.description !== undefined || value.targetKinds !== undefined) {
-    // The three presentation facts travel TOGETHER or not at all: a label with no sentence reads as a tool the model can
-    // call and cannot understand, and a kinds list with no label is a fact about an action nothing can name. Absence on
-    // all three is the statement that the action publishes none (§ ACTION_SURFACE_OPTIONAL_ACTION_KEYS).
+  if (value.label !== undefined || value.targetKinds !== undefined) {
+    // The two FACT members travel TOGETHER or not at all: a kinds list with no label is a fact about an action nothing
+    // can name. Absence on both is the statement that the action publishes none (§ ACTION_SURFACE_OPTIONAL_ACTION_KEYS),
+    // and the sentence a model reads about the action is not a member at all - it is the Host's prose.
     if (!isNonBlankProse(value.label, ACTION_SURFACE_MAX_LABEL_LENGTH)) fail("invalid_action_label");
-    if (!isNonBlankProse(value.description, ACTION_SURFACE_MAX_DESCRIPTION_LENGTH)) fail("invalid_action_description");
     const kinds = value.targetKinds;
     if (!isArray(kinds) || kinds.length === 0 || kinds.length > MAX_TARGET_KINDS) fail("invalid_action_target_kinds");
     for (const kind of kinds) {
@@ -682,7 +680,7 @@ function validateAction(value, seenActionIds) {
     }
   }
 
-  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }), ...(value.synthetic === undefined ? {} : { synthetic: value.synthetic }), ...(value.effects === undefined ? {} : { effects: value.effects }), ...(value.label === undefined ? {} : { label: value.label, description: value.description, targetKinds: value.targetKinds }) });
+  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }), ...(value.synthetic === undefined ? {} : { synthetic: value.synthetic }), ...(value.effects === undefined ? {} : { effects: value.effects }), ...(value.label === undefined ? {} : { label: value.label, targetKinds: value.targetKinds }) });
 }
 
 /**

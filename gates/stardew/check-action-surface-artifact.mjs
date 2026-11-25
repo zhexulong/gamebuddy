@@ -7,7 +7,8 @@
  * (`use_mine_ladder.expectedTargetId`), the Host's `isValidActionDescriptor` bounded an argument description at 512,
  * and ONE refused descriptor refuses the WHOLE `hello_ack` registration list - so the attach died on a sentence and the
  * round mounted no tool. Nothing in the entry point had noticed, because `action-surface-check` - the reader that had
- * been refusing that very artifact - ran in no rung: the Mod's own publish-time contract was green nowhere.
+ * been answering `stardew_action_surface_invalid_action` for that very artifact - ran in no rung: the Mod's own
+ * publish-time contract was green nowhere.
  * </p>
  *
  * <p>
@@ -17,20 +18,59 @@
  * 96 KB read.
  * </p>
  *
- * red-proof: history  the `49104c70`-era artifact (120,907 bytes, the Mod's own bytes) -> `runActionSurfaceCheck` refuses
- *   with `stardew_action_surface_bounds` and this gate exits 1; measured 2026-11-25 by handing that exact artifact to a
- *   copy of the package's own reader.
- * red-proof: inject  this artifact with one argument's `description` inflated to the 595 characters
- *   `use_mine_ladder.expectedTargetId` published on 2026-11-25 (`travel.x`) -> the same `stardew_action_surface_bounds`,
- *   this time from the projection's own description bound rather than the byte budget; measured 2026-11-25.
+ * <p>
+ * WHAT IT READ, and the line that says so. The reader's verdict is per-artifact, so it cannot distinguish `valid` over
+ * 106 actions from `valid` over none - and a zero-action artifact is refused by the reader itself, which is the only
+ * answer to a population of nothing that this file needs. The count is printed beside the verdict, and `--package`
+ * points the same reading at a copy so the falsifier below can inject a fault without touching the package.
+ * </p>
+ *
+ * red-proof: history  the `49104c70`-era artifact (595-character sentence, the Mod's own bytes) -> the reader refuses
+ *   with `stardew_action_surface_invalid_action` and this gate exits 1 naming the artifact.
  * red-proof: history  the `49104c70`-era C# catalog, judged by `check-head-build` instead: the producer's own refusal
  *   fires first (`farmhand action 'use_mine_ladder' argument 'expectedTargetId' description is 595 characters, over the
  *   512 ...`), which is why the artifact cannot be exported at all.
+ * red-proof: inject  `use_mine_ladder.expectedTargetId.description` padded to 595 characters in a COPY of
+ *   `contracts/generated/action-surface.v1.json`, read through `--package <copy>` -> exit 1,
+ *   `stardew_action_surface_artifact_refused: stardew_action_surface_bounds`; the same copy unmodified prints
+ *   `actions examined 106` and exits 0 (gates/stardew/check-action-surface-artifact.test.mjs)
  */
-import { runActionSurfaceCheck } from "../../integrations/stardew/action-development/src/action-surface-check.mjs";
 
-const report = await runActionSurfaceCheck();
-process.stdout.write(
-  `actions examined ${report.actions} · executable ${report.executable} · readOnly ${report.readOnly}\n`,
+export const gateDeclaration = {
+  id: "check-action-surface-artifact",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
+import { resolve } from "node:path";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
+
+const SHIPPED_PACKAGE = new URL("../../integrations/stardew/action-development/", import.meta.url);
+
+/** The package whose artifact is read: the one that owns it, or the copy `--package` names. */
+function packageDirectory(argv) {
+  const index = argv.indexOf("--package");
+  if (index < 0) return SHIPPED_PACKAGE;
+  const named = argv[index + 1];
+  if (named === undefined) throw new Error("--package needs a directory");
+  return new URL(`${pathToFileURL(resolve(named)).href}/`);
+}
+
+const { runActionSurfaceCheck } = await import(
+  new URL("src/action-surface-check.mjs", packageDirectory(process.argv.slice(2))).href
 );
-process.stdout.write(`${JSON.stringify(report)}\n`);
+
+try {
+  const report = await runActionSurfaceCheck();
+  process.stdout.write(
+    `actions examined ${report.actions} · executable ${report.executable} · readOnly ${report.readOnly}\n`,
+  );
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+} catch (error) {
+  process.stderr.write(
+    `stardew_action_surface_artifact_refused: ${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exitCode = 1;
+}

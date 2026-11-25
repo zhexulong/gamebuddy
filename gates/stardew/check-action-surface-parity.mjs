@@ -22,11 +22,12 @@
  * `argumentSchema`; every other surface is read from its OWN authority, never from a hand list here:
  *
  *   catalog       the descriptor requirements: `actions[].argumentSchema` and `actions[].kind`/`lifecycle`.
- *   wire          the Host's request validator: the `exactArgs([...])` row of each key in `EXECUTION_REQUEST_ARGUMENT_RULES`
- *                 (`host/src/protocol.ts`), followed through a shared frozen row list (`REMOVES_PLACED_OBJECT`) and
- *                 through `textOnlyRow`, because three actions reference a list by name and two delegate to a helper. The
- *                 whole-number ranges the same rows pin are `executionRequestIntegerBounds`, which the tool schema reads
- *                 rather than restating (`declaredIntegerArgument`).
+ *   wire          the Host's request validator: the key-set row of each key in `EXECUTION_REQUEST_ARGUMENT_RULES`
+ *                 (`host/src/protocol.ts`) - `exactArgs([...], code)`, or `exactArgsExceptResolved([...], <list>, code)`
+ *                 whose second argument names the arguments a caller may OMIT - followed through a shared frozen row list
+ *                 (`REMOVES_PLACED_OBJECT`) and through `textOnlyRow`, because three actions reference a list by name and
+ *                 two delegate to a helper. The whole-number ranges the same rows pin are `executionRequestIntegerBounds`,
+ *                 which the tool schema reads rather than restating (`declaredIntegerArgument`).
  *   plan-grammar  `body-program-script.ts`: which actions a script may name at all, from the grammar's own published
  *                 admission rule (`PLAN_ACTION_LIFECYCLES`, `PLAN_ARGUMENT_TYPES`, and the registry's
  *                 `EXPRESSION_ONLY_ACTION_IDS` through `isExpressionOnlyAction`, applied in
@@ -64,14 +65,39 @@
  * the reading depended on HOW a mount was written. It now follows the declaration the mount names, so both shapes resolve
  * to the same set for the same action, and the only thing still blocked is a declaration this reader cannot read.
  *
+ * THE KEY SET IS REQUIRED ∪ OPTIONAL, AND THIS READER ASSUMED IT WAS ALL REQUIRED (2026-11-25). `8264f967` let the five
+ * tile-addressed actions leave `expectedTargetId` to the executor, through `exactArgsExceptResolved(names, resolvable,
+ * refusal)`; this reader looked for the literal call `exactArgs(` whose ONE argument is the key list, so a rule named
+ * anything else resolved to null and fourteen actions blocked with `wire_argument_key_set_unreadable`. The block was
+ * right - unreadable must never read as agreement - and the READING was what was wrong: an optional argument is part of
+ * the key set, and the wire states it twice (`argumentNames` is `required ∪ optional`, `resolvableArguments` is the
+ * optional half). Both halves are read per action now, and a rule this reader still cannot resolve - an unknown
+ * construction, a list this source does not declare, an optional name outside the set it is subtracted from - keeps
+ * exactly the block it had.
+ *
+ * THE OPTIONAL HALF IS COMPARED TOO, WHICH IS THE PART NOBODY TESTED. A key set says which names travel; the optional
+ * half says which of them may be LEFT OUT, and the catalogue states the same permission per argument
+ * (`argumentSchema[name].resolvedAtExecution`). A surface that still REQUIRES an argument the wire lets be omitted
+ * refuses, on the omitted form, a call the wire admits -
+ *
+ *   surface_requires_what_another_calls_optional:<action>:<argument>:<requiringSurface>:<wire>
+ *
+ * The opposite direction - a descriptor permitting an omission the wire still demands - is MEASURED AND PRINTED rather
+ * than failed: it is the wire being stricter than its own publication, `host/src/protocol-catalog-agreement.test.ts`
+ * already counts it and calls it its own unit, and printing the size here is what stops this gate's green from being read
+ * as closing it.
+ *
  * THE LIFECYCLE RULE, per (action, surface): an action absent from a surface is `surface_silently_omits_action:<action>:
  * <surface>` unless TWO things hold - a declaration says why it is absent, and the action has a route to the actor
  * somewhere else. Both are read, never restated:
  *   - `kind: "read_only"` - the wire, the Mod's execution reader and the Game Action tools all take EXECUTION actions;
  *     a read-only action (`observe_scene`, `inspect_world_map`, `find_destination`) is not one.
  *   - the grammar's own admission rule - `experimental` is not nameable in a plan, an action carrying an argument type
- *     the grammar's value contracts do not cover is not either, and neither is one the registry declares EXPRESSION-ONLY
- *     (`EXPRESSION_ONLY_ACTION_IDS`), because a gesture is one step by nature and queues behind the plan's work steps.
+ *     the grammar's value contracts do not cover is not either, neither is one the registry declares EXPRESSION-ONLY
+ *     (`EXPRESSION_ONLY_ACTION_IDS`, because a gesture is one step by nature and queues behind the plan's work steps), and
+ *     neither is an action the grammar excludes by a NAMED CONSTANT (`EQUIP_TOOL_ACTION_ID`: a step that equips is undone
+ *     by the step it precedes). The rule is ATTRIBUTION, not a count of reasons: whatever the grammar skips has to be
+ *     named by one of those declarations, and a skip spelled as a string literal is red - see the 2026-11-25 note above.
  * That is precisely the `sweep_scythe` shape: `experimental`, present in three surfaces and absent from a fourth with
  * nothing recording the intent. A lifecycle is NOT a declaration for the tool surfaces - staging an experimental action is
  * an explicit mount (`isModDescriptorComplete`) and an omission is what this gate exists to name.
@@ -133,6 +159,14 @@
  *   while that mount existed (tools/check-action-surface-parity.test.mjs)
  * red-proof: inject  the grammar's expression filter replaced by a hand-written id test ->
  *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*` (tools/check-action-surface-parity.test.mjs)
+ * red-proof: inject  a catalogue row that stops declaring `expectedTargetId` resolved at execution ->
+ *   `surface_requires_what_another_calls_optional:water_crop:expectedTargetId:catalog:wire`
+ *   (tools/check-action-surface-parity.test.mjs)
+ * red-proof: inject  a wire rule whose key-set construction this reader does not know, and a wire whose every rule is
+ *   such a rule -> `wire_argument_key_set_unreadable:ride_bus`, `wire_argument_key_sets_none_readable:<n>`
+ *   (tools/check-action-surface-parity.test.mjs)
+ * red-proof: inject  a fifth plan exclusion written as a string literal BESIDE the one `EQUIP_TOOL_ACTION_ID` declares ->
+ *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*` (tools/check-action-surface-parity.test.mjs)
  * red-proof: inject  an argument deleted from a mount's `toArgs`, a key deleted from the wire declaration, an arm
  *   deleted from the Mod's switch, a `continue` added beside the grammar's declared filters, a `toArgs` this reader
  *   cannot enumerate, an argument deleted from the frozen table a forwarded mount names, and an empty source tree ->
@@ -179,6 +213,7 @@ export const EXIT = Object.freeze({ passed: 0, failed: 1, blocked: 2 });
 
 export const CODES = Object.freeze({
   refuses: "surface_refuses_what_another_accepts",
+  requires: "surface_requires_what_another_calls_optional",
   omits: "surface_silently_omits_action",
   disagrees: "tool_args_disagrees_with_declaration",
   noRoute: "action_has_no_route",
@@ -342,6 +377,13 @@ export function readCatalogSurface(catalog) {
     }
     actions.set(entry.actionId, {
       arguments: new Set(Object.keys(schema)),
+      // The catalogue's own statement of which of those arguments a caller may omit: the Mod's runtime parser reads this
+      // very flag (`HasExecutionArgumentShape`), so it is the permission the wire's `resolvableArguments` is a copy of.
+      optional: new Set(
+        Object.entries(schema)
+          .filter(([, argument]) => argument?.resolvedAtExecution === true)
+          .map(([name]) => name),
+      ),
       types: new Map(Object.entries(schema).map(([name, argument]) => [name, argument?.type])),
       kind: entry.kind,
       lifecycle: typeof entry.lifecycle === "string" ? entry.lifecycle : "unstated",
@@ -351,56 +393,108 @@ export function readCatalogSurface(catalog) {
 }
 
 /**
- * The Host's request validator: the argument key set each action's rows pin.
+ * The Host's request validator: the argument key set each action's rows declare, and which of those names may be omitted.
  *
- * The pinned set is the `exactArgs` row - the one whose `argumentNames` the type declares "so a gate that compares the
- * Host's demand against the Mod's published `argumentSchema` reads a key list". Three actions reference a shared frozen
- * list by name (`remove_placed_item: REMOVES_PLACED_OBJECT`) and two delegate to `textOnlyRow`, and both are followed
- * here rather than left as an empty set: reading them as "this action takes no arguments" would report five actions as
- * agreeing with an argument list they do not have.
+ * The set is the required ∪ optional set the row pins - the one whose `argumentNames` the type declares "so a gate that
+ * compares the Host's demand against the Mod's published `argumentSchema` reads a key list" - plus the `resolvable`
+ * subset the same row states. Reading only the mandatory half would report a `water_crop` that names its tile and leaves
+ * the crop to the executor as agreeing with an argument list that has three names when it has four.
+ *
+ * Three actions reference a shared frozen list by name (`remove_placed_item: REMOVES_PLACED_OBJECT`) and two delegate to
+ * `textOnlyRow`, and both are followed here rather than left as an empty set: reading them as "this action takes no
+ * arguments" would report five actions as agreeing with an argument list they do not have.
  */
 export function readWireSurface(source) {
   const text = stripComments(source);
   const problems = [];
   const actions = new Map();
+  const optional = new Map();
+  const keysets = { examined: 0, readable: 0, unreadable: 0 };
   const at = text.indexOf("export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({");
-  if (at < 0) return { actions, problems: ["wire_declaration_not_found"] };
+  if (at < 0) return { actions, optional, problems: ["wire_declaration_not_found"], keysets };
   const end = text.indexOf("\n} satisfies Record<", at);
-  if (end < 0) return { actions, problems: ["wire_declaration_unterminated"] };
+  if (end < 0) return { actions, optional, problems: ["wire_declaration_unterminated"], keysets };
   const body = text.slice(at, end);
   const keys = [...body.matchAll(/^ {2}([a-z0-9_]+): /gmu)];
-  if (keys.length === 0) return { actions, problems: ["wire_declaration_empty"] };
+  if (keys.length === 0) return { actions, optional, problems: ["wire_declaration_empty"], keysets };
   for (const [index, key] of keys.entries()) {
+    keysets.examined += 1;
     const chunk = body.slice(key.index, index + 1 < keys.length ? keys[index + 1].index : body.length);
     const pinned = pinnedWireArguments(text, chunk);
     if (pinned === null) {
+      keysets.unreadable += 1;
       problems.push(`wire_argument_key_set_unreadable:${key[1]}`);
       continue;
     }
-    actions.set(key[1], new Set(pinned));
+    keysets.readable += 1;
+    actions.set(key[1], new Set(pinned.names));
+    if (pinned.optional.length > 0) optional.set(key[1], new Set(pinned.optional));
   }
-  return { actions, problems, ranges: [...body.matchAll(/integerRow\(\s*"([^"]+)"/gu)].map((match) => match[1]) };
+  // A run that resolved no rule at all is a reading that failed, not a wire with no arguments: the same zero the
+  // per-authority population reports, named for the reading that produced it.
+  if (keysets.readable === 0) problems.push(`wire_argument_key_sets_none_readable:${keysets.examined}`);
+  return {
+    actions,
+    optional,
+    problems,
+    keysets,
+    ranges: [...body.matchAll(/integerRow\(\s*"([^"]+)"/gu)].map((match) => match[1]),
+  };
 }
 
 /** The argument names one action's row list pins, through the shared list or the helper it may name. */
 function pinnedWireArguments(source, chunk) {
-  const inline = /exactArgs\(\s*\[([^\]]*)\]/u.exec(chunk);
-  if (inline !== null) return [...inline[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+  const own = declaredKeySetRule(source, chunk);
+  if (own !== null) return own;
   const shared = /^ {2}[a-z0-9_]+:\s*([A-Z][A-Z0-9_]*),/mu.exec(chunk);
   if (shared !== null) {
     const declaration = new RegExp(`const ${shared[1]}[^=]*=\\s*(?:Object\\.freeze\\()?\\[`, "u").exec(source);
     if (declaration === null) return null;
     const open = declaration.index + declaration[0].length - 1;
     const close = balancedEnd(source, open);
-    const list = close < 0 ? null : /exactArgs\(\s*\[([^\]]*)\]/u.exec(source.slice(open, close));
-    return list === null ? null : [...list[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+    return close < 0 ? null : declaredKeySetRule(source, source.slice(open, close));
   }
   if (/textOnlyRow\(\s*\d+\s*\)/u.test(chunk)) {
     const helper = functionBody(source, "textOnlyRow");
     const keys = helper === null ? null : /hasExactKeys\(reading\.args,\s*\[([^\]]*)\]/u.exec(helper);
-    return keys === null ? null : [...keys[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+    return keys === null
+      ? null
+      : { names: [...keys[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]), optional: [] };
   }
   return null;
+}
+
+/**
+ * The key set one argument-list rule declares: the names it pins and the subset it lets the caller omit, or null.
+ *
+ * Two constructions state a set, and the second is the one this reader used to miss: `exactArgs(names, refusal)` pins
+ * every name, and `exactArgsExceptResolved(names, resolvable, refusal)` pins the same set while naming the arguments the
+ * body mints at execution. The optional half is followed through its declaration - the frozen list `resolvable` names -
+ * rather than through a name list here, and a list this source does not declare, or an optional name outside the set it
+ * is subtracted from, makes the whole rule unreadable rather than half-read.
+ */
+function declaredKeySetRule(source, text) {
+  const resolvable = /exactArgsExceptResolved\(\s*\[([^\]]*)\]\s*,\s*(\[[^\]]*\]|[^,)\s]+)\s*,/u.exec(text);
+  if (resolvable !== null) {
+    const names = [...resolvable[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+    const optional = wireNameList(source, resolvable[2]);
+    if (optional === null || !optional.every((name) => names.includes(name))) return null;
+    return { names, optional };
+  }
+  const exact = /exactArgs\(\s*\[([^\]]*)\]/u.exec(text);
+  return exact === null
+    ? null
+    : { names: [...exact[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]), optional: [] };
+}
+
+/** The names one `resolvable` expression leads to: an inline array literal, or a frozen list this source declares. */
+function wireNameList(source, expression) {
+  const inline = /^\s*\[([^\]]*)\]\s*$/u.exec(expression);
+  if (inline !== null) return [...inline[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+  const identifier = /^\s*([A-Za-z_$][\w$]*)\s*$/u.exec(expression)?.[1];
+  if (identifier === undefined) return null;
+  const names = frozenStringArray(source, identifier);
+  return names === null || names.length === 0 ? null : names;
 }
 
 /**
@@ -432,16 +526,20 @@ export function readModSurface(source) {
 /**
  * The plan grammar: which actions a script may name, and the vocabulary it derives for each.
  *
- * THREE FACTS, all declarations: the admission sets the grammar publishes (`PLAN_ACTION_LIFECYCLES`,
+ * FOUR FACTS, all declarations: the admission sets the grammar publishes (`PLAN_ACTION_LIFECYCLES`,
  * `PLAN_ARGUMENT_TYPES`), the expression declaration the registry owns (`EXPRESSION_ONLY_ACTION_IDS`, passed in because
- * the grammar reads it through `isExpressionOnlyAction`), and the derivation its vocabulary comes from. The last is read
- * as a dependency - the grammar must still build each action's arguments out of `declaredArgumentsOf(registration)` -
- * because a grammar that started carrying its own copy of the names would make this gate's reading of it wrong in the one
- * direction that matters, and a blocked run is the only honest answer to that.
+ * the grammar reads it through `isExpressionOnlyAction`), the action ids the grammar names by CONSTANT to exclude
+ * (`EQUIP_TOOL_ACTION_ID` and any successor), and the derivation its vocabulary comes from. The last is read as a
+ * dependency - the grammar must still build each action's arguments out of `declaredArgumentsOf(registration)` - because a
+ * grammar that started carrying its own copy of the names would make this gate's reading of it wrong in the one direction
+ * that matters, and a blocked run is the only honest answer to that.
  *
- * `expressionOnly` is the registry's list rather than a set of names here: null when that declaration cannot be read,
- * which blocks. The grammar may reject an action for exactly three declared reasons, so the expression filter must call
- * `isExpressionOnlyAction` and may not spell an id by hand - a hand-written id is an undeclared skip below.
+ * EVERY SKIP IS ATTRIBUTABLE TO A NAMED DECLARATION HERE, AND A NEW LITERAL SKIP IS RED. That is the property, not a
+ * count: the loop may reject a registration because one of the four declarations above says so, and an exclusion spelled
+ * as a string literal - or as a comparison with a constant this source does not declare - is a vocabulary only the author
+ * knows, which blocks. Writing `exactly three` here (2026-11-25) is how this rule went red on a fourth declaration that
+ * was as declared as the first three; the count is the defect, and `expressionOnly` is still null rather than empty when
+ * the registry cannot be read.
  */
 export function readPlanGrammarSurface(source, catalog, expressionOnly) {
   const text = stripComments(source);
@@ -461,14 +559,19 @@ export function readPlanGrammarSurface(source, catalog, expressionOnly) {
   const expressionFiltered = builder?.includes("isExpressionOnlyAction(registration.actionId)") === true;
   if (expressionOnly === null) problems.push("plan_grammar_expression_declaration_unreadable");
   else if (expressionOnly.length > 0 && !expressionFiltered) problems.push("plan_grammar_expression_filter_missing");
-  // The declared filters are the WHOLE admission rule, so the loop may not skip a registration for any other reason: an
-  // extra `continue` is a hand-written vocabulary this reader cannot enumerate, and the honest answer to that is blocked
-  // rather than a matrix that silently stopped covering the actions it drops.
-  for (const line of undeclaredSkips(builder)) problems.push(`plan_grammar_vocabulary_not_descriptor_derived:${line}`);
+  // The declared filters are the WHOLE admission rule, so every other `continue` must be attributable to a declaration
+  // this source makes: an extra `continue` on a string literal - or on a constant it does not declare - is a hand-written
+  // vocabulary this reader cannot enumerate, and the honest answer to that is blocked rather than a matrix that silently
+  // stopped covering the actions it drops.
+  const idConstants = declaredIdConstants(text);
+  for (const line of undeclaredSkips(builder, idConstants))
+    problems.push(`plan_grammar_vocabulary_not_descriptor_derived:${line}`);
   const expressionIds = expressionFiltered && expressionOnly !== null ? new Set(expressionOnly) : new Set();
+  const excluded = constantExclusions(builder, idConstants);
   const admitted = new Map();
   const omittedForLifecycle = [];
   const omittedForExpression = [];
+  const omittedForDeclaration = [];
   const omittedForArgumentType = [];
   for (const [actionId, entry] of catalog.actions) {
     if (entry.kind !== "execution") continue;
@@ -478,6 +581,10 @@ export function readPlanGrammarSurface(source, catalog, expressionOnly) {
     }
     if (expressionIds.has(actionId)) {
       omittedForExpression.push(actionId);
+      continue;
+    }
+    if (excluded.has(actionId)) {
+      omittedForDeclaration.push(actionId);
       continue;
     }
     if (argumentTypes === null || ![...entry.types.values()].every((type) => argumentTypes.includes(type))) {
@@ -492,8 +599,11 @@ export function readPlanGrammarSurface(source, catalog, expressionOnly) {
     lifecycles,
     argumentTypes,
     expressionOnly: [...expressionIds],
+    excluded: [...excluded.keys()],
+    excludedDeclarations: Object.fromEntries(excluded),
     omittedForLifecycle,
     omittedForExpression,
+    omittedForDeclaration,
     omittedForArgumentType,
   };
 }
@@ -580,13 +690,18 @@ export function readHostActionSurfaces(source) {
 }
 
 /**
- * The `continue` statements in `planActionsFromRegistrations` that are not one of its three declared filters.
+ * The `continue` statements in `planActionsFromRegistrations` that are not attributable to a declaration this source makes.
+ *
+ * ATTRIBUTABLE means one of four things, and none of them is a count: the loop consulted a published admission set
+ * (`PLAN_ACTION_LIFECYCLES`/`PLAN_ARGUMENT_TYPES`), it consulted the registry's expression declaration by CALL
+ * (`isExpressionOnlyAction`), or it compared the action id with a CONSTANT this source declares as an id. A comparison
+ * with a string literal is unattributable wherever it appears in the line - including beside an attributable one, because
+ * `x === DECLARED || x === "something"` is a second vocabulary wearing the first one's clothes.
  *
  * Line-scoped on purpose: a guard the formatter split over four lines is reported rather than guessed at, because the
- * failure this protects against is a reader believing it enumerated a vocabulary it did not. The expression filter is
- * allowed by its CALL, not by a name list: it may only reach the registry's declaration.
+ * failure this protects against is a reader believing it enumerated a vocabulary it did not.
  */
-function undeclaredSkips(builder) {
+function undeclaredSkips(builder, idConstants) {
   if (builder === null) return [];
   const at = builder.indexOf("for (const registration of registrations) {");
   const open = at < 0 ? -1 : builder.indexOf("{", at);
@@ -594,13 +709,40 @@ function undeclaredSkips(builder) {
   if (close < 0) return [];
   return splitTopLevel(builder.slice(open + 1, close), "\n")
     .filter((line) => /\bcontinue;/u.test(line))
-    .filter(
-      (line) =>
-        !/PLAN_ACTION_LIFECYCLES\.includes\(|PLAN_ARGUMENT_TYPES\.includes\(|isExpressionOnlyAction\(registration\.actionId\)/u.test(
-          line,
-        ),
-    )
+    .filter((line) => !attributableSkip(line, idConstants))
     .map((line) => `undeclared_skip:${line.trim()}`);
+}
+
+/** Whether one skipping line pins its reason to a declaration this source makes. */
+function attributableSkip(line, idConstants) {
+  if (/PLAN_ACTION_LIFECYCLES\.includes\(|PLAN_ARGUMENT_TYPES\.includes\(/u.test(line)) return true;
+  if (/isExpressionOnlyAction\(registration\.actionId\)/u.test(line)) return true;
+  if (/registration\.actionId\s*(?:===|!==)\s*"/u.test(line)) return false;
+  const compared = /registration\.actionId\s*===\s*([A-Z][A-Z0-9_]*)\b/u.exec(line);
+  return compared !== null && idConstants.has(compared[1]);
+}
+
+/**
+ * The action ids this source declares as named constants (`const EQUIP_TOOL_ACTION_ID = "equip_tool";`).
+ *
+ * The declaration an exclusion may be attributed to, read rather than listed: a fifth exclusion spelled through its own
+ * constant is attributable from the moment it is written, and the one thing this reader will not accept is the id itself
+ * spelled at the call site.
+ */
+function declaredIdConstants(source) {
+  const constants = new Map();
+  for (const match of source.matchAll(/const ([A-Z][A-Z0-9_]*) = "([a-z0-9_]+)";/gu)) constants.set(match[1], match[2]);
+  return constants;
+}
+
+/** The catalog actions the grammar excludes by comparing against one of those constants, and the constant each names. */
+function constantExclusions(builder, idConstants) {
+  const excluded = new Map();
+  if (builder === null) return excluded;
+  for (const [constant, actionId] of idConstants)
+    if (new RegExp(`registration\\.actionId\\s*===\\s*${constant}\\b`, "u").test(builder))
+      excluded.set(actionId, constant);
+  return excluded;
 }
 
 /**
@@ -959,6 +1101,10 @@ function omissionDeclaration(actionId, surfaceId, catalogEntry, grammar) {
   if (surfaceId !== "plan-grammar") return null;
   if (!grammar.lifecycles.includes(catalogEntry.lifecycle)) return "plan-grammar-lifecycle";
   if (grammar.expressionOnly.includes(actionId)) return "expression-only";
+  // Named with the declaration that excludes it, rather than with a prose reason written here: `equip_tool` is out of the
+  // vocabulary because `EQUIP_TOOL_ACTION_ID` says so, and the reason the constant exists lives beside the constant.
+  if (grammar.excluded.includes(actionId))
+    return `plan-grammar-declared-exclusion:${grammar.excludedDeclarations[actionId]}`;
   if (![...catalogEntry.types.values()].every((type) => grammar.argumentTypes.includes(type)))
     return "plan-grammar-argument-type";
   return null;
@@ -1021,6 +1167,43 @@ function projectionDisagreements(forwarded, catalog) {
   return findings;
 }
 
+/**
+ * The argument each surface lets the caller LEAVE OUT, crossed with the surface that still demands it.
+ *
+ * A key set states which names travel; the permission states which of them may be missing from a request. Two surfaces
+ * declare that permission in a form this gate can read - the wire's `resolvableArguments`, and the catalogue's
+ * `resolvedAtExecution` flag on the argument itself, which the Mod's runtime parser consults (`HasExecutionArgumentShape`)
+ * - and when they disagree, one of the two permissions is false.
+ *
+ * THE DIRECTION THAT IS A FINDING IS THE WIRE'S PERMISSION. A wire that admits an omission the published descriptor does
+ * not declare forwards a request the Mod refuses `invalid_args`, and the caller had no way to know: it followed the
+ * permission the Host stated. That is `surface_requires_what_another_calls_optional:<action>:<argument>:catalog:wire`.
+ *
+ * THE OTHER DIRECTION IS MEASURED, NOT FAILED, AND SAYS SO. A descriptor permitting an omission the wire still demands is
+ * the wire being STRICTER than its own publication - a different owner's unit, already counted by name in
+ * `host/src/protocol-catalog-agreement.test.ts` - and the report prints its size so this gate's green is never read as
+ * having closed it.
+ */
+function requirednessDisagreements(wireSurface, catalogSurface, carried) {
+  const findings = [];
+  const debt = [];
+  const catalogCarried = carried.get("catalog");
+  const wireCarried = carried.get("wire");
+  for (const [actionId, names] of wireSurface.optional) {
+    if (!catalogCarried.has(actionId)) continue;
+    const permitted = catalogSurface.actions.get(actionId)?.optional ?? new Set();
+    for (const name of names)
+      if (!permitted.has(name)) findings.push(`${CODES.requires}:${actionId}:${name}:catalog:wire`);
+  }
+  for (const [actionId, entry] of catalogSurface.actions) {
+    if (!wireCarried.has(actionId)) continue;
+    const permitted = wireSurface.optional.get(actionId) ?? new Set();
+    for (const name of entry.optional)
+      if (wireCarried.get(actionId).has(name) && !permitted.has(name)) debt.push(`${actionId}:${name}`);
+  }
+  return { findings: findings.sort(), debt: debt.sort() };
+}
+
 /** The verdict, worst first: a surface this gate could not read is blocked even when other surfaces also disagree. */
 function verdictOf({ findings, problems, blocks }) {
   if (blocks.length > 0 || problems.length > 0) return "blocked";
@@ -1040,8 +1223,17 @@ function verdictOf({ findings, problems, blocks }) {
  * `pairs` is the number of (action, argument) cells those actions contribute - the two numbers a zero can hide behind.
  */
 export function checkActionSurfaceParity(sources) {
-  const { catalogSurface, toolSurface, grammarSurface, carried, populations, actionIds, problems, blocks } =
-    readSurfaces(sources);
+  const {
+    catalogSurface,
+    wireSurface,
+    toolSurface,
+    grammarSurface,
+    carried,
+    populations,
+    actionIds,
+    problems,
+    blocks,
+  } = readSurfaces(sources);
   const delivery = readPlanSurfaceDelivery({
     composition: sources.planSurfaceComposition ?? "",
     filter: sources.planSurfaceFilter ?? "",
@@ -1053,6 +1245,8 @@ export function checkActionSurfaceParity(sources) {
   });
   const reading = deliveredReading(delivery, toolSurface, grammarSurface, actionIds);
   const findings = projectionDisagreements(toolSurface.forwarded, catalogSurface.actions);
+  const requiredness = requirednessDisagreements(wireSurface, catalogSurface, carried);
+  findings.push(...requiredness.findings);
   const hostActions = readHostActionSurfaces(sources.argumentDeclarations ?? "");
   problems.push(...hostActions.problems);
   const namedNowhere = [];
@@ -1094,6 +1288,13 @@ export function checkActionSurfaceParity(sources) {
     surfaces: SURFACE_IDS.length,
     pairs,
     populations,
+    wireKeysets: Object.freeze({
+      ...wireSurface.keysets,
+      optional: [...wireSurface.optional.values()].reduce((total, names) => total + names.size, 0),
+      actions: wireSurface.optional.size,
+      disagreeing: requiredness.findings.length,
+      wireStricter: requiredness.debt.length,
+    }),
     hostActions: Object.freeze({
       named: new Set([...hostActions.tables.values()].flatMap((named) => [...named])).size,
       declaredInMod: catalogSurface.actions.size,
@@ -1121,8 +1322,11 @@ export function checkActionSurfaceParity(sources) {
       lifecycles: grammarSurface.lifecycles,
       argumentTypes: grammarSurface.argumentTypes,
       expressionOnly: grammarSurface.expressionOnly,
+      excluded: grammarSurface.excluded,
+      excludedDeclarations: grammarSurface.excludedDeclarations,
       omittedForLifecycle: grammarSurface.omittedForLifecycle,
       omittedForExpression: grammarSurface.omittedForExpression,
+      omittedForDeclaration: grammarSurface.omittedForDeclaration,
       omittedForArgumentType: grammarSurface.omittedForArgumentType,
     },
     findings,
@@ -1167,7 +1371,17 @@ function readSurfaces({ catalog, wire, planGrammar, toolSchema, mod, argumentDec
   for (const [surfaceId, actions] of carried)
     for (const actionId of actions.keys())
       if (!catalogSurface.actions.has(actionId)) blocks.push(`${CODES.notDeclared}:${actionId}:${surfaceId}`);
-  return { catalogSurface, toolSurface, grammarSurface, carried, populations, actionIds, problems, blocks };
+  return {
+    catalogSurface,
+    wireSurface,
+    toolSurface,
+    grammarSurface,
+    carried,
+    populations,
+    actionIds,
+    problems,
+    blocks,
+  };
 }
 
 /**
@@ -1261,6 +1475,13 @@ export function describeReport(report) {
   const lines = [
     `actions examined ${report.examined} · surfaces ${report.surfaces} · pairs checked ${report.pairs}`,
     `population per authority: ${SURFACE_IDS.map((id) => `${id} ${report.populations[id]}`).join(" · ")}`,
+    // The wire's own reading, counted rather than assumed: how many key sets were resolved, how many could not be, and
+    // how many omissions one surface still calls required. `readable 0` is blocked by the reader, never a clean matrix.
+    `wire argument key sets: examined ${report.wireKeysets.examined} · readable ${report.wireKeysets.readable} · ` +
+      `unreadable ${report.wireKeysets.unreadable} · disagreeing ${report.wireKeysets.disagreeing}`,
+    `wire declared omissions: ${report.wireKeysets.optional} argument(s) over ${report.wireKeysets.actions} action(s) · ` +
+      `a surface calls optional and the wire still demands ${report.wireKeysets.wireStricter} ` +
+      "(the wire stricter than its publication, its own unit)",
     // Both sides of the crossing this gate did not make until now: the names the Host PUBLISHES, against the surface
     // the Mod declares. A non-zero third number is the finding; a zero population is a blocked reading above.
     `host action ids ${report.hostActions.named} (${Object.entries(report.hostActions.bySurface)
@@ -1290,7 +1511,13 @@ export function describeReport(report) {
       report.grammar.omittedForArgumentType.length
     }) · expression-only ${
       report.grammar.expressionOnly.length === 0 ? "none" : report.grammar.expressionOnly.join("/")
-    } (omits ${report.grammar.omittedForExpression.length})`,
+    } (omits ${report.grammar.omittedForExpression.length}) · excluded by a named declaration ${
+      report.grammar.excluded.length === 0
+        ? "none"
+        : report.grammar.excluded
+            .map((actionId) => `${actionId} ${report.grammar.excludedDeclarations[actionId]}`)
+            .join("/")
+    } (omits ${report.grammar.omittedForDeclaration.length})`,
   );
   for (const entry of report.blocked) lines.push(`blocked: ${entry}`);
   for (const entry of report.findings) lines.push(entry);

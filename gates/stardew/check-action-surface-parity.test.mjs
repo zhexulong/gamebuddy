@@ -22,12 +22,16 @@
  * red-proof: inject  a `charge` deleted from a mount's `parameters`, one deleted from its `toArgs`, the `sleep` key
  *   deleted from `EXECUTION_REQUEST_ARGUMENT_RULES`, its arm deleted from the Mod's `ExecutionArgumentProperties`, a
  *   `continue` added beside the grammar's declared filters, a `toArgs` spread, an argument deleted from the frozen
- *   table a forwarded mount names, and an empty source tree ->
+ *   table a forwarded mount names, a catalogue row that stops declaring `expectedTargetId` resolved at execution, a wire
+ *   rule whose key-set construction the reader does not know, a wire whose every rule is such a rule, and an empty
+ *   source tree ->
  *   `surface_refuses_what_another_accepts:till_soil:charge:tool-schema:*`,
  *   `surface_refuses_what_another_accepts:till_soil:charge:tool-args:*`,
  *   `surface_silently_omits_action:sleep:wire`, `surface_silently_omits_action:sleep:mod`,
  *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*`, `tool_args_unreadable:till_soil`,
  *   `tool_args_declaration_unreadable:<action>:<table>`,
+ *   `surface_requires_what_another_calls_optional:water_crop:expectedTargetId:catalog:wire`,
+ *   `wire_argument_key_set_unreadable:ride_bus`, `wire_argument_key_sets_none_readable:<n>`,
  *   `surface_refuses_what_another_accepts:harvest_bush:expectedTargetId:tool-args:catalog` and
  *   `tool_args_disagrees_with_declaration:harvest_bush`, and `action_surface_population_empty`
  */
@@ -37,6 +41,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   CODES,
   checkActionSurfaceParity,
@@ -46,8 +51,8 @@ import {
   readExpressionOnlyIds,
   readModSurface,
   readToolSurface,
+  readWireSurface,
 } from "./check-action-surface-parity.mjs";
-import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const real = (path) => readFileSync(resolve(REPOSITORY_ROOT, path), "utf8");
@@ -119,6 +124,7 @@ test("every authority of the real tree is read, and the catalog is the denominat
     execution -
       report.grammar.omittedForLifecycle.length -
       report.grammar.omittedForExpression.length -
+      report.grammar.omittedForDeclaration.length -
       report.grammar.omittedForArgumentType.length,
     "the plan vocabulary is every execution action minus the grammar's own declared exclusions",
   );
@@ -217,7 +223,9 @@ test("the live Game surface delivers a fifth of the tools the adapter builds, an
   );
   assert.equal(
     report.delivery.keptBecauseNotCarried,
-    report.grammar.omittedForLifecycle.length + report.grammar.omittedForArgumentType.length,
+    report.grammar.omittedForLifecycle.length +
+      report.grammar.omittedForDeclaration.length +
+      report.grammar.omittedForArgumentType.length,
     "every other action the plan cannot carry keeps its own tool too",
   );
   assert.deepEqual(report.delivery.droppedWithNoPlanRow, [], "no built action tool is dropped without a plan row");
@@ -365,6 +373,117 @@ test("red proof (inject): an action deleted from the wire declaration is a surfa
   const report = checkActionSurfaceParity(read);
   assert.equal(report.status, "failed");
   assertFinding(report, /^surface_silently_omits_action:sleep:wire$/u);
+});
+
+// ---------------------------------------------------------------------------
+// The wire's key set is REQUIRED ∪ OPTIONAL. `8264f967` let the five tile-addressed
+// actions leave `expectedTargetId` to the executor; the reader looked for the
+// literal `exactArgs(` call whose one argument is the list, found no set, and
+// blocked fourteen actions. The block was right and the reading was wrong.
+// ---------------------------------------------------------------------------
+
+test("the wire's key set is required ∪ optional, so the actions that leave their identity to the executor read", () => {
+  const surface = readWireSurface(real(PATHS.wire));
+  assert.deepEqual(surface.problems, []);
+  assert.equal(surface.keysets.unreadable, 0, surface.problems.join("\n"));
+  assert.equal(surface.keysets.readable, surface.keysets.examined, "every rule in the declaration resolves to a set");
+  // The five the incident blocked on: the tile, the pair and the exemplar are all still pinned, and the identity is the
+  // one name the row says the body mints. A reader that returned the optional list ALONE would lose the tile.
+  for (const actionId of ["pickup_forage", "pickup_item", "water_crop", "harvest_crop", "plant_seed"]) {
+    const names = surface.actions.get(actionId);
+    assert.ok(names !== undefined, `${actionId}: no key set was read`);
+    assert.deepEqual([...(surface.optional.get(actionId) ?? [])], ["expectedTargetId"], `${actionId} optional half`);
+  }
+  assert.deepEqual([...(surface.actions.get("water_crop") ?? [])].sort(), ["charge", "expectedTargetId", "x", "y"]);
+  assert.deepEqual([...(surface.actions.get("plant_seed") ?? [])].sort(), [
+    "expectedQualifiedItemId",
+    "expectedTargetId",
+    "slot",
+    "x",
+    "y",
+  ]);
+  // A row that pins every name it carries declares no omission, and is not reported as one.
+  assert.equal(surface.optional.has("till_soil"), false);
+});
+
+test("red proof (inject): a surface that still requires an argument the wire lets be omitted is named", () => {
+  const read = sources();
+  // The permission the wire states is the catalogue's own flag (`resolvedAtExecution`), which the Mod's parser reads. A
+  // descriptor that stops declaring it while the wire goes on admitting the omission is one of the two permissions being
+  // false - and the wire's permission is the one that reaches the game.
+  const water = read.catalog.actions.find((action) => action.actionId === "water_crop");
+  delete water.argumentSchema.expectedTargetId.resolvedAtExecution;
+  const report = checkActionSurfaceParity(read);
+  // The verdict is `blocked` the moment ANY authority is unreadable, so the proof here is the finding by name. What the
+  // assertion pins is that this disagreement can never pass: a reader that compared only which names exist would call
+  // these two surfaces agreed.
+  assert.notEqual(report.status, "passed", "a requiredness disagreement is never green");
+  assertFinding(report, /^surface_requires_what_another_calls_optional:water_crop:expectedTargetId:catalog:wire$/u);
+  assert.equal(report.wireKeysets.disagreeing, 1, "one cell disagrees, and the count says so");
+  // The key sets themselves still agree, which is the point: this defect is invisible to a reader that only compares
+  // which names exist.
+  assert.equal(report.wireKeysets.readable, report.wireKeysets.examined);
+});
+
+test("red proof (inject): a wire rule whose key-set construction this reader does not know still BLOCKS", () => {
+  const read = sources();
+  read.wire = read.wire.replace(
+    `  ride_bus: [exactArgs([], "invalid_args")],\n`,
+    `  ride_bus: [exactArgsOfBuiltList("invalid_args")],\n`,
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blocked.includes("wire_argument_key_set_unreadable:ride_bus"), report.blocked.join("\n"));
+  assert.equal(report.wireKeysets.unreadable, 1);
+});
+
+test("red proof (inject): a wire whose every rule this reader cannot resolve is BLOCKED, never green", () => {
+  const read = sources();
+  read.wire = read.wire.replace(
+    /export const EXECUTION_REQUEST_ARGUMENT_RULES = Object\.freeze\(\{[\s\S]*?\n\} satisfies Record</u,
+    "export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({\n  ride_bus: [exactArgsByNumber(3)],\n} satisfies Record<",
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.equal(report.wireKeysets.readable, 0);
+  assert.ok(report.wireKeysets.unreadable > 0);
+  assert.ok(
+    report.blocked.includes(`wire_argument_key_sets_none_readable:${report.wireKeysets.examined}`),
+    report.blocked.join("\n"),
+  );
+});
+
+test("an exclusion the grammar names by CONSTANT is read, and the property replaces the count", () => {
+  const report = readActionSurfaceParity();
+  // `equip_tool` is out of the plan vocabulary because `EQUIP_TOOL_ACTION_ID` says so, not because a list here says
+  // three exclusions exist: the action leaves the population, and the reason it left is the declaration that removed it.
+  assert.deepEqual(report.grammar.excluded, ["equip_tool"]);
+  assert.deepEqual(report.grammar.excludedDeclarations, { equip_tool: "EQUIP_TOOL_ACTION_ID" });
+  assert.deepEqual(report.grammar.omittedForDeclaration, ["equip_tool"]);
+  const entry = report.omittedWithRoute.find((candidate) => candidate.actionId === "equip_tool");
+  assert.ok(entry !== undefined, "a declared exclusion nobody wrote down an omission for");
+  assert.deepEqual(entry.declarations, ["plan-grammar-declared-exclusion:EQUIP_TOOL_ACTION_ID"]);
+  assert.deepEqual(entry.surfaces, ["plan-grammar"]);
+  assert.ok(entry.route !== null, "a declared exclusion with no route would be the action disappearing");
+  assert.equal(report.routes.reachable, report.examined);
+});
+
+test("red proof (inject): a FIFTH exclusion spelled as a literal is unattributable, even beside the declared one", () => {
+  const read = sources();
+  // The shape a maintained vocabulary takes: the declared exclusion keeps its constant and a second one is written past
+  // it. A reader that accepts a line because it CONTAINS a known constant passes this, which is how a count dies - one
+  // plausible extension at a time.
+  read.planGrammar = read.planGrammar.replace(
+    "    if (registration.actionId === EQUIP_TOOL_ACTION_ID) continue;",
+    '    if (registration.actionId === EQUIP_TOOL_ACTION_ID || registration.actionId === "sweep_scythe") continue;',
+  );
+  const report = checkActionSurfaceParity(read);
+  const reported = [...report.blocked, ...report.findings];
+  assert.ok(
+    reported.some((entry) => entry.startsWith("plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:")),
+    reported.join("\n"),
+  );
+  assert.notEqual(report.status, "passed");
 });
 
 test("red proof (inject): an action deleted from the Mod's reader is a surface that omits it", () => {

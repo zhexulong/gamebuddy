@@ -36,6 +36,12 @@ const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze([
   // from. Published so a consumer WITHOUT a running game can answer "can my next step depend on this one" - the compiler
   // that has to answer it reads nothing but this artifact, and its one edge today is "the same (x, y) tile".
   "effects",
+  // What the action is called and the kinds of thing it acts on. The Host's mount loop reads the label from the
+  // descriptor instead of from a table keyed by action id, so this gateway refusing it would make the published surface
+  // unreadable to the one consumer that builds a tool out of a declaration. The SENTENCE a model reads is not a member:
+  // the Host owns it, and a descriptor carrying `description` is refused here and by the Host's exact-key gate.
+  "label",
+  "targetKinds",
 ]);
 // `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
@@ -122,8 +128,14 @@ const MAX_FACTS = 32;
 const MAX_RESOURCE_CLAIMS = 16;
 const MAX_IDENTITY_VERSION = 2_147_483_647;
 const MAX_STRING_LENGTH = 128;
-// An argument's `description` is a SENTENCE, not a name, so it is measured against the same 512 the Host applies to it.
+// An argument's `description` is a SENTENCE, not a name, so it is measured against the same 512 the Host applies to it
+// (`protocol.ts` `isValidActionDescriptor`). The action's own sentence used to sit here too, at 2,048; it left on
+// 2026-11-25 because it is the Host's prose, which leaves this as the only prose the artifact carries.
 const MAX_DESCRIPTION_LENGTH = 512;
+// A label is a NAME: the Host's own wire bound, and the same 128 an identifier gets.
+const MAX_LABEL_LENGTH = 128;
+const MAX_TARGET_KINDS = 8;
+const TARGET_KIND = /^[a-z][a-z0-9_]{0,63}$/;
 const MAX_VOCABULARY_VALUES = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 /**
@@ -267,7 +279,29 @@ function isValidDescriptor(descriptor) {
     && (nativeBinding === INVALID
       || (typeof nativeBinding === "string" && nativeBinding.length > 0 && nativeBinding.length <= MAX_STRING_LENGTH))
     && (synthetic === INVALID || synthetic === true)
-    && (effects === INVALID || validEffects(effects));
+    && (effects === INVALID || validEffects(effects))
+    && validPresentation(descriptor);
+}
+
+/**
+ * What the action is called and the kinds it acts on - together, or not at all.
+ *
+ * The rules are the Host's own (`protocol.ts` `isValidActionDescriptor`) and the producer's
+ * (`FarmhandActionPresentationCatalog`): a descriptor this gateway admits and the Host then refuses is the same drift
+ * seen from the other side, and so is one the Mod could not have published. Absence is the statement that an action
+ * publishes nothing, which is why a present-but-blank member is REFUSED rather than read as absent - it would read on
+ * this side exactly like a label somebody wrote. There is no `description` member to check: prose about the tool belongs
+ * to the Host, and the key set above refuses one that tries to come back.
+ */
+function validPresentation(descriptor) {
+  const label = ownValue(descriptor, "label");
+  const targetKinds = ownValue(descriptor, "targetKinds");
+  if (label === INVALID && targetKinds === INVALID) return true;
+  if (label === INVALID || targetKinds === INVALID) return false;
+  if (typeof label !== "string" || label.length === 0 || label.length > MAX_LABEL_LENGTH) return false;
+  if (label.trim().length === 0) return false;
+  if (!Array.isArray(targetKinds) || targetKinds.length === 0 || targetKinds.length > MAX_TARGET_KINDS) return false;
+  return targetKinds.every((kind) => typeof kind === "string" && TARGET_KIND.test(kind));
 }
 
 /**
