@@ -473,8 +473,22 @@ test(
       assert.equal(facts.mode, "armable");
       assert.equal(facts.helloAccepted, true);
       assert.deepEqual(
-        facts.operations.map((row) => `${row.operation}:${row.outcome}`),
-        ["arm_attempt:armed", "launch_role:role_active", "role_exited:player_host", "contain_role:role_contained"],
+        facts.operations.map((row) => `${row.operation}:${row.outcome}:${row.exitCode ?? "-"}`),
+        [
+          "arm_attempt:armed:-",
+          "launch_role:role_active:-",
+          "role_exited:player_host:0",
+          "contain_role:role_contained:-",
+        ],
+      );
+      // The row above is the ONE record a lane reads back from a dead Player Host, and
+      // `role_exited:player_host` alone cannot say whether the game crashed or quit: the native code is the
+      // whole difference. It is a uint32 the Guardian already reported and this broker already holds, so
+      // dropping it left the lane to guess (`roundw`: `instance=crashed` with no code anywhere).
+      assert.equal(
+        facts.operations.find((row) => row.operation === "role_exited")?.exitCode,
+        0,
+        "the role-exit record must carry the native exit code the Guardian reported, not only the role name",
       );
       assert.equal(facts.guardians.length, 1);
       assert.deepEqual(facts.refusals, []);
@@ -647,13 +661,13 @@ test(
 
       const facts = broker.facts();
       assert.deepEqual(
-        facts.operations.map((row) => `${row.operation}:${row.outcome}`),
+        facts.operations.map((row) => `${row.operation}:${row.outcome}:${row.exitCode ?? "-"}`),
         [
-          "arm_attempt:armed",
-          "arm_attempt:armed",
-          "launch_role:role_active",
-          "role_exited:player_host",
-          "contain_role:role_contained",
+          "arm_attempt:armed:-",
+          "arm_attempt:armed:-",
+          "launch_role:role_active:-",
+          "role_exited:player_host:0",
+          "contain_role:role_contained:-",
         ],
       );
       // One Guardian per attempt, and the ended attempt's is the one that was settled: two attempts, never

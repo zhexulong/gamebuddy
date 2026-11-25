@@ -767,7 +767,13 @@ export function createGuardianRoleBroker({
         }),
         ROLE_EXIT_KEYS,
       );
-      operations.push(Object.freeze({ operation: "role_exited", outcome: value.role }));
+      // The native exit code travels with the row because it is the ONE fact that separates "the game
+      // crashed" from "the game quit": the surface reports `instance=crashed` or `stopped` from that number
+      // alone (`host/src/game-browser/game-browser-state-provider.ts:163-170`). A lane reading this record back
+      // had `role_exited:player_host` and no code at all, for a Player Host that died seconds after its world
+      // loaded (measured 2026-11-26, `.tmp/lane-whycrah.md`). It is a uint32 already validated above, so this
+      // adds nothing secret to the redacted account.
+      operations.push(Object.freeze({ operation: "role_exited", outcome: value.role, exitCode: value.exitCode }));
       log(`role-broker: guardian reported ${value.role} exited with ${String(value.exitCode)}`);
       return;
     }
