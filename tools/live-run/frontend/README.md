@@ -149,6 +149,34 @@ the value never enters a command line, a log, or this README.
 `--wait-for-cdp=<seconds>` (default `0`) is the only way to wait for a held CDP port instead of being
 refused by name; `GB_SHOTS_CDP_WAIT_MS` is the same budget from the environment.
 
+## A full round does not stop at its first red
+
+The round is a schedule (`lib/run-phases.mjs`), not a straight line: `check` → `pin` → `build`; the shared
+invocation (`launch` + `capture`, every driver that owns no world); one `cleanup` + `launch` + `capture` per
+world-owning driver (`lib/world-invocations.mjs`); then the round's own `cleanup` + `report`. A red phase **names
+its scope**, and only a round-scoped red ends the round:
+
+| scope | phases | what a red ends |
+|---|---|---|
+| `round` | `check`, `pin`, `build` | the round: nothing below has a worktree or an artifact to mount, so every scheduled invocation is printed `not attempted` with that phase as its reason |
+| `invocation` | `launch`, `capture`, `cleanup`, `report` | that invocation's reading only: the next world invocation is a mount of its own and is still attempted |
+
+So `DONE-CAPTURE failed=1 of 23` in the shared invocation no longer costs `x-game-death`, `y-game-endgame` and
+`z-game-disconnect` their reading (ROUND33D measured exactly that cost: one reading out of four,
+`.tmp/lane-round33d.md` §5.3). The round's exit code is the worst red phase's own code, and the summary quotes
+each invocation's own totals - `ROUND: shared attempted: launch=0 capture=3 -- DONE-CAPTURE failed=1 of 23 …` -
+so continuing can never present a red round as green.
+
+Two dependencies are printed rather than assumed:
+
+- **the borrowed launch chain.** Each world invocation runs the roster's launch-chain driver first (`w-game-launch`
+today), because that is the only driver that brings a world to `attachment=attached`. The round prints
+`WORLDS: x-game-death borrows w-game-launch …`, and when that borrow is red on a mount the summary says the
+world's own driver measured nothing **because of it**, instead of leaving a bare `not-measured` count.
+- **the machine-quiet gate wins.** An invocation whose `launch` was refused (`machine_not_quiet`, or a held CDP
+port) does not attempt its `capture` - there is no mounted Host to read - and the next invocation asks the gate
+again for its own mount. Continuing after a red never launches a game on a machine the gate has refused.
+
 ## The five worktree prerequisites (each one bit a lane)
 
 A detached worktree is bare: no `node_modules`, no submodules, no build outputs. `pin` materializes

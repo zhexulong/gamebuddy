@@ -26,6 +26,12 @@
 // SMAPI writes ONE log file for every game on the machine and a launch measured through it is a reading of
 // two games, which is how ROUND33's product red was actually a contaminated measurement).
 //
+// A FULL ROUND DOES NOT STOP AT ITS FIRST RED. A phase whose red ends only the invocation it happened in
+// (`launch`, `capture`, `cleanup`, `report`) leaves the invocations after it to run: they are mounts of their own,
+// so the round keeps every reading it can afford and exits with the worst code it saw. Only `check`, `pin` and
+// `build` - the worktree and the artifact every invocation mounts - end the round, and even then every scheduled
+// invocation is named `not attempted` with that phase as its reason (`lib/run-phases.mjs`).
+//
 // Whatever way this process leaves - a phase that failed, a full run that finished, or an abnormal
 // exit - the run closes through one owner (`lib/run-owner.mjs`): every process the run started is
 // terminated, its CDP lock is released, and what remained is printed as `LEFTOVERS:`. The one
@@ -45,7 +51,6 @@ import {
   saveRunConfig,
 } from "./lib/config.mjs";
 import { describePhaseFailure } from "./lib/phase-failure.mjs";
-import { describeWorldInvocations, worldInvocations } from "./lib/world-invocations.mjs";
 import {
   closeProcessLedger,
   collectProcessLedger,
@@ -56,13 +61,6 @@ import {
 } from "./lib/process-ledger.mjs";
 import { describeGameCleanup, recordedGameProcesses, recordRunGame, survivingGameIdentities } from "./lib/run-game.mjs";
 import {
-  closeRunInvocation,
-  describeReaper,
-  openRunInvocation,
-  reapRunOrphans,
-  writeReaperReading,
-} from "./lib/run-reaper.mjs";
-import {
   describeLeftovers,
   describeTeardown,
   inspectRunLeftovers,
@@ -72,9 +70,17 @@ import {
   teardownRun,
   writeLeftoversReading,
 } from "./lib/run-owner.mjs";
+import { captureTotals, describeRound, PHASES, roundSchedule, runRound } from "./lib/run-phases.mjs";
+import {
+  closeRunInvocation,
+  describeReaper,
+  openRunInvocation,
+  reapRunOrphans,
+  writeReaperReading,
+} from "./lib/run-reaper.mjs";
+import { describeWorldInvocations, worldInvocations } from "./lib/world-invocations.mjs";
 import { DRIVERS } from "./phases/drivers.mjs";
 
-const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
 const PS_POLICY = ["-NoProfile", "-ExecutionPolicy", "Bypass"];
 
@@ -328,7 +334,9 @@ async function phaseLaunch(paths, run) {
       if (state.kind === "launch_failed") {
         console.log(`LAUNCH: FAILED — tail of ${paths.launchLog}:`);
         console.log(readFileSync(paths.launchLog, "utf8").split("\n").slice(-30).join("\n"));
-        return { code: 2 };
+        // The refusal's own code travels with the phase result: the round says which invocation did not mount and
+        // WHY without re-deriving it from `launch.json` (`machine_not_quiet`, `cdp_port_held_by_pid`, …).
+        return { code: 2, refusal: typeof state.code === "string" ? state.code : null };
       }
     } catch {
       /* launchStateFile not written yet */
@@ -390,7 +398,8 @@ async function phaseCapture(paths, run, values) {
  * The split is DERIVED from the roster (`lib/world-invocations.mjs`), never listed here: the shared invocation
  * runs every driver that does not own a world, and each world-owning driver then gets a `cleanup` + `launch` +
  * `capture` of its own, with the launch-chain driver ahead of it on that same mount because that driver is the
- * one that brings a world to `attachment=attached`.
+ * one that brings a world to `attachment=attached`. The chain driver is what each world invocation BORROWS, and
+ * the round prints which one it borrowed and what a red borrow means (`lib/run-phases.mjs`).
  *
  * `--driver=` stays the operator's selection: a world-owning driver it does not name gets no mount, and a
  * selection that names only world-owning drivers runs no shared invocation at all.
@@ -415,7 +424,7 @@ function captureInvocations(values) {
     );
     if (unknown.length > 0) lines.push(`WORLDS: --driver= names ${unknown.join(",")}, which the roster does not hold`);
   }
-  return { shared: shared.length === 0 ? null : shared, invocations, lines };
+  return { shared: shared.length === 0 ? null : shared, invocations, bringers: worlds.bringers, lines };
 }
 
 async function phaseCleanup(paths, run) {
@@ -484,13 +493,54 @@ async function main() {
     cleanup: "cleanupLog",
     report: "reportLog",
   };
+  const PHASE_RUNNERS = {
+    check: () => phaseCheck(paths, run),
+    pin: () => phasePin(paths, run),
+    build: () => phaseBuild(paths, run),
+    launch: () => phaseLaunch(paths, run),
+    capture: (options) => phaseCapture(paths, run, { ...values, ...options }),
+    cleanup: () => phaseCleanup(paths, run),
+    report: () => phaseReport(paths, run),
+  };
+  const phaseCode = (result) => (typeof result === "object" && result !== null ? result.code : result);
+  // A STEPWISE run keeps the old contract: a red phase ends the process here, with its own refusal on the line.
   const runner = async (name, fn) => {
     console.log(`== phase ${name} ==`);
     const result = await fn();
-    const code = typeof result === "object" && result !== null ? result.code : result;
+    const code = phaseCode(result);
     if (code !== 0)
       throw new Error(describePhaseFailure({ phase: name, code, logPath: paths[PHASE_LOGS[name]] ?? paths.runLog }));
     return result;
+  };
+  /*
+   * THE SAME PHASES, READ AS A ROUND READS THEM: a red is a reading (its code, its own refusal, the capture totals
+   * this invocation printed) instead of a throw, and `lib/run-phases.mjs` decides which scope it ends. Every
+   * capture totals line is taken from the lines THIS invocation appended to the append-only capture log, never
+   * from the last one in the file, so one invocation never lends another its totals.
+   */
+  const captureReadings = () => {
+    try {
+      return captureTotals(readFileSync(paths.captureLog, "utf8"));
+    } catch {
+      return [];
+    }
+  };
+  const roundPhase = async (name, options) => {
+    console.log(`== phase ${name} ==`);
+    const before = name === "capture" ? captureReadings().length : 0;
+    const result = await PHASE_RUNNERS[name](options);
+    const code = phaseCode(result);
+    const totals = name === "capture" ? (captureReadings()[before] ?? null) : null;
+    const named = typeof result === "object" && result !== null && typeof result.refusal === "string";
+    let failure = null;
+    // A capture's red is its OWN `DONE-CAPTURE` line: the phase log is append-only across invocations, so the last
+    // `DRIVER … FAILED` in it may belong to an earlier mount, and an exit before the totals line is named as that.
+    if (code !== 0)
+      failure =
+        name === "capture"
+          ? (totals?.line ?? `capture printed no DONE-CAPTURE line for this invocation (exit ${code})`)
+          : describePhaseFailure({ phase: name, code, logPath: paths[PHASE_LOGS[name]] ?? paths.runLog });
+    return { code, refusal: named ? result.refusal : null, failure, totals };
   };
 
   // One owner for the whole run, opened once and closed once, whichever way this process leaves.
@@ -599,27 +649,17 @@ async function main() {
     if (fullMode) {
       const worlds = captureInvocations(values);
       for (const line of worlds.lines) console.log(line);
-      await runner("check", () => phaseCheck(paths, run));
-      await runner("pin", () => phasePin(paths, run));
-      await runner("build", () => phaseBuild(paths, run));
-      if (worlds.shared !== null) {
-        await runner("launch", () => phaseLaunch(paths, run));
-        await runner("capture", () => phaseCapture(paths, run, { ...values, drivers: worlds.shared ?? undefined }));
-      }
-      for (const invocation of worlds.invocations) {
-        console.log(
-          `WORLDS: ${invocation.driver} gets a mounted Host of its own: cleanup, launch, capture --driver=${invocation.drivers.join(",")}`,
-        );
-        await runner("cleanup", () => phaseCleanup(paths, run));
-        await runner("launch", () => phaseLaunch(paths, run));
-        await runner("capture", () =>
-          phaseCapture(paths, run, { ...values, drivers: invocation.drivers, force: true }),
-        );
-      }
-      await runner("cleanup", () => phaseCleanup(paths, run));
-      await runner("report", () => phaseReport(paths, run));
+      const schedule = roundSchedule(worlds);
+      const round = await runRound({ schedule, runPhase: roundPhase, log: (line) => console.log(line) });
+      for (const line of describeRound(round)) console.log(line);
       console.log("DONE-FULL-RUN");
-      process.exit(close({ code: 0, reason: "run_complete", teardown: "kill" }));
+      process.exit(
+        close({
+          code: round.code,
+          reason: round.code === 0 ? "run_complete" : "round_red",
+          teardown: "kill",
+        }),
+      );
     }
     switch (phase) {
       case "check":
