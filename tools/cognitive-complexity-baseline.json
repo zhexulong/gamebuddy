@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 83 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 10 class(es) over 200, 24 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 113, class ExecutionManager = 4093, largest ExecutionManager at 25923 lines / 866 members across 54 partial(s).",
-  "revision": "9afad727",
+  "revision": "3d704e26",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -755,7 +755,7 @@
       "language": "ts",
       "name": "host/src/local-stardew-bridge.ts#LocalStardewBridgeClient.receive",
       "file": "host/src/local-stardew-bridge.ts",
-      "line": 1033,
+      "line": 1034,
       "value": 103,
       "reason": "recorded 96 at 11e7cc9b and 96 at `53d605b8^`; 106 at `53d605b8` and at HEAD. `53d605b8` (`bridge(attachment): a reply to a request we stopped waiting for is late news, not a teardown`) added 48 lines to this file and deleted none: the late-reply arm is a new branch chain inside `receive`, and no other commit has touched the file since this record. RECORDED AS DEBT, not accepted: the ten points are the new arm's branches, and the cheaper shape - lifting the late-reply arm into its own method - is a change to the bridge's receive path that this lane does not make."
     },
@@ -772,7 +772,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 5732,
+      "line": 5733,
       "value": 71,
       "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one. 65 -> 67 here: the wallet's arm is the same three-part optional scalar test (`value.money !== undefined && value.money !== null && !isNonNegativeSafeInteger(value.money)`), inline for the same reason - a balance the diagnostic cannot name is a refusal that prints the bare `invalid_snapshot` the rest of this function exists to replace. Two points for one field, measured by the gate's own biome reading."
     },
@@ -781,16 +781,16 @@
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 6833,
-      "value": 217,
-      "reason": "recorded at 9afad727: 199 -> 217 (+18), and this entry had no reason before - the fit was recorded, the arithmetic was not. One addition and one deletion in the same unit: the presentation pair (`label` + `targetKinds`) is validated on the descriptor now (they travel together, the label is refused blank, the kinds list is bounded - four arms and the return that closes them), and the `description` sentence left this surface for the Host's own tool descriptions, taking its three-part string check with it. WHAT BELONGS ELSEWHERE: the pair is one member's contract, the same shape `isValidActionRegistration` beside it already has, so it is a candidate for its own predicate rather than eighteen points inside a 195-line chain; the extraction is a host/src edit and this record is the gate's own reading of the tree, so it is measured here instead of paid here."
+      "line": 6846,
+      "value": 224,
+      "reason": "recorded at 9afad727: 199 -> 217 (+18), and this entry had no reason before - the fit was recorded, the arithmetic was not. One addition and one deletion in the same unit: the presentation pair (`label` + `targetKinds`) is validated on the descriptor now (they travel together, the label is refused blank, the kinds list is bounded - four arms and the return that closes them), and the `description` sentence left this surface for the Host's own tool descriptions, taking its three-part string check with it. WHAT BELONGS ELSEWHERE: the pair is one member's contract, the same shape `isValidActionRegistration` beside it already has, so it is a candidate for its own predicate rather than eighteen points inside a 195-line chain; the extraction is a host/src edit and this record is the gate's own reading of the tree, so it is measured here instead of paid here. RE-RECORDED at 3d704e26: 217 -> 224, the HIGHER of the two readings this pass measured, because a recorded value may only shrink and the lower one would red a tree nobody committed. MEASURED, not inferred: 220 for this member at `9afad727` and at `dcb28769` (`cc3469a8`'s parent), 224 at `cc3469a8` and 224 at `3d704e26`; `git log -L` says only four commits after `ec01f5c3` touch this member at all - `76c79a98`, `fb1b8f53`, `cc3469a8`, `3d704e26`. THE +4 IS `cc3469a8`'s and it is one edit: the argument `description` refusal, one `if` of three conditions, became `if (typeof arg.description !== \"string\" || arg.description.length === 0) return false;` and `if (arg.description.length > MAX_ARGUMENT_DESCRIPTION_LENGTH) return false;`, with an unconditional `return false;` left behind the second. `3d704e26` deletes that stray statement and Biome charges nothing for it - 224 on both sides of that commit. WHY 217 WAS NEVER THE TREE: it was taken in a worktree carrying the co-worker lane's uncommitted removal of the descriptor-level `description` check, worth -3, so no committed tree of this member has read 217. This worktree reads 221 for that same uncommitted hunk, and 221 is not recorded here because that number is theirs to land or drop."
     },
     {
       "id": "ts:host/src/protocol.ts#validateBridgeMessage",
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 3022,
+      "line": 3027,
       "value": 66,
       "reason": "recorded at 11e7cc9b: 66 -> 69, in `51ccae18` (a policy change reaches a running world as a message, not a poll). Measured 66 at 83ae46f0, 69 at that commit and at every commit after it."
     },
@@ -1352,10 +1352,10 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
-      "line": 669,
-      "lines": 1692,
-      "methods": 55,
-      "reason": "Re-recorded at 2014f1c2: lines 1571 -> 1620 (+334/-3 landed by 5b10e0d2, +65 by 2014f1c2) and methods 53 -> 54. The record was STALE, not current, when this pass replaced it: it predated the effects landing (5b10e0d2), which added the `effects` declarations this class publishes and the helpers that name them. THE METHOD is 2014f1c2's `ResolvesToolSlotAtExecution(FarmhandActionDescriptor)`: it throws at type initialisation for a row that declares no `tool:` claim or no `slot`, so the omission cannot be granted to a body that could not answer it. THE ROWS are the fifteen actions that now pass `AutoSelectedToolSlotMeaning` into `SlotTargetWith`. Class complexity is 9, so these lines are declarations, not branches."
+      "line": 678,
+      "lines": 1711,
+      "methods": 56,
+      "reason": "Re-recorded at 2014f1c2: lines 1571 -> 1620 (+334/-3 landed by 5b10e0d2, +65 by 2014f1c2) and methods 53 -> 54. The record was STALE, not current, when this pass replaced it: it predated the effects landing (5b10e0d2), which added the `effects` declarations this class publishes and the helpers that name them. THE METHOD is 2014f1c2's `ResolvesToolSlotAtExecution(FarmhandActionDescriptor)`: it throws at type initialisation for a row that declares no `tool:` claim or no `slot`, so the omission cannot be granted to a body that could not answer it. THE ROWS are the fifteen actions that now pass `AutoSelectedToolSlotMeaning` into `SlotTargetWith`. Class complexity is 9, so these lines are declarations, not branches. RE-RECORDED at 3d704e26: methods 55 -> 56 and lines 1692 -> 1711. THE METHOD IS THE ONE THIS LANE ADDED: `cc3469a8`'s `public static void ValidateArgumentDescriptions(IReadOnlyList<FarmhandActionRegistration>)`, the refusal that names the action, the argument and both numbers before an over-bound sentence can reach `hello_ack`. Measured: 55 methods at `c0d3ce83` and 56 at `cc3469a8` - the only two commits after `ec01f5c3` that touch this file - so the one method is that refusal and not, as a constant would be, a field. THE LINES ARE NOT THIS LANE'S: the committed tree at `3d704e26` reads 1683 lines / 56 methods, and 1711 is what this worktree measures because another lane's `EmoteMeaning`, `Transition(bool entersDoor)` -> `Transition()` and `express_emote` rows sit uncommitted in this file (+28 lines, no method). 1711 is recorded as the higher of the two readings, so rows nobody has committed cannot red this gate and the commit's own 1683 is a shrink under it; recording 1683 would have made this row a red on that work."
     },
     {
       "id": "cs:FarmhandBodyProgramController",

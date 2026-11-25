@@ -7,8 +7,7 @@
  * (`use_mine_ladder.expectedTargetId`), the Host's `isValidActionDescriptor` bounded an argument description at 512,
  * and ONE refused descriptor refuses the WHOLE `hello_ack` registration list - so the attach died on a sentence and the
  * round mounted no tool. Nothing in the entry point had noticed, because `action-surface-check` - the reader that had
- * been answering `stardew_action_surface_invalid_action` for that very artifact - ran in no rung: the Mod's own
- * publish-time contract was green nowhere.
+ * been refusing that very artifact - ran in no rung: the Mod's own publish-time contract was green nowhere.
  * </p>
  *
  * <p>
@@ -18,8 +17,12 @@
  * 96 KB read.
  * </p>
  *
- * red-proof: history  the `49104c70`-era artifact (595-character sentence, the Mod's own bytes) -> the reader refuses
- *   with `stardew_action_surface_invalid_action` and this gate exits 1 naming the artifact.
+ * red-proof: history  the `49104c70`-era artifact (120,907 bytes, the Mod's own bytes) -> `runActionSurfaceCheck` refuses
+ *   with `stardew_action_surface_bounds` and this gate exits 1; measured 2026-11-25 by handing that exact artifact to a
+ *   copy of the package's own reader.
+ * red-proof: inject  this artifact with one argument's `description` inflated to the 595 characters
+ *   `use_mine_ladder.expectedTargetId` published on 2026-11-25 (`travel.x`) -> the same `stardew_action_surface_bounds`,
+ *   this time from the projection's own description bound rather than the byte budget; measured 2026-11-25.
  * red-proof: history  the `49104c70`-era C# catalog, judged by `check-head-build` instead: the producer's own refusal
  *   fires first (`farmhand action 'use_mine_ladder' argument 'expectedTargetId' description is 595 characters, over the
  *   512 ...`), which is why the artifact cannot be exported at all.
@@ -27,4 +30,7 @@
 import { runActionSurfaceCheck } from "../../integrations/stardew/action-development/src/action-surface-check.mjs";
 
 const report = await runActionSurfaceCheck();
+process.stdout.write(
+  `actions examined ${report.actions} · executable ${report.executable} · readOnly ${report.readOnly}\n`,
+);
 process.stdout.write(`${JSON.stringify(report)}\n`);

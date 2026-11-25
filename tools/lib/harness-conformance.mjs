@@ -866,6 +866,21 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "a report, not a gate: it exits 0 unconditionally unless --fail-under <n> is passed, and no script, workflow or list in this repository passes one (`git grep -n fail-under` finds the flag only in its own header and its own argument parser), so nobody has defined what well-covered means and its default run has no threshold to fail against",
   },
   {
+    gate: "check-action-surface-artifact.mjs",
+    reason:
+      "prints its reading as one `{schema, status, actions, executable, readOnly}` line rather than a `{gate, checks[]}` " +
+      "report, so a green run says nothing about whether the artifact it reads can be refused; that is carried by the " +
+      "package's own reader, which this gate only schedules - measured 2026-11-25: `49104c70`'s 120,907-byte " +
+      "`action-surface.v1.json` handed to `runActionSurfaceCheck` refuses with `stardew_action_surface_bounds` and the " +
+      "gate exits 1, and so does THIS artifact with one argument `description` inflated to the 595 characters " +
+      "`use_mine_ladder.expectedTargetId` published (`travel.x`), which is the defect the gate exists for. The " +
+      "producer-side falsifier is `integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/" +
+      "ArgumentDescriptionFitsTheWireBoundTests.cs` (`test:stardew:core`), whose " +
+      "`ASentenceOneCharacterOverTheBoundIsRefusedNamingTheActionTheArgumentAndBothNumbers` hands " +
+      "`ValidateArgumentDescriptions` a 513-character sentence (512 + 1) and requires the refusal to name the action, " +
+      "the argument, both numbers and `invalid_hello_ack` - one over-bound sentence refuses the whole `hello_ack` list",
+  },
+  {
     gate: "check-ci-coverage.mjs",
     reason:
       "compares two inventories (gate scripts vs workflow invocation). Its falsifier exists - " +

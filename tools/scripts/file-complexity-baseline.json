@@ -34,7 +34,7 @@
     "integrations/stardew/StardewBodyController.cs": 2975,
     "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs": 2203,
     "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs": 2065,
-    "tools/lib/harness-conformance.mjs": 1907,
+    "tools/lib/harness-conformance.mjs": 1913,
     "tools/lib/multiday-baseline.test.mjs": 2100,
     "tools/lib/stardew-native-local-player-fixture.mjs": 1771,
     "tools/lib/task-purpose.mjs": 2041,
