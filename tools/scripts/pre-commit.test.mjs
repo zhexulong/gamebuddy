@@ -15,6 +15,12 @@
  * its modes - `--write` rewrites files, `--stdin-file-path=<path>` formats stdin to stdout - so a hook that goes
  * back to formatting files in the worktree fails these tests on their substance rather than on a missing feature.
  *
+ * THE SECOND SUBJECT: A RECORD MAY NOT OUTLIVE ITS READING. The hook also reads the complexity and duplication ratchets
+ * over the tree the index describes and refuses a commit whose change makes a record disagree with that tree - the case
+ * `a staged growth that leaves its re-record behind is refused by name`. Both gates are the real ones, with a real
+ * tree-sitter and a real jscpd, so what the cases prove is the gates' own verdict; only Biome is the stand-in, which is
+ * why the fixture's TypeScript reading is empty and its Mod class carries the complexity cases.
+ *
  * red-proof: history  the pre-fix hook replayed from `d8567157^` in a copy of this tree, over the same scenario,
  *                     committed 210 insertions and 61 deletions - the neighbouring lane's whole rewrite - where the
  *                     index held 2 insertions -> `✖ a commit carries the staged bytes when the worktree holds a
@@ -22,10 +28,25 @@
  * red-proof: inject  a formatter that rewrites a character, and a hook that takes its output -> `✖ a character the
  *                     author wrote is not formatting`, the commit carries `×` where `✖` was staged (undo the guard in
  *                     `rewriteFormattedBlobs` to see it)
+ * red-proof: inject  a staged class growth with the record left where it was -> `✖ a staged growth that leaves its
+ *                     re-record behind is refused by name`, refused with
+ *                     `complexity_baseline_stale_for_this_commit:integrations/stardew/Fixture.cs:cs:Fixture:`
+ *                     `<recorded>-><current>`; drop the `checkRatchetRecords` step from the hook and it goes green
+ * red-proof: inject  a staged record that is not readable JSON -> `✖ a record that cannot be read refuses the commit
+ *                     with the reason`, `ratchet_record_unreadable_for_this_commit:...`
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -34,6 +55,23 @@ import { fileURLToPath } from "node:url";
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCENARIO = "tools/scenario.mjs";
 const FORMATTER_LOG = ".formatter-invocations";
+const HOST_SOURCE = "host/src/fixture.ts";
+const MOD_CLASS = "integrations/stardew/Fixture.cs";
+const COMPLEXITY_RECORD = "tools/cognitive-complexity-baseline.json";
+const DUPLICATION_RECORD = "tools/duplicate-code-baseline.json";
+
+/**
+ * The Mod class the fixture's complexity record is about: `padding` comment lines inside the body, so a case can put the
+ * class over the 1000-line ceiling and then grow it again with the same `parts` and `methods` - the difference between a
+ * record that is stale and a class that grew.
+ */
+const modClass = (padding) =>
+  `namespace Fixture;\n\npublic class Fixture\n{\n${Array.from(
+    { length: padding },
+    (_, index) => `    // recorded line ${index}`,
+  ).join(
+    "\n",
+  )}\n\n    private readonly int seed;\n\n    public Fixture(int seed)\n    {\n        this.seed = seed;\n    }\n\n    public int Read(int scale)\n    {\n        if (scale <= 0)\n        {\n            return this.seed;\n        }\n        return this.seed * scale;\n    }\n}\n`;
 
 /** The hook, and the library it imports, taken from this tree so the suite cannot agree with a hook that is not there. */
 const COPIED_FILES = [
@@ -43,7 +81,29 @@ const COPIED_FILES = [
   "tools/scripts/check-script-entry-existence.mjs",
   "tools/scripts/cli-entry.mjs",
   "tools/lib/subprocess-output.mjs",
+  "tools/lib/assert-non-vacuous.mjs",
+  "tools/lib/gate-population.mjs",
+  "tools/lib/host-production-sources.mjs",
+  "tools/lib/indexed-sources.mjs",
+  "tools/lib/javascript-ast.mjs",
+  "tools/lib/repository-root.mjs",
+  "gates/directories.mjs",
+  "gates/registry.mjs",
+  "gates/meta/check-ci-coverage.mjs",
+  "gates/arch/check-cognitive-complexity.mjs",
+  "gates/arch/check-code-duplication.mjs",
+  "gates/stardew/check-native-local-runner-scaffold.mjs",
 ];
+
+/**
+ * The packages the two complexity/duplication gates resolve from `node_modules`.
+ *
+ * A junction to each INSTALLED package, not to `node_modules/<name>`: the manager here is pnpm, whose entries are
+ * relative symlinks into `.pnpm`, and a relative link reached through another link points nowhere. Biome is absent on
+ * purpose - `node_modules/@biomejs/biome` is the formatter stand-in below, so the fixture's ts complexity reading is
+ * this suite's, not a linter's.
+ */
+const LINKED_PACKAGES = ["@vscode/tree-sitter-wasm", "web-tree-sitter", "jscpd"];
 
 /** The steps the hook runs conditionally on Host/lockfile changes. None of them is this suite's subject. */
 const STUBBED_STEPS = ["host/scripts/check-staged-test-typecheck.mjs", "tools/scripts/check-lockfile-freeze.mjs"];
@@ -142,9 +202,44 @@ const fixture = ({ formatter = FORMATTER } = {}) => {
   };
   for (const file of COPIED_FILES) write(file, readFileSync(join(REPOSITORY_ROOT, file)));
   write("node_modules/@biomejs/biome/bin/biome", formatter);
+  write(
+    "node_modules/@biomejs/biome/package.json",
+    `${JSON.stringify({ name: "@biomejs/biome", version: "2.2.4", bin: { biome: "./bin/biome" } }, null, 2)}\n`,
+  );
+  for (const packaged of LINKED_PACKAGES) {
+    const link = join(root, "node_modules", packaged);
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(realpathSync(join(REPOSITORY_ROOT, "node_modules", packaged)), link, "junction");
+  }
   for (const step of STUBBED_STEPS) write(step, `process.stdout.write("${step}: stub\\n");\n`);
   write(".gitignore", "node_modules/\n.formatter-invocations\n");
-  write("biome.json", "{}\n");
+  // The two ratchets read these: the ts bound from `biome.json`, the trees, formats and ignores from `jscpd.json`
+  // (which the duplication gate cross-checks against its own constants), and one source per format so neither gate
+  // reads an empty population - a gate that examined nothing is blocked, not passed.
+  write(
+    "biome.json",
+    `${JSON.stringify(
+      {
+        linter: {
+          rules: {
+            complexity: { noExcessiveCognitiveComplexity: { level: "warn", options: { maxAllowedComplexity: 30 } } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  write("jscpd.json", readFileSync(join(REPOSITORY_ROOT, "jscpd.json")));
+  write("package.json", `${JSON.stringify({ name: "fixture" }, null, 2)}\n`);
+  for (const tree of ["host/scripts", "dialogue-web/src", "packages", "desktop"]) write(`${tree}/.gitkeep`, "");
+  write(
+    HOST_SOURCE,
+    `export type FixtureReading = Readonly<{ value: number; scale: number }>;\n\nexport function readFixture(reading: FixtureReading): number {\n  if (reading.scale <= 0) {\n    return reading.value;\n  }\n  return reading.value * reading.scale;\n}\n`,
+  );
+  write(MOD_CLASS, modClass(0));
+  write(COMPLEXITY_RECORD, `${JSON.stringify({ members: [], classes: [], sizes: [] }, null, 2)}\n`);
+  write(DUPLICATION_RECORD, `${JSON.stringify({ groups: [] }, null, 2)}\n`);
 
   const git = (args, env = {}) =>
     spawnSync("git", args, {
@@ -171,12 +266,30 @@ const fixture = ({ formatter = FORMATTER } = {}) => {
   }
   write(SCENARIO, "export const base = { a: 1 };\n");
   ok(["add", "-A"]);
-  ok(["commit", "-m", "fixture"]);
+  // The starting tree is drawn, not committed through the hook: every case below is a commit through the hook, and this
+  // one has nothing to prove about one - its subject would be the tree itself, not a change to it.
+  ok(["commit", "--no-verify", "-m", "fixture"]);
   rmSync(join(root, FORMATTER_LOG), { force: true });
   return { root, write, git, ok };
 };
-
 const combined = (result) => `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+/**
+ * A case that commits more than once: every commit through the hook measures both ratchets over the tree, so the
+ * runner's default five seconds is a reading of this machine's speed rather than of the hook. Node ignores the extra
+ * argument and Bun reads it as the case's own budget.
+ */
+const testAcrossCommits = (name, body) => test(name, body, 60_000);
+
+/** Re-record the way an author does: the gate's own `--update` over the fixture, then the record staged with the change. */
+const rerecord = (root) => {
+  const update = spawnSync("node", ["gates/arch/check-cognitive-complexity.mjs", "--update"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+  });
+  assert.equal(update.status, 0, `the gate's --update failed:\n${combined(update)}`);
+};
 
 test("a commit carries the staged bytes when the worktree holds a foreign hunk", () => {
   const { root, write, git, ok } = fixture();
@@ -225,6 +338,11 @@ test("a commit with nothing formattable runs no formatter at all", () => {
     existsSync(join(root, FORMATTER_LOG)),
     false,
     "an empty population must skip the formatter, never widen it to the checkout",
+  );
+  assert.match(
+    combined(commit),
+    /ratchet records not checked: no touched path is measured by them \(files examined 0\)/,
+    "a commit outside both gates' populations says it was not measured rather than printing a pass",
   );
 });
 
@@ -317,7 +435,7 @@ test("reformatted index hint names the exact paths that were rewritten", () => {
   );
 });
 
-test("staged conflict markers and scratch debris paths refuse the commit", () => {
+testAcrossCommits("staged conflict markers and scratch debris paths refuse the commit", () => {
   const { write, git, ok } = fixture();
   const head = ok(["rev-parse", "HEAD"]);
 
@@ -365,7 +483,7 @@ test("a staged file that exceeds its extension line ceiling is refused on the st
   assert.equal(ok(["rev-parse", "HEAD"]), head);
 });
 
-test("a staged lint error refuses the commit while an unstaged neighbor lint error does not", () => {
+testAcrossCommits("a staged lint error refuses the commit while an unstaged neighbor lint error does not", () => {
   const { write, git, ok } = fixture();
   write("tools/clean.mjs", "export const ok = 1;\n");
   write("tools/dirty-neighbour.mjs", "export const bad = LINT_ERROR;\n");
@@ -383,34 +501,150 @@ test("a staged lint error refuses the commit while an unstaged neighbor lint err
   assert.equal(ok(["rev-parse", "HEAD"]), afterClean);
 });
 
-test("staging package.json checks script targets against the index, blocking dangling scripts and allowing paired additions", () => {
-  const { write, git, ok } = fixture();
-  write(".github/workflows/ci.yml", "steps:\n  - run: node tools/scenario.mjs\n");
-  write(
-    "package.json",
-    `${JSON.stringify({ name: "fixture", scripts: { good: "node tools/scenario.mjs" } }, null, 2)}\n`,
-  );
-  ok(["add", "--", ".github/workflows/ci.yml", "package.json"]);
-  ok(["commit", "-m", "add workflow and package"]);
+testAcrossCommits(
+  "staging package.json checks script targets against the index, blocking dangling scripts and allowing paired additions",
+  () => {
+    const { write, git, ok } = fixture();
+    write(".github/workflows/ci.yml", "steps:\n  - run: node tools/scenario.mjs\n");
+    write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", scripts: { good: "node tools/scenario.mjs" } }, null, 2)}\n`,
+    );
+    ok(["add", "--", ".github/workflows/ci.yml", "package.json"]);
+    ok(["commit", "-m", "add workflow and package"]);
 
-  const beforeBroken = ok(["rev-parse", "HEAD"]);
-  write(
-    "package.json",
-    `${JSON.stringify({ name: "fixture", scripts: { broken: "node tools/missing-script.mjs" } }, null, 2)}\n`,
-  );
-  ok(["add", "--", "package.json"]);
-  const brokenCommit = git(["commit", "-m", "dangling script"]);
-  assert.notEqual(brokenCommit.status, 0, combined(brokenCommit));
-  assert.match(combined(brokenCommit), /tools\/missing-script\.mjs/);
-  assert.equal(ok(["rev-parse", "HEAD"]), beforeBroken);
+    const beforeBroken = ok(["rev-parse", "HEAD"]);
+    write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", scripts: { broken: "node tools/missing-script.mjs" } }, null, 2)}\n`,
+    );
+    ok(["add", "--", "package.json"]);
+    const brokenCommit = git(["commit", "-m", "dangling script"]);
+    assert.notEqual(brokenCommit.status, 0, combined(brokenCommit));
+    assert.match(combined(brokenCommit), /tools\/missing-script\.mjs/);
+    assert.equal(ok(["rev-parse", "HEAD"]), beforeBroken);
 
-  // Now stage BOTH the new script file and the package.json referencing it in one commit -> must succeed.
-  write("tools/new-script.mjs", "export const x = 1;\n");
-  write(
-    "package.json",
-    `${JSON.stringify({ name: "fixture", scripts: { added: "node tools/new-script.mjs" } }, null, 2)}\n`,
+    // Now stage BOTH the new script file and the package.json referencing it in one commit -> must succeed.
+    write("tools/new-script.mjs", "export const x = 1;\n");
+    write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", scripts: { added: "node tools/new-script.mjs" } }, null, 2)}\n`,
+    );
+    ok(["add", "--", "tools/new-script.mjs", "package.json"]);
+    const pairedCommit = git(["commit", "-m", "paired script and package"]);
+    assert.equal(pairedCommit.status, 0, combined(pairedCommit));
+  },
+);
+
+testAcrossCommits("a staged growth that leaves its re-record behind is refused by name", () => {
+  const { root, write, git, ok } = fixture();
+
+  // The class crosses its ceiling and the record that says so is staged in the same commit: allowed.
+  write(MOD_CLASS, modClass(1002));
+  ok(["add", "--", MOD_CLASS]);
+  rerecord(root);
+  ok(["add", "--", COMPLEXITY_RECORD]);
+  const carried = git(["commit", "-m", "the class grows, and its record travels with it"]);
+  assert.equal(carried.status, 0, combined(carried));
+  const recordedHead = ok(["rev-parse", "HEAD"]);
+
+  // The same kind of growth with the record left where it was: refused, and named with both numbers.
+  write(MOD_CLASS, modClass(1022));
+  ok(["add", "--", MOD_CLASS]);
+  const refused = git(["commit", "-m", "the class grows, the record does not"]);
+  assert.notEqual(refused.status, 0, combined(refused));
+  assert.match(
+    combined(refused),
+    /complexity_baseline_stale_for_this_commit:integrations\/stardew\/Fixture\.cs:cs:Fixture:\d+ lines\/2 methods->\d+ lines\/2 methods/,
+    "the refusal names the file, the entry and the two numbers",
   );
-  ok(["add", "--", "tools/new-script.mjs", "package.json"]);
-  const pairedCommit = git(["commit", "-m", "paired script and package"]);
-  assert.equal(pairedCommit.status, 0, combined(pairedCommit));
+  assert.match(
+    combined(refused),
+    /re-record: node gates\/arch\/check-cognitive-complexity\.mjs --update, then `git add tools\/cognitive-complexity-baseline.json`/,
+    "and the command that makes the commit possible",
+  );
+  assert.equal(ok(["rev-parse", "HEAD"]), recordedHead, "a refused commit must not move HEAD");
+
+  // The same growth again, this time with the re-record staged: allowed, and the commit carries the record.
+  rerecord(root);
+  ok(["add", "--", COMPLEXITY_RECORD]);
+  const rerecorded = git(["commit", "-m", "the same growth, with its re-record"]);
+  assert.equal(rerecorded.status, 0, combined(rerecorded));
+  assert.equal(
+    ok(["show", `HEAD:${COMPLEXITY_RECORD}`]),
+    readFileSync(join(root, COMPLEXITY_RECORD), "utf8"),
+    "the commit carries the record the gate wrote, byte for byte",
+  );
 });
+
+test("a record that cannot be read refuses the commit with the reason", () => {
+  const { write, git, ok } = fixture();
+  const head = ok(["rev-parse", "HEAD"]);
+  write(COMPLEXITY_RECORD, '{"members": [\n');
+  ok(["add", "--", COMPLEXITY_RECORD]);
+
+  const commit = git(["commit", "-m", "an unreadable record"]);
+  assert.notEqual(commit.status, 0, combined(commit));
+  assert.doesNotMatch(combined(commit), /is not iterable/, "a blocked reading is reported, not a crash");
+  assert.match(
+    combined(commit),
+    /ratchet_record_unreadable_for_this_commit:tools\/cognitive-complexity-baseline\.json is not readable JSON/,
+    "a record that cannot be read is a refusal that says why, never a pass",
+  );
+  assert.equal(ok(["rev-parse", "HEAD"]), head);
+});
+
+/**
+ * The same defect in the duplication record: a copy is removed, the record still counts it, and the next author finds a
+ * red tree. The group here is real - jscpd matches the same eight lines in three files - so the case proves the
+ * duplication half through the gate's own scan rather than through an injected finding.
+ */
+const FIXTURE_STEP = `export const runFixtureStep = async (session, key) => {
+  const receipt = await session.client.request(key);
+  if (receipt.state !== "accepted") {
+    throw new Error(\`fixture_step_refused:\${key}:\${receipt.state}\`);
+  }
+  session.receipts.set(key, receipt);
+  return receipt;
+};
+`;
+
+testAcrossCommits(
+  "a removed copy leaves the duplication record stale, and the commit is refused with the group",
+  () => {
+    const { root, write, git, ok } = fixture();
+    const steps = ["a", "b", "c"].map((suffix) => `tools/run-fixture-step-${suffix}.mjs`);
+    for (const step of steps) write(step, FIXTURE_STEP);
+    ok(["add", "--", ...steps]);
+    // The record this tree needs, written by the gate that owns it: the first write is the only one allowed to name
+    // groups the record has never held.
+    rmSync(join(root, DUPLICATION_RECORD), { force: true });
+    const recorded = spawnSync("node", ["gates/arch/check-code-duplication.mjs", "--write-baseline"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 1 << 26,
+    });
+    assert.equal(recorded.status, 0, `--write-baseline failed:\n${combined(recorded)}`);
+    ok(["add", "--", DUPLICATION_RECORD]);
+    const carried = git(["commit", "-m", "three copies and the record that counts them"]);
+    assert.equal(carried.status, 0, combined(carried));
+    const recordedHead = ok(["rev-parse", "HEAD"]);
+
+    // One copy is removed and the record still says three: refused, naming the group and both counts.
+    rmSync(join(root, steps[0]));
+    ok(["add", "--", steps[0]]);
+    const refused = git(["commit", "-m", "one copy is gone, the record is not"]);
+    assert.notEqual(refused.status, 0, combined(refused));
+    assert.match(
+      combined(refused),
+      /duplication_baseline_stale_for_this_commit:tools\/run-fixture-step-[abc]\.mjs:[0-9a-f]{12}:3 sites->gone from the tree/,
+      "the refusal names the site file, the group and both counts",
+    );
+    assert.match(
+      combined(refused),
+      /re-record the shrink: node gates\/arch\/check-code-duplication\.mjs --record-shrinks, then `git add tools\/duplicate-code-baseline\.json`/,
+      "and the command that makes the commit possible",
+    );
+    assert.equal(ok(["rev-parse", "HEAD"]), recordedHead, "a refused commit must not move HEAD");
+  },
+);

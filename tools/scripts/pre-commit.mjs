@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, relative } from "node:path";
-
+import { dirname, extname, join, relative, sep } from "node:path";
+import { SOURCE_TREES } from "../../gates/arch/check-code-duplication.mjs";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 import { CEILINGS_BY_EXTENSION, verdict as complexityVerdict } from "./check-file-complexity-gate.mjs";
 
@@ -18,6 +18,9 @@ import { CEILINGS_BY_EXTENSION, verdict as complexityVerdict } from "./check-fil
  *     newly introduced or exceeding the baseline on staged files.
  *   - Check staged file line counts against `CEILINGS_BY_EXTENSION` and `file-complexity-baseline.json` (the same
  *     authority CI's `check-file-complexity-gate.mjs` owns).
+ *   - Read the complexity and duplication ratchets over the tree this commit is about to create, using the gates' own
+ *     measurement and their own comparison, and refuse a commit that makes a record disagree with the tree while
+ *     leaving the re-record behind for the next author (see THE RECORD TRAVELS WITH THE CHANGE, below).
  *   - Run conditional domain checks when staged paths touch Host sources, lockfiles, `package.json`/workflows, or
  *     Stardew multiday task authorities.
  *
@@ -215,6 +218,333 @@ const checkStagedLineCeilings = (stagedTexts) => {
   process.exit(1);
 };
 
+// -----------------------------------------------------------------------------------------------------------
+// THE RECORD TRAVELS WITH THE CHANGE
+// -----------------------------------------------------------------------------------------------------------
+
+/**
+ * The complexity and duplication ratchets measure the tree, so the commit that moves the tree has to move the record.
+ *
+ * Measured 2026-11-19: `l0` reached `48 gates, 0 red` and went red again three times, each time after a CORRECT commit
+ * - `sizes cs:ModEntry` 17274 -> 17387 lines / 371 -> 374 members, `ts:host/src/protocol.ts#isValidActionDescriptor`
+ * 224 -> 221. Re-recording is a separate manual `--update`, so the number was corrected by whichever lane committed
+ * next: the ratchet's number was edited by someone who did not cause the change, and the tree was red in between. The
+ * hook is the only place that sees the change and the record side by side, so it reads them together.
+ *
+ * NOT A SECOND AUTHORITY. The reading is `gates/arch/check-cognitive-complexity.mjs`'s exported `measure` and its
+ * exported `evaluate`, and `gates/arch/check-code-duplication.mjs`'s exported `checkCodeDuplication`; this file only
+ * names what those returned. A comparison copied here would agree today and disagree with the gate the day either
+ * moves - the defect this section exists to end, not one to add.
+ *
+ * THE TREE IS THE INDEX. The worktree holds several lanes' work in flight, and this hook may only speak about the
+ * bytes about to be committed, so the index is checked out into a throwaway tree (which honours `GIT_INDEX_FILE`, so
+ * a lane's private index is the tree read here) and the gates read that tree - the record files included as staged, so
+ * a re-record is judged where it will land.
+ *
+ * THE SCOPE IS THE COMMIT. A finding blocks only when it names a path this commit touches, or when the record carrying
+ * it is itself staged: a tree already red from an earlier commit must not block the next author. That is the scoping
+ * `host/scripts/check-staged-test-typecheck.mjs` uses, for the same reason.
+ *
+ * FAILS CLOSED: a record that cannot be read, a reading the gate blocks, or a finding this hook cannot attach to an
+ * entry is a refusal with the reason, never a pass.
+ */
+const COMPLEXITY_RECORD = "tools/cognitive-complexity-baseline.json";
+const DUPLICATION_RECORD = "tools/duplicate-code-baseline.json";
+const DUPLICATION_DECLARATIONS = "tools/duplicate-code-declarations.json";
+const RATCHET_CONFIGS = ["jscpd.json", "biome.json"];
+
+/** A path either ratchet measures: the trees the duplication gate scans, plus the two configs it reads at the root. */
+const ratchetMeasures = (path) =>
+  RATCHET_CONFIGS.includes(path) || SOURCE_TREES.some((tree) => path === tree || path.startsWith(`${tree}/`));
+
+/** The record as this commit stages it, with the reason it cannot be read instead of a stack trace. */
+const readRecord = (root, path) => {
+  let text;
+  try {
+    text = readFileSync(join(root, path), "utf8");
+  } catch (error) {
+    throw new Error(`${path} could not be read (${error.message})`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${path} is not readable JSON (${error.message})`);
+  }
+};
+
+/**
+ * The entry a finding is about: the longest recorded or measured identity its detail begins with.
+ *
+ * The gates key a member by its qualified signature and a class by its qualified name, so `cs:ModEntry` is a prefix
+ * of `cs:ModEntry.Save(...)`; taking the longest match is what keeps a class finding from being read as a member one.
+ * A detail no identity matches is a finding this hook cannot name, and it refuses rather than printing a guess.
+ */
+const identityOf = (detail, identities) =>
+  identities
+    .filter((identity) => detail === identity || detail.startsWith(`${identity} `) || detail.startsWith(`${identity}:`))
+    .sort((left, right) => right.length - left.length)[0];
+
+const sizeReading = (entry) => (entry === undefined ? "unrecorded" : `${entry.lines} lines/${entry.methods} methods`);
+
+/** The file this commit touched among an entry's files, else the first one the entry names. */
+const fileOf = (files, touched) => files.find((file) => touched.has(file)) ?? files[0] ?? "(no file recorded)";
+
+const attributedToCommit = (files, touched, record) => touched.has(record) || files.some((file) => touched.has(file));
+
+/**
+ * The complexity half: every recorded member, class and type size judged against the tree this commit creates.
+ *
+ * The two numbers in each row are read from the gate's own measurement and from the record, never parsed out of the
+ * finding's prose: `function_grew` prints its detail with `formatComplexity`, and a saturated ts reading is a floor
+ * (`>=255`), so a message assembled from a copy of those rules would print a count where the gate prints a floor.
+ */
+const complexityDisagreements = async (root, touched) => {
+  const gate = await import("../../gates/arch/check-cognitive-complexity.mjs");
+  const measured = await gate.measure(root);
+  if (measured.error !== undefined) return { blocked: measured.error };
+  let baseline;
+  try {
+    baseline = readRecord(root, COMPLEXITY_RECORD);
+  } catch (error) {
+    return { blocked: error.message };
+  }
+  for (const field of ["members", "classes", "sizes"])
+    if (baseline[field] !== undefined && !Array.isArray(baseline[field]))
+      return { blocked: `${COMPLEXITY_RECORD} is unreadable: ${field} is not a list` };
+
+  const members = new Map(measured.members.map((member) => [member.id, member]));
+  const types = new Map(measured.types.map((type) => [type.id, type]));
+  const namedTypes = new Map(measured.types.map((type) => [type.name, type]));
+  const recordedMembers = new Map((baseline.members ?? []).map((entry) => [entry.id, entry]));
+  const recordedClasses = new Map((baseline.classes ?? []).map((entry) => [entry.id, entry]));
+  const recordedSizes = new Map((baseline.sizes ?? []).map((entry) => [entry.id, entry]));
+  const identities = [
+    ...members.keys(),
+    ...types.keys(),
+    ...namedTypes.keys(),
+    ...recordedMembers.keys(),
+    ...recordedClasses.keys(),
+    ...recordedSizes.keys(),
+  ];
+
+  const rows = [];
+  const verdict = gate.evaluate({
+    members: measured.members,
+    types: measured.types,
+    baseline,
+    bounds: measured.bounds,
+  });
+  for (const finding of verdict.findings) {
+    const identity = identityOf(finding.detail, identities);
+    if (identity === undefined)
+      return { blocked: `the complexity gate named no entry this hook can attach: ${finding.detail}` };
+    const member = members.get(identity);
+    const type = types.get(identity) ?? namedTypes.get(identity);
+    const recordedMember = recordedMembers.get(identity);
+    const recordedClass = recordedClasses.get(identity);
+    const recordedSize = recordedSizes.get(identity);
+    const numbers = {
+      function_grew: () => [gate.formatComplexity(recordedMember), gate.formatComplexity(member)],
+      function_over_bound: () => ["unrecorded", gate.formatComplexity(member)],
+      class_grew: () => [`${recordedClass.value}`, `${type.value}`],
+      class_complexity_over_bound: () => ["unrecorded", `${type.value}`],
+      class_size_grew: () => [sizeReading(recordedSize), sizeReading(type)],
+      class_size_record_stale: () => [sizeReading(recordedSize), sizeReading(type)],
+      class_lines_over_ceiling: () => ["unrecorded", sizeReading(type)],
+      class_methods_over_ceiling: () => ["unrecorded", sizeReading(type)],
+      stale_complexity_baseline: () => [
+        recordedMember === undefined
+          ? `${recordedClass?.value ?? "unrecorded"}`
+          : gate.formatComplexity(recordedMember),
+        "gone from the tree",
+      ],
+      stale_class_ceiling: () => [sizeReading(recordedSize), "below the class lines/methods ceiling"],
+    }[finding.code];
+    if (numbers === undefined)
+      return {
+        blocked: `the complexity gate reported ${finding.code}, which this hook cannot name: ${finding.detail}`,
+      };
+    const files = [
+      ...new Set(
+        [member?.file, ...(type?.files ?? []), recordedMember?.file, recordedClass?.file, recordedSize?.file].filter(
+          (file) => typeof file === "string",
+        ),
+      ),
+    ];
+    if (!attributedToCommit(files, touched, COMPLEXITY_RECORD)) continue;
+    const [recorded, current] = numbers();
+    rows.push({
+      gate: "complexity",
+      recordable: true,
+      line: `complexity_baseline_stale_for_this_commit:${fileOf(files, touched)}:${identity}:${recorded}->${current}`,
+    });
+  }
+  for (const entry of measured.drift) {
+    if (!touched.has(entry.file)) continue;
+    rows.push({
+      gate: "complexity",
+      recordable: true,
+      line: `complexity_member_unmeasured_for_this_commit:${entry.file}:${entry.kind}`,
+    });
+  }
+  return { rows };
+};
+
+/** A recorded site is `file:line`, and only the file is a path this hook can compare with the commit. */
+const siteFile = (site) => site.slice(0, site.lastIndexOf(":"));
+
+/**
+ * The duplication half: every recorded group and declaration judged against the groups the tree still holds.
+ *
+ * The ratchet on this record only goes down (`--record-shrinks` lowers or deletes an entry and can never add one),
+ * so a group that is new or grew is not a re-record: it is a copy to remove, and the row says so.
+ */
+const duplicationDisagreements = async (root, touched) => {
+  const gate = await import("../../gates/arch/check-code-duplication.mjs");
+  let reading;
+  let baseline;
+  let declarations;
+  try {
+    reading = gate.checkCodeDuplication({ root });
+    if (reading.status !== "blocked") {
+      baseline = gate.readBaseline({ root });
+      declarations = gate.readDeclarations({ root });
+    }
+  } catch (error) {
+    return { blocked: `${DUPLICATION_RECORD} or ${DUPLICATION_DECLARATIONS} could not be read (${error.message})` };
+  }
+  if (reading.status === "blocked") return { blocked: reading.reason };
+
+  const groups = new Map((reading.counted ?? []).map((group) => [group.hash, group]));
+  const recorded = new Map((baseline?.groups ?? []).map((entry) => [entry.hash, entry]));
+  const declared = new Map((declarations ?? []).map((entry) => [entry.hash, entry]));
+  const rows = [];
+  for (const finding of reading.findings) {
+    const group = groups.get(finding.hash);
+    const entry = recorded.get(finding.hash);
+    const declaration = declared.get(finding.hash);
+    const sites = group === undefined ? (entry?.sites ?? []).map(siteFile) : group.sites.map((site) => site.file);
+    if (!(attributedToCommit(sites, touched, DUPLICATION_RECORD) || touched.has(DUPLICATION_DECLARATIONS))) continue;
+    const measured = group === undefined ? undefined : group.sites.length;
+    const numbers = {
+      clone_group: () => ["unrecorded", `${measured} sites at ${group.tokens} tokens`],
+      clone_group_grew: () => [
+        `${declaration === undefined ? entry.sites.length : declaration.sites} sites`,
+        `${measured} sites at ${group.tokens} tokens`,
+      ],
+      stale_clone_baseline: () => [
+        `${entry.sites.length} sites`,
+        measured === undefined ? "gone from the tree" : `${measured} sites`,
+      ],
+      stale_clone_declaration: () => [
+        `${declaration.sites} sites (declared)`,
+        measured === undefined ? "gone from the tree" : `${measured} sites`,
+      ],
+      facade_only_clone_baselined: () => [`${entry.sites.length} sites`, "read as a declaration, not duplication"],
+      syntax_floor_clone_baselined: () => [`${entry.sites.length} sites`, "read as the syntax floor"],
+    }[finding.code];
+    if (numbers === undefined)
+      return {
+        blocked: `the duplication gate reported ${finding.code}, which this hook cannot name: ${finding.detail}`,
+      };
+    const [recordedText, currentText] = numbers();
+    rows.push({
+      gate: "duplication",
+      recordable: finding.code !== "clone_group" && finding.code !== "clone_group_grew",
+      line: `duplication_baseline_stale_for_this_commit:${fileOf(sites, touched)}:${finding.hash}:${recordedText}->${currentText}`,
+    });
+  }
+  return { rows };
+};
+
+const ratchetRecordCommands = (rows) => {
+  const commands = [];
+  if (rows.some((row) => row.gate === "complexity"))
+    commands.push(
+      `re-record: node gates/arch/check-cognitive-complexity.mjs --update, then \`git add ${COMPLEXITY_RECORD}\``,
+    );
+  if (rows.some((row) => row.gate === "duplication" && row.recordable))
+    commands.push(
+      `re-record the shrink: node gates/arch/check-code-duplication.mjs --record-shrinks, then \`git add ${DUPLICATION_RECORD}\``,
+    );
+  if (rows.some((row) => row.gate === "duplication" && !row.recordable))
+    commands.push(
+      "a new or grown clone is not a re-record: remove the copy or fold the copies behind one seam; the duplication record may only shrink",
+    );
+  return commands;
+};
+
+/**
+ * The step: the records are read over the index tree this commit creates, and a disagreement that names a touched path
+ * refuses the commit.
+ *
+ * THE COST, measured on this tree on 2026-11-25 (4275 tracked files, repeated runs): 1.6-1.8s to check the index out,
+ * 2.5-2.8s to make that tree a repository, 4.4-5.9s for the complexity measurement (565 `.cs` through tree-sitter and
+ * biome over the 316 `host/src` modules) and 5.0-5.2s for the duplication scan - 12-17s end to end, and only on a
+ * commit that touches a measured tree. Two thirds of that is the gates measuring the whole tree, which is what these
+ * two ratchets ARE: a class is its partials and a clone is its sites, so a reading of the changed files alone is not
+ * the gate's reading. Nothing is cached between runs: a reading kept from an earlier commit is a reading of an earlier
+ * tree, which is the staleness this step exists to catch, and a reading cached per file would be wrong for a class the
+ * last commit grew in a different partial.
+ *
+ * WHY NOTHING NARROWER IS READ, measured over the last 60 commits before this landed: a path a record row names is
+ * touched by 30% of them, but the rows that matter are MERGED - `cs:ModEntry` is 61 files and its row names one,
+ * `cs:ExecutionManager` 54 - so a trigger keyed on the row's path takes the fast exit exactly on the commit that grows
+ * one of the other 60, which is the shape that produced tonight's `sizes cs:ModEntry` 17274 -> 17387. Scoping the
+ * measurement to the staged files is not an option either: 3 of 24 size rows and 3 of 10 class rows are merged from
+ * partials, and 88 of 115 clone groups have sites in more than one file (widest 19), so a per-file reading compares one
+ * partial against a merged total. A trigger keyed on the recorded NAMES takes no fast exit at all (100% of commits
+ * mention one, and the generic member names match everywhere). So the whole tree is read, and the only exit is the
+ * honest one: a commit that stages no measured path at all. If 12-17s is still too much, the lever is to run the two
+ * readings concurrently (they are independent) - not to remember a verdict.
+ */
+const checkRatchetRecords = async (touched) => {
+  const measured = touched.filter(ratchetMeasures);
+  if (measured.length === 0) {
+    console.log("pre-commit: ratchet records not checked: no touched path is measured by them (files examined 0)");
+    return;
+  }
+  const started = Date.now();
+  const rows = [];
+  const blockers = [];
+  let scratch;
+  try {
+    scratch = mkdtempSync(join(tmpdir(), "pre-commit-records-"));
+    execFileSync("git", ["checkout-index", "-a", `--prefix=${scratch}${sep}`], { stdio: ["ignore", "pipe", "pipe"] });
+    // The duplication gate asks git which files the index does not hold. A tree checked out FROM the index holds none,
+    // and a repository has to exist to answer at all: that is the only reason this tree is a repository.
+    execFileSync("git", ["init", "-q"], { cwd: scratch });
+    execFileSync("git", ["add", "-N", "."], { cwd: scratch });
+    const touchedSet = new Set(touched);
+    for (const read of [complexityDisagreements, duplicationDisagreements]) {
+      const outcome = await read(scratch, touchedSet);
+      if (outcome.blocked !== undefined) blockers.push(outcome.blocked);
+      rows.push(...(outcome.rows ?? []));
+    }
+  } catch (error) {
+    blockers.push(`the reading could not be taken (${error instanceof Error ? error.message : String(error)})`);
+  } finally {
+    if (scratch !== undefined) rmSync(scratch, { recursive: true, force: true });
+  }
+
+  const elapsed = Date.now() - started;
+  if (blockers.length === 0 && rows.length === 0) {
+    console.log(`pre-commit: the complexity and duplication records agree with this commit (${elapsed}ms)`);
+    return;
+  }
+  for (const blocker of blockers) console.error(`ratchet_record_unreadable_for_this_commit:${blocker}`);
+  for (const row of rows) console.error(row.line);
+  if (rows.length > 0) {
+    console.error(
+      "pre-commit: a record measures the tree, so the commit that moves the tree carries its re-record: the numbers " +
+        `above are the recorded reading and this commit's (${rows.length} entr${rows.length === 1 ? "y" : "ies"}, read ` +
+        `in ${elapsed}ms).`,
+    );
+    for (const command of ratchetRecordCommands(rows)) console.error(`  ${command}`);
+  }
+  process.exit(1);
+};
+
 const rejectAddedSuppressions = () => {
   let diff;
   try {
@@ -223,7 +553,9 @@ const rejectAddedSuppressions = () => {
       maxBuffer: 1 << 26,
     });
   } catch (error) {
-    console.error(`pre-commit: could not inspect the staged diff, so added suppressions cannot be ruled out\n${error.message}`);
+    console.error(
+      `pre-commit: could not inspect the staged diff, so added suppressions cannot be ruled out\n${error.message}`,
+    );
     process.exit(1);
   }
   const flagged = new Map();
@@ -337,6 +669,14 @@ if (targets.length === 0) {
 }
 
 checkStagedLineCeilings(stagedTexts);
+await checkRatchetRecords(
+  execFileSync("git", ["diff", "--cached", "--name-only", "-z", "--ignore-submodules=all"], {
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+  })
+    .split("\0")
+    .filter((path) => path.length > 0),
+);
 rejectAddedSuppressions();
 
 runBlockingStep("the test project typecheck", ["host/scripts/check-staged-test-typecheck.mjs"]);

@@ -1090,7 +1090,12 @@ function listCSharpSources(root) {
   return files.sort();
 }
 
-async function measure(root) {
+/**
+ * The whole reading of one tree: every ts member Biome reports, every cs member and type this gate parses, and the
+ * bounds they are judged against. Exported because the pre-commit hook judges the same entries against the same
+ * baselines and must not carry a second copy of how a member is measured.
+ */
+export async function measure(root) {
   const typesBound = readTypeScriptBound(root);
   if (typesBound.error !== undefined) return { error: typesBound.error };
   const files = typeScriptPopulation(root);
