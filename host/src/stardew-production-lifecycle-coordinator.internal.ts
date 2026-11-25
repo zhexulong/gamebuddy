@@ -1290,6 +1290,29 @@ export function stardewFarmhandBridgeConnectDeadlineMs(joinDeadlineMs: number, n
 }
 
 /**
+ * How long the cabin offer this Host draws stays pressable by a PERSON.
+ *
+ * The advertisement's `expiresAtUnixMs` is one publication beat out
+ * (`integrations/stardew/HostFarmhandProvisioner.cs:284`, `now + 3_000`, republished every second). That lease
+ * says how long the Mod's DOCUMENT is evidence about the world - which is what
+ * `STARDEW_CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS` reads it as - and it says nothing about how long a human needs
+ * to read a panel and click. Handing it to the browser as the choice's own deadline made the press window
+ * ~2.8 s, so a press failed `stardew_cabin_choice_expired` for a publication beat (lane CABINDEADLINE).
+ *
+ * The safety this gives up nothing to: whether the pressed cabin is still free is the WORLD's answer, made at
+ * press time from the advertisement the Mod has republished since the render - `verifyCabinChoice` and
+ * `confirmAndRequest` refuse `cabin_missing`, `target_farmhand_busy`, `cabin_bound_to_other_companion`,
+ * `stardew_session_changed` and `stardew_session_expired`. This number only decides how long an offer may sit
+ * in a page before it must be drawn again.
+ *
+ * The one constraint on it: the Mod accepts a signed press within `FarmhandRequestRefusal.ConfirmationWindowMs`
+ * (5 min) of its confirmation, so an offer may not outlive that or the Host would be offering a press the game
+ * answers `request_confirmation_expired`. A minute is ~21 times the 2.8 s it replaces and a fifth of that
+ * ceiling.
+ */
+export const STARDEW_CABIN_PRESS_WINDOW_MS = 60_000;
+
+/**
  * The join wait ran out: the authenticated pipe handshake did not answer inside the budget.
  *
  * It is the one attach failure that proves nothing bad, which is why it has its own predicate instead of sharing the
@@ -2612,11 +2635,15 @@ function createCoordinator(
       // returning an empty choice list the browser surfaces as no options.
       if (choices.length === 0) throw new Error("stardew_player_host_cabin_unavailable");
       if (revision !== boundRevision || isClosing()) throw new Error("stardew_cabin_handoff_revision_changed");
+      // The one deadline the OFFER carries: how long a person may take over it (`STARDEW_CABIN_PRESS_WINDOW_MS`),
+      // under this attempt's own deadline and the browser session's. It is deliberately not the advertisement's
+      // ~3 s lease - the world answers whether the cabin is still free when the press arrives.
+      const pressWindowEndsAtMs = Date.now() + STARDEW_CABIN_PRESS_WINDOW_MS;
       return {
         apiVersion: 1 as const,
         choices: choices.map((choice) => {
           const choiceHandle = randomBytes(32).toString("base64url");
-          const expiresAtMs = Math.min(choice.expiresAtMs, joinDeadlineMs(sessionExpiry));
+          const expiresAtMs = Math.min(choice.expiresAtMs, joinDeadlineMs(sessionExpiry), pressWindowEndsAtMs);
           cabinHandles.set(
             choiceHandle,
             Object.freeze({
@@ -2656,15 +2683,15 @@ function createCoordinator(
 
       handle.consumed.value = true;
       cabinConfirmationKey = command.idempotencyKey;
-      // What the connect this press triggers may spend, and why it is NOT the offer's lease.
+      // What the connect this press triggers may spend, and why it is NOT the offer's window.
       //
-      // `handle.expiresAtMs` is the cabin advertisement's own deadline: the Mod republishes that
-      // advertisement every second with a ~2.7-3.0 s expiry (measured live in
-      // `.live-runs/gc1/w-game-launch.txt`), and it exists to bound the PRESS - it is checked
-      // above, and the game decides whether the choice went stale. Handing it to the bridge
-      // connect made the attempt's budget electrical noise: by the time the loop below runs, the
-      // manifest has been admitted, the AI-client profile materialized and the client launched,
-      // so the lease is already spent and one attempt failed immediately as
+      // `handle.expiresAtMs` is the PRESS window (`STARDEW_CABIN_PRESS_WINDOW_MS`, checked above): how long a
+      // person may take over the offer, under this attempt's own deadline. It is not the advertisement's ~3 s
+      // lease either - that lease says when the Mod's document stops being evidence, and the game decides whether
+      // the choice went stale when the press arrives (`confirmAndRequest` re-reads it). Handing this window (or,
+      // before it existed, the lease) to the bridge connect made the attempt's budget electrical noise: by the time
+      // the loop below runs, the manifest has been admitted, the AI-client profile materialized and the client
+      // launched, so the window can already be spent and one attempt failed immediately as
       // `bridge_connect_deadline_exceeded`. The attach is the join this lifecycle's own budget
       // owns, read here exactly as the resume and create paths read it.
       const joinDeadline = joinDeadlineMs(sessionExpiry);

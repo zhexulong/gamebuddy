@@ -13,6 +13,7 @@ import {
   confirmFirstCabin,
   installLifecycleTestHooks,
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
+import { STARDEW_CABIN_PRESS_WINDOW_MS } from "./stardew-production-lifecycle-coordinator.internal.js";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -439,24 +440,54 @@ test("dynamic cabin confirmation rejects cross-session, expiry, stale revision, 
   }
 });
 
-test("dynamic cabin handles distinguish expired and revision-stale failures", async () => {
-  const expiring = await prepareCabinCoordinator(Date.now() + 1_500);
+test("dynamic cabin handles distinguish an expired press window, a lapsed advertisement, and a revision-stale handle", async () => {
+  // `expired` is the Host's own deadline: the offer outlived the press window it was drawn with. Nothing about
+  // the world is claimed by it (`readCabinChoices`/`confirmCabinChoice`), and the panel answers it by reading
+  // the offers again.
+  const realDateNow = Date.now;
+  const expiring = await prepareCabinCoordinator();
   try {
     const choices = await expiring.coordinator.activationOwner.readCabinChoices(expiring.broker.issue("cabin_read"));
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 1_600));
-    assert.throws(
-      () =>
-        expiring.coordinator.activationOwner.confirmCabinChoice(expiring.broker.issue("cabin_confirm"), {
-          apiVersion: 1,
-          choiceHandle: choices.choices[0]!.choiceHandle,
-          idempotencyKey: "expired-key",
-          confirmed: true,
-        }),
-      /stardew_cabin_choice_expired/,
-    );
+    try {
+      Date.now = () => realDateNow() + STARDEW_CABIN_PRESS_WINDOW_MS + 1;
+      assert.throws(
+        () =>
+          expiring.coordinator.activationOwner.confirmCabinChoice(expiring.broker.issue("cabin_confirm"), {
+            apiVersion: 1,
+            choiceHandle: choices.choices[0]!.choiceHandle,
+            idempotencyKey: "expired-key",
+            confirmed: true,
+          }),
+        /stardew_cabin_choice_expired/,
+      );
+    } finally {
+      Date.now = realDateNow;
+    }
   } finally {
     await expiring.coordinator.close();
     await expiring.broker.close();
+  }
+
+  // The world's answer, not the Host's: the advertisement this offer was drawn from lapsed under the press, so
+  // the Mod's own liveness refusal is what the press gets - and it is a refusal, not a quarantine, because no
+  // request was ever written for it.
+  const lapsed = await prepareCabinCoordinator(Date.now() + 1_500);
+  try {
+    const choices = await lapsed.coordinator.activationOwner.readCabinChoices(lapsed.broker.issue("cabin_read"));
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 1_600));
+    await assert.rejects(
+      lapsed.coordinator.activationOwner.confirmCabinChoice(lapsed.broker.issue("cabin_confirm"), {
+        apiVersion: 1,
+        choiceHandle: choices.choices[0]!.choiceHandle,
+        idempotencyKey: "lapsed-key",
+        confirmed: true,
+      }),
+      /stardew_session_expired/,
+    );
+    assert.equal((await ownerRecord(lapsed.runtimeRoot)).state, "reserved");
+  } finally {
+    await lapsed.coordinator.close();
+    await lapsed.broker.close();
   }
 
   const stale = await prepareCabinCoordinator();

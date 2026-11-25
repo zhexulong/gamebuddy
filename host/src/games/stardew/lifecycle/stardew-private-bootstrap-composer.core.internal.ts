@@ -2657,7 +2657,7 @@ function createManifestHandoffCoordinatorCore(
             Object.freeze({
               cabinId: cabin.cabinId,
               displayLabel: label,
-              expiresAtMs: Math.min(ownerFacts.expiresAtMs, session.expiresAtUnixMs),
+              expiresAtMs: ownerFacts.expiresAtMs,
               selection: await coordinator.select(owner, cabin.cabinId),
             }),
           ),
@@ -2989,10 +2989,9 @@ function refuseManifestHandoffStage(
 
 function didManifestRequestPublicationPossiblyOccur(error: unknown): boolean {
   if (!(error instanceof Error)) return true;
-  // These validation failures all occur before confirmAndRequest constructs or
-  // writes the attachment request. Filesystem failures are deliberately not
-  // classified here because a replace/cleanup error can follow publication.
-  return !/^(?:user_confirmation_required|invalid_cabin_id|invalid_stardew_cabin_choice|invalid_expected_farmhand_id|stardew_session_|stardew_protocol_mismatch|stardew_host_not_ready|cabin_missing|target_farmhand_busy|cabin_bound_to_other_companion)$/.test(
+  // These validation failures all occur before confirmAndRequest constructs or writes the request; the
+  // `stardew_session_` PREFIX is why a lapsed advertisement is one (named literally, it matched only itself).
+  return !/^(?:user_confirmation_required|invalid_cabin_id|invalid_stardew_cabin_choice|invalid_expected_farmhand_id|stardew_session_[a-z_]+|stardew_protocol_mismatch|stardew_host_not_ready|cabin_missing|target_farmhand_busy|cabin_bound_to_other_companion)$/u.test(
     error.message,
   );
 }
@@ -3000,9 +2999,10 @@ function didManifestRequestPublicationPossiblyOccur(error: unknown): boolean {
 function redactManifestHandoffError(error: unknown): Error {
   if (
     error instanceof Error &&
-    /^stardew_manifest_handoff_|^user_confirmation_required$|^invalid_stardew_manifest_handoff_selection$/.test(
-      error.message,
-    )
+    (!didManifestRequestPublicationPossiblyOccur(error) ||
+      /^stardew_manifest_handoff_|^user_confirmation_required$|^invalid_stardew_manifest_handoff_selection$/.test(
+        error.message,
+      ))
   )
     return error;
   return new Error("stardew_manifest_handoff_failed");

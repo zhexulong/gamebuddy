@@ -837,6 +837,19 @@ function stardewCabinReadProblemCode(error: unknown): string {
   }
 }
 
+/**
+ * The cabin press's own causes, and the one player-facing fact they belong to.
+ *
+ * Two different questions end a press, and the player reads one answer for both because the next act is the same
+ * - read the offers again:
+ *
+ * - "you took longer than the offer lived": `stardew_cabin_choice_*`, the Host's own deadline check
+ *   (`STARDEW_CABIN_PRESS_WINDOW_MS`, this attempt's deadline, this browser session's deadline).
+ * - "that cabin is not yours to take any more": the world's own read at press time - taken, gone, or a world
+ *   that ended or was replaced between the render and the press.
+ *
+ * Only a real publish whose fate is unknown keeps a state of its own, because no read can answer it.
+ */
 function stardewCabinProblemCode(error: unknown): string {
   if (!(error instanceof Error)) return "state_unavailable";
   switch (error.message) {
@@ -845,6 +858,16 @@ function stardewCabinProblemCode(error: unknown): string {
     case "stardew_cabin_choice_revision_stale":
     case "stardew_cabin_choice_expired":
     case "stardew_cabin_choice_consumed":
+    // The press's other answer, and the same player-facing fact: the offer the player pressed is not the world's
+    // offer any more. The cabin was taken (`target_farmhand_busy`, `cabin_bound_to_other_companion`), it is gone
+    // (`cabin_missing`), or the world the offer belonged to ended or was replaced (`stardew_session_expired`,
+    // `stardew_session_changed`). Every one of them is the world's own read, made at press time before a request
+    // could be written, so the panel answers it the same way it answers an expired offer: read the offers again.
+    case "cabin_missing":
+    case "target_farmhand_busy":
+    case "cabin_bound_to_other_companion":
+    case "stardew_session_expired":
+    case "stardew_session_changed":
       return "stardew_cabin_choice_stale";
     case "stardew_cabin_idempotency_conflict":
       return "idempotency_conflict";
@@ -1725,9 +1748,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
    * a `platform` member is a root the shell can stand over only by saying so, whereas a root without a half is the
    * shell missing one surface. Nothing here is derived from a half, which is the whole point of the member.
    */
-  const readPlatformMember = async (
-    context: ComposedReferenceGameBrowserReadContext,
-  ): Promise<unknown | undefined> => {
+  const readPlatformMember = async (context: ComposedReferenceGameBrowserReadContext): Promise<unknown | undefined> => {
     const platform = options.platform;
     if (platform === undefined) {
       return undefined;

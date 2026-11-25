@@ -16,7 +16,9 @@ import {
   ownerRecord,
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
 import {
+  STARDEW_CABIN_PRESS_WINDOW_MS,
   STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+  STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS,
   stardewFarmhandJoinBudgetMs,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import assert from "node:assert/strict";
@@ -88,11 +90,11 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     for (const choice of choices.choices) {
       assert.match(choice.choiceHandle, /^[A-Za-z0-9_-]{43}$/);
       assert.equal(choice.availability, "available");
-      // The published deadline is the join budget for the world this fixture launched: its
-      // installation folder is not a real directory, so the Player Host carried no player Mod.
-      const joinBudgetMs = stardewFarmhandJoinBudgetMs(0);
-      assert.ok(choice.expiresAtMs <= readCompletedAt + joinBudgetMs);
-      assert.ok(choice.expiresAtMs >= readStartedAt + joinBudgetMs);
+      // The published deadline is the press window: how long a person may take over this offer. It is not
+      // the join budget (the attach's own wait, which this fixture's advertisement used to be the smaller
+      // term of by accident) and not the advertisement's lease.
+      assert.ok(choice.expiresAtMs <= readCompletedAt + STARDEW_CABIN_PRESS_WINDOW_MS);
+      assert.ok(choice.expiresAtMs >= readStartedAt + STARDEW_CABIN_PRESS_WINDOW_MS);
       assert.deepEqual(Object.keys(choice).sort(), ["availability", "choiceHandle", "displayLabel", "expiresAtMs"]);
     }
     const command = {
@@ -289,12 +291,18 @@ test("the bound cabin's word follows its identity, not its slot among the offers
 /**
  * The join wait used to be `Date.now() + 60_000` whatever world it was waiting for, which is less than the 60 s
  * role-launch budget the coordinator hands the Player Host on its own: a healthy launch with a real Mod pack was
- * reported as an expired one. The measurement here is the deadline the read actually publishes, taken twice over the
- * same fixture machinery with only the player's Mod count differing - so the difference between the two readings can
- * only come from the world the companion joins.
+ * reported as an expired one. The measurement here is the HORIZON the press's retry loop really honours, read as the
+ * same clock skew - `STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS` plus five seconds - applied to two worlds that differ only
+ * in the player Mods they carry: the vanilla press has expired there, the modded one is still retrying. A horizon
+ * without the mod term makes both worlds expire, and a flat horizon wider than the base makes neither.
  */
 test("the Farmhand join wait is sized by the player Mods the world carries", async () => {
   const joinBudgetMods = 40;
+  const pastTheVanillaHorizonMs = STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS + 5_000;
+  // Well past the largest horizon this test builds - the modded world's - and still inside the attempt's own
+  // ten-minute deadline, so the expiry it produces is the join's and not the owner's.
+  const pastEveryJoinHorizonMs = stardewFarmhandJoinBudgetMs(joinBudgetMods) + 60_000;
+  const transientPipeNotReady = Object.assign(new Error("controlled_pipe_not_ready"), { code: "ENOENT" });
   const measure = async (installMods: number) => {
     const parent = await canonicalTemporaryRoot("gamebuddy-join-budget-");
     temporaryRoots.push(parent);
@@ -308,21 +316,59 @@ test("the Farmhand join wait is sized by the player Mods the world carries", asy
       await writeFile(join(mod, "manifest.json"), "{}", "utf8");
     }
     const chain = identityChainFor(installRoot);
+    const realDateNow = Date.now;
+    let attempts = 0;
+    let skewMs = pastTheVanillaHorizonMs;
     const fixture = await prepareCabinCoordinator(Date.now() + 10 * 60_000, {
       boundInstallation: { installRoot, smapi: true },
       inspectorChains: [chain, chain, chain, chain, chain, chain],
-      overrides: { selectStardewFolder: async () => ({ status: "selected" as const, path: installRoot }) },
+      overrides: {
+        selectStardewFolder: async () => ({ status: "selected" as const, path: installRoot }),
+        // The AI client is up and its pipe never answers. The skew starts here, so every read before the press's
+        // retry loop - the offer's, the manifest's - sees the real clock, and the loop's own deadline reads are the
+        // only ones moved.
+        connectFarmhandGameRuntimeFacade: async () => {
+          attempts += 1;
+          Date.now = () => realDateNow() + skewMs;
+          throw transientPipeNotReady;
+        },
+      },
     });
     try {
-      const startedAtMs = Date.now();
-      const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
-      const completedAtMs = Date.now();
-      // The launch's own `--mods-path` root: what the Player Host really carried is the count the
-      // deadline is derived from, so the two readings below come from the same fact.
+      // The launch's own `--mods-path` root: what the Player Host really carried is the count this world's horizon
+      // is meant to be derived from, so both readings come from the same fact.
       const profileModsRoot = fixture.playerSpawnCalls[0]!.args[1]!;
       const carriedModCount = (await readdir(profileModsRoot)).filter((entry) => entry !== "GameBuddy").length;
-      return { deadlineMs: choices.choices[0]!.expiresAtMs, startedAtMs, completedAtMs, carriedModCount };
+      const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+      const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+        fixture.broker.issue("cabin_confirm"),
+        {
+          apiVersion: 1,
+          choiceHandle: choices.choices[0]!.choiceHandle,
+          idempotencyKey: `join-horizon-${installMods}`,
+          confirmed: true,
+        },
+      );
+      let expired = false;
+      void confirmation.then(
+        () => undefined,
+        () => {
+          expired = true;
+        },
+      );
+      const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+      await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+      // Let the loop reach the skew: an expired join settles on its first attempt, a live one keeps retrying.
+      const observationDeadline = realDateNow() + 2_000;
+      while (!expired && attempts < 2 && realDateNow() < observationDeadline)
+        await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 10));
+      const expiredAtTheVanillaHorizon = expired;
+      const attemptsAtTheVanillaHorizon = attempts;
+      skewMs = pastEveryJoinHorizonMs;
+      await assert.rejects(confirmation, /stardew_farmhand_join_deadline_exceeded/);
+      return { carriedModCount, expiredAtTheVanillaHorizon, attemptsAtTheVanillaHorizon };
     } finally {
+      Date.now = realDateNow;
       await fixture.coordinator.close();
       await fixture.broker.close();
     }
@@ -332,20 +378,20 @@ test("the Farmhand join wait is sized by the player Mods the world carries", asy
     const modded = await measure(joinBudgetMods);
     assert.equal(vanilla.carriedModCount, 0);
     assert.equal(modded.carriedModCount, joinBudgetMods);
-    for (const [measurement, playerMods] of [
-      [vanilla, 0],
-      [modded, joinBudgetMods],
-    ] as const) {
-      const joinBudgetMs = stardewFarmhandJoinBudgetMs(playerMods);
-      assert.ok(
-        measurement.deadlineMs - measurement.startedAtMs >= joinBudgetMs,
-        `${measurement.deadlineMs - measurement.startedAtMs}ms is inside the ${joinBudgetMs}ms budget for ${playerMods} player Mods`,
-      );
-      assert.ok(
-        measurement.deadlineMs - measurement.completedAtMs <= joinBudgetMs,
-        `${measurement.deadlineMs - measurement.completedAtMs}ms exceeds the ${joinBudgetMs}ms budget for ${playerMods} player Mods`,
-      );
-    }
+    assert.equal(
+      vanilla.expiredAtTheVanillaHorizon,
+      true,
+      `a press given no player Mods was still retrying ${pastTheVanillaHorizonMs}ms in, which is past the horizon its world buys`,
+    );
+    assert.equal(
+      modded.expiredAtTheVanillaHorizon,
+      false,
+      `the press in a world of ${modded.carriedModCount} player Mods expired ${pastTheVanillaHorizonMs}ms in: the wait did not carry the world's own workload`,
+    );
+    assert.ok(
+      modded.attemptsAtTheVanillaHorizon >= 2,
+      `the modded press made ${modded.attemptsAtTheVanillaHorizon} attempt(s) inside a budget its world's ${modded.carriedModCount} player Mods bought`,
+    );
   });
 });
 
@@ -374,7 +420,10 @@ test("an expired Farmhand join names the wait and leaves the player's session re
   });
   try {
     const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
-    skewMs = choices.choices[0]!.expiresAtMs - realDateNow() + 1_000;
+    // Past the join budget this press's attach is granted, so the retry wait expires immediately instead of the test
+    // sleeping the whole budget out. It is no longer read off the offer's deadline: the offer is the human's press
+    // window, and an attempt's budget is its own number.
+    skewMs = stardewFarmhandJoinBudgetMs(0) + 1_000;
     const command = {
       apiVersion: 1 as const,
       choiceHandle: choices.choices[0]!.choiceHandle,
@@ -409,20 +458,22 @@ test("an expired Farmhand join names the wait and leaves the player's session re
   }
 });
 
-test("the cabin press's connect is granted the join budget, not what is left of the advertisement's lease", async () => {
-  // The real shape of the advertisement: the Mod republishes it every second with a ~3 s expiry (measured
-  // live in `.live-runs/gc1/w-game-launch.txt`, windows of 2697..2936 ms), and `readCabinChoices` mints the
-  // handle's `expiresAtMs` from it. Handing that lease to the bridge connect made the attempt's deadline a
-  // leftover - the manifest admission, the profile materialization and the AI-client launch all happen
-  // between the read and the loop - so one attempt was granted a deadline that had already passed and failed
-  // as `bridge_connect_deadline_exceeded`. What is asserted here is the deadline the connect RECEIVED.
+test("the cabin press's connect is granted its own budget, never what the offer has left", async () => {
+  // The advertisement this fixture publishes is the Mod's real shape: a ~3 s lease (measured live in
+  // `.live-runs/gc1/w-game-launch.txt`, windows of 2697..2936 ms). The offer the browser is given is the
+  // press window instead - a person's deadline - and the attach that follows the press has its own budget.
+  // Handing the offer's remaining life to the bridge connect made the attempt's deadline a leftover - the
+  // manifest admission, the profile materialization and the AI-client launch all happen between the two - so
+  // one attempt was granted a deadline that had already passed and failed as
+  // `bridge_connect_deadline_exceeded`. What is asserted here is the deadline the connect RECEIVED.
   const fixture = await prepareCabinCoordinator(Date.now() + 3_000);
   try {
+    const readCompletedAt = Date.now();
     const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
     const choice = choices.choices[0]!;
     assert.ok(
-      choice.expiresAtMs <= Date.now() + 3_000,
-      "the fixture must publish the advertisement's own ~3 s lease, or it is not the shape this test is about",
+      choice.expiresAtMs >= readCompletedAt + STARDEW_CABIN_PRESS_WINDOW_MS,
+      `the offered press window is ${choice.expiresAtMs - readCompletedAt} ms, which is the advertisement's lease rather than the ${STARDEW_CABIN_PRESS_WINDOW_MS} ms a person is offered`,
     );
     const confirmStartedAt = Date.now();
     const command = {
@@ -443,12 +494,126 @@ test("the cabin press's connect is granted the join budget, not what is left of 
     const grantedMs = connection.deadlineMs - confirmStartedAt;
     assert.ok(
       grantedMs >= STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
-      `the connect was granted ${grantedMs} ms, which is what was left of a ${choice.expiresAtMs - confirmStartedAt} ms advertisement lease rather than the ${STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS} ms an attempt owns`,
+      `the connect was granted ${grantedMs} ms, which is what was left of a ${choice.expiresAtMs - confirmStartedAt} ms offer rather than the ${STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS} ms an attempt owns`,
     );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * The press window, in the numbers the Mod actually publishes.
+ *
+ * `HostFarmhandProvisioner` republishes its advertisement every second with a `now + 3_000` expiry
+ * (`integrations/stardew/HostFarmhandProvisioner.cs:284`) so no reader can trust a document whose publisher
+ * stopped. That lease says how old the DOCUMENT may be; it was never a claim about how long a person needs to
+ * read an offer and press it. Handing it to the browser as the choice's own deadline made the window a human
+ * had ~2.8 s, and the press then failed `stardew_cabin_choice_expired` for a publication beat rather than for
+ * anything the world had said (lane CABINDEADLINE).
+ *
+ * What this pins: an offer drawn under a three-second advertisement and pressed ten seconds later, while the
+ * Mod keeps naming the cabin, is answered by the world - the request is published and the join admitted.
+ */
+test("a cabin press ten seconds after the offer was drawn is answered by the world, not by the advertisement's lease", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000);
+  try {
+    // The real advertisement shape: republished every beat, each copy one beat out.
+    await publishSignedPlayerHostSession(
+      fixture.runtimeRoot,
+      "player-generation-1",
+      availableCabins,
+      Date.now() + 3_000,
+    );
+    const readStartedAt = Date.now();
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const choice = choices.choices[0]!;
     assert.ok(
-      connection.deadlineMs > choice.expiresAtMs,
-      `the connect's deadline (${connection.deadlineMs}) must outlive the offer it was pressed through (${choice.expiresAtMs})`,
+      choice.expiresAtMs >= readStartedAt + STARDEW_CABIN_PRESS_WINDOW_MS,
+      `the drawn offer lives ${choice.expiresAtMs - readStartedAt} ms: that is the advertisement's lease, not the ${STARDEW_CABIN_PRESS_WINDOW_MS} ms press window a person is offered`,
     );
+    // A person reading the panel, deciding, and moving the mouse: ten seconds, three and a bit advertisement
+    // beats after the offer was drawn.
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 10_000));
+    // The Mod's own loop: the advertisement that names this cabin is republished, as `Update()` does every second.
+    await publishSignedPlayerHostSession(
+      fixture.runtimeRoot,
+      "player-generation-1",
+      availableCabins,
+      Date.now() + 3_000,
+    );
+    const confirmed = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), {
+      apiVersion: 1,
+      choiceHandle: choice.choiceHandle,
+      idempotencyKey: "slow-press-key",
+      confirmed: true,
+    });
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    assert.equal(request.cabinId, "cabin-alpha");
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    assert.deepEqual(await confirmed, { apiVersion: 1, status: "manifest_admitted" });
+    assert.equal(fixture.spawnCalls.length, 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * The other half of the same bound: the window is the HOST's, validity is the WORLD's. A press whose cabin
+ * another companion has taken is refused by the world's own name and publishes nothing - widening the press
+ * window may not turn "someone else took it" into an accepted press.
+ */
+test("a press on a cabin the world no longer offers is refused by name and publishes nothing", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000);
+  try {
+    await publishSignedPlayerHostSession(
+      fixture.runtimeRoot,
+      "player-generation-1",
+      availableCabins,
+      Date.now() + 3_000,
+    );
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const choice = choices.choices[0]!;
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choice.choiceHandle,
+      idempotencyKey: "taken-cabin-key",
+      confirmed: true as const,
+    };
+    // Another companion moved into the cabin this offer named, while the offer was on screen.
+    await publishSignedPlayerHostSession(
+      fixture.runtimeRoot,
+      "player-generation-1",
+      [{ ...availableCabins[0]!, isBusy: true }, ...availableCabins.slice(1)],
+      Date.now() + 3_000,
+    );
+    await assert.rejects(
+      fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+      /target_farmhand_busy/,
+      "the press must answer with the fact the world refused on, not with the lease the render happened to carry",
+    );
+    // Nothing was published: the refusal is the world's own read, made before any request could be written.
+    assert.equal(await attachmentRequestId(fixture.runtimeRoot), null);
+
+    // And the refused press left the player a forward path: the answer is "read the offers again", so the fresh
+    // read is what the next press is drawn from - and it is admitted once the cabin is free.
+    await publishSignedPlayerHostSession(
+      fixture.runtimeRoot,
+      "player-generation-1",
+      availableCabins,
+      Date.now() + 3_000,
+    );
+    const reread = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const retried = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), {
+      apiVersion: 1,
+      choiceHandle: reread.choices[0]!.choiceHandle,
+      idempotencyKey: "freed-cabin-key",
+      confirmed: true,
+    });
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    assert.deepEqual(await retried, { apiVersion: 1, status: "manifest_admitted" });
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();

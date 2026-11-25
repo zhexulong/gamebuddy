@@ -2078,6 +2078,13 @@ test("game.disconnect maps only frozen typed outcomes without leaking internal e
 test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
   const cases = [
     ["stardew_cabin_choice_expired", "stardew_cabin_choice_stale"],
+    // The press's other answer, and the same player-facing fact: the offer the player pressed is not the
+    // world's offer any more, so the panel reads the offers again. Each row is a fact the world refuses on.
+    ["cabin_missing", "stardew_cabin_choice_stale"],
+    ["target_farmhand_busy", "stardew_cabin_choice_stale"],
+    ["cabin_bound_to_other_companion", "stardew_cabin_choice_stale"],
+    ["stardew_session_expired", "stardew_cabin_choice_stale"],
+    ["stardew_session_changed", "stardew_cabin_choice_stale"],
     ["stardew_cabin_idempotency_conflict", "idempotency_conflict"],
     ["stardew_cabin_confirmation_conflict", "game_operation_in_progress"],
     ["stardew_cabin_publication_uncertain", "stardew_manifest_handoff_uncertain"],
