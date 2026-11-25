@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { parseReceiptEvidence } from "./lib/multiday-baseline.mjs";
+import { readPlacementHandshake } from "./lib/paired-companion-placement.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import {
   gameClockHhmmFromMs,
@@ -16,7 +17,6 @@ import {
   allocationLeaksTile,
   appendHostPlayerScript,
   attentionStaging,
-  attentionSubject,
   awaitHostPlayerRecords,
   COVENANT_LINE,
   COVENANT_PROMISE_TOKENS,
@@ -41,8 +41,6 @@ import {
   renderSliceLine,
   runPairedLiveRun,
   S1_INTERACTION_RADIUS_TILES,
-  S1_MIN_ANCHOR_SEPARATION_TILES,
-  S1_OLD_PERCEPTION_RADIUS_TILES,
   sealHostPlayerScript,
   sliceAllocation,
   topologyFacts,
@@ -57,11 +55,17 @@ const scratch = () => mkdtempSync(join(tmpdir(), "gb-paired-"));
  * Every slice that may run needs it: S1 refuses to start without a `placed` record answering the newest publication,
  * because a slice that ran with her still in her Cabin would find no subject and blame the world for a handshake this
  * run never completed. A test that skipped it would be measuring the handshake instead of the companion.
+ *
+ * THE PUBLICATION CARRIES THE WORLD, NOT JUST THE TILE. `cropX/cropY`, `chestX/chestY`, the container's published id and
+ * item, and the window the fixture placed her in are the SAME fields `FixtureRecordStream.PlacementRecordDocument`
+ * writes and `placementAnchorsOf` reads, so a test drives the record shape the two processes really exchange. `anchors:
+ * null` is the shape a publication without a world has, which is the one S1 must refuse by name.
  */
 const placementRows = ({
   generation = "gen-paired-1",
   published = { x: 33, y: 16 },
   placed = { x: 34, y: 17 },
+  anchors = { crop: { x: 39, y: 18 }, chest: { x: 30, y: 20 }, minimum: 7, maximum: 15 },
 } = {}) => [
   {
     action: "placement",
@@ -73,6 +77,21 @@ const placementRows = ({
     requestedX: published.x,
     requestedY: published.y,
     detail: `generation=${generation}`,
+    ...(anchors === null
+      ? {}
+      : {
+          cropX: anchors.crop.x,
+          cropY: anchors.crop.y,
+          cropItem: "(O)256",
+          cropItemName: "Tomato",
+          chestX: anchors.chest.x,
+          chestY: anchors.chest.y,
+          chestId: "chest_0123456789abcdef",
+          chestItem: "(O)24",
+          chestItemName: "Ruby",
+          separationMin: anchors.minimum,
+          separationMax: anchors.maximum,
+        }),
   },
   ...(placed === null
     ? []
@@ -90,6 +109,23 @@ const placementRows = ({
         },
       ]),
 ];
+
+/** The `published` record's own anchors, read back off the stream the fixture writes - never a hand-built object. */
+const publishedAnchors = (options = {}) => {
+  const dir = scratch();
+  try {
+    const path = join(dir, "records.jsonl");
+    writeFileSync(
+      path,
+      placementRows(options)
+        .map((record) => JSON.stringify(record))
+        .join("\n"),
+    );
+    return readPlacementHandshake(path).published.anchors;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
 
 /**
  * Two ripe grab crops on 38/39,18 - the shape `native_harvest_crop_v1` grows - and one chest holding one item, which is
@@ -165,7 +201,7 @@ test("the Host player's script is the protocol the Mod parses, and it round-trip
   try {
     const scriptPath = join(dir, "script.json");
     const recordsPath = join(dir, "records.jsonl");
-    const plan = planHostAttentionScript({ snapshot: ripeSnapshot() });
+    const plan = planHostAttentionScript({ anchors: publishedAnchors() });
     const armed = appendHostPlayerScript(scriptPath, plan.steps);
     assert.equal(armed.ok, true);
     assert.deepEqual(armed.seqs, [1, 2, 3], "the writer owns the positions, so a slice knows exactly what it armed");
@@ -252,8 +288,8 @@ test("S2's steps are appended behind S1's in the same document, at positions of 
   const dir = scratch();
   try {
     const scriptPath = join(dir, "script.json");
-    const s1 = appendHostPlayerScript(scriptPath, planHostAttentionScript({ snapshot: ripeSnapshot() }).steps);
-    const s2 = appendHostPlayerScript(scriptPath, planHostClaimScript({ snapshot: chestSnapshot() }).steps);
+    const s1 = appendHostPlayerScript(scriptPath, planHostAttentionScript({ anchors: publishedAnchors() }).steps);
+    const s2 = appendHostPlayerScript(scriptPath, planHostClaimScript({ anchors: publishedAnchors() }).steps);
     assert.deepEqual(s1.seqs, [1, 2, 3]);
     assert.deepEqual(s2.seqs, [4, 5], "the second slice's steps are new positions, not a rewrite of the first's");
 
@@ -310,35 +346,32 @@ test("S2's steps are appended behind S1's in the same document, at positions of 
   }
 });
 
-test("the attention slice walks the Host player to a place the WORLD published, and never invents one", () => {
-  const cropPlan = planHostAttentionScript({ snapshot: ripeSnapshot() });
-  assert.equal(cropPlan.subject.kind, "ready_grab_crop");
+test("both scripts walk the Host player to the tiles the FIXTURE published, never to one of her six-tile rows", () => {
+  const anchors = publishedAnchors();
+  const cropPlan = planHostAttentionScript({ anchors });
+  assert.equal(cropPlan.subject.kind, "published_crop_anchor");
   assert.deepEqual(cropPlan.subject.tile, { x: 39, y: 18 });
+  assert.equal(cropPlan.subject.itemId, "(O)256", "the item is the one the record published with the tile");
   assert.equal(cropPlan.steps[0].nearby, true, "a crop occupies the tile itself, so the person stands beside it");
+  assert.equal(cropPlan.steps[0].location, "Farm", "the map comes from the record that published the tile");
 
-  // The container arm of the same launch: no crop, one chest holding an item.
-  const chestPlan = planHostAttentionScript({ snapshot: chestSnapshot() });
-  assert.equal(chestPlan.subject.kind, "chest_with_item");
-  assert.deepEqual(chestPlan.subject.tile, { x: 30, y: 20 });
-  assert.equal(chestPlan.steps[0].x, 30);
+  // S2's subject is the container the SAME record published, with the address and the item to take: her own `chests`
+  // family only carries a container within six tiles of where she is now, which S1 has just walked her away from.
+  const claimPlan = planHostClaimScript({ anchors });
+  assert.equal(claimPlan.contended.chestId, "chest_0123456789abcdef");
+  assert.deepEqual(claimPlan.contended.tile, { x: 30, y: 20 });
+  assert.equal(claimPlan.steps[0].x, 30);
 
-  // Neither arm: a named gap, and no substituted tile.
-  const empty = planHostAttentionScript({ snapshot: ripeSnapshot({ harvestTargets: [], chests: [] }) });
-  assert.equal(empty.subject, null);
-  assert.deepEqual(empty.steps, []);
-  assert.deepEqual(empty.dropped, [
-    { step: "all", reason: "snapshot_published_no_ripe_crop_and_no_chest_holding_an_item" },
-  ]);
-  assert.equal(
-    attentionSubject(ripeSnapshot({ location: "" })),
-    null,
-    "a snapshot with no location publishes no place to stand",
-  );
+  // A record that published her tile and no world around it arms nothing and substitutes no tile.
+  const barren = planHostClaimScript({ anchors: publishedAnchors({ anchors: null }) });
+  assert.equal(barren.contended, null);
+  assert.deepEqual(barren.steps, []);
+  assert.deepEqual(barren.dropped, [{ step: "all", reason: "paired_companion_anchors_unpublished" }]);
 });
 
 test("S1's own sentence hands away neither the tile nor the decision to go", () => {
   const allocation = sliceAllocation("s1_attention");
-  const subject = attentionSubject(ripeSnapshot());
+  const subject = planHostAttentionScript({ anchors: publishedAnchors() }).subject;
   assert.equal(allocationLeaksTile(allocation, subject.tile), false);
   // The durable property: the sentence must not be able to answer the question the slice asks.
   for (const leak of ["去 (39,18) 那格看看。", "去 39:18。", "坐标 39 18 那里。", "去第 39 格。"])
@@ -411,47 +444,41 @@ test("S1 passes on the tile the person stands beside, and refuses to judge when 
 });
 
 /**
- * S1 MUST NOT RUN WHERE IT COULD PASS BY STANDING STILL, or inside the radius the fix replaced.
+ * S1'S STAGING WINDOW IS ONE DECLARATION, READ FROM THE PLACEMENT RECORD.
  *
- * The two numbers are not interchangeable and neither is a taste: 6 is `ExecutionManager.TargetDiscoveryRadius`, the
- * window `otherFarmers` was bounded by until `628c0967`; 1 is the reach of one act (the judge's own pass predicate and
- * the `nearby` walk the Host player's script makes). Seven is the NEAREST tile outside the wrong radius - not the
- * furthest the farm offers, because the property is "outside the radius that was wrong" and every extra tile is a walk
- * the slice's budget has to pay for.
+ * The defect this replaces: the fixture placed her three to six tiles from the crop (`c8cdd164`) and this runner
+ * refused anything closer than seven (`0bb12791`), so every paired run refused S1 by name and the slice could never run.
+ * Two hard-coded numbers, two owners. The window now travels IN the record the fixture writes
+ * (`separationMin`/`separationMax`), and the staging below reads THAT: seven is `ExecutionManager.TargetDiscoveryRadius`
+ * (6) plus one - the nearest tile the old `otherFarmers` window could not have published - and fifteen is the walk her
+ * own turn has to pay for inside the slice, not the furthest tile the Farm has.
  */
-test("S1's staging distance is outside both radii, and the nearest tile outside them", () => {
-  assert.ok(
-    S1_MIN_ANCHOR_SEPARATION_TILES > S1_OLD_PERCEPTION_RADIUS_TILES,
-    "beyond the six-tile window 628c0967 replaced",
-  );
-  assert.ok(S1_MIN_ANCHOR_SEPARATION_TILES > S1_INTERACTION_RADIUS_TILES, "beyond the reach of one act");
-  assert.equal(
-    S1_MIN_ANCHOR_SEPARATION_TILES,
-    S1_OLD_PERCEPTION_RADIUS_TILES + 1,
-    "the nearest tile the old radius could not have published, not the far corner of the farm",
-  );
-  assert.equal(
-    S1_OLD_PERCEPTION_RADIUS_TILES,
-    6,
-    "the number in integrations/stardew/farmhandexecutioncontroller.cs:28",
-  );
-  assert.equal(S1_INTERACTION_RADIUS_TILES, 1, "the judge's own pass predicate and the `nearby` walk");
+test("S1's staging window is the fixture's own declaration, read from the placement record", () => {
+  const anchors = publishedAnchors();
+  assert.equal(anchors.separationMinimum, 7, "TargetDiscoveryRadius plus one: outside the window 628c0967 replaced");
+  assert.equal(anchors.separationMaximum, 15, "the walk her own turn has to pay for, not the far corner of the Farm");
+  // A publication with no anchors is not an anchor set: nothing here assembles one out of the fields that happen to
+  // parse, and the runner refuses by the record's name rather than inventing a tile.
+  assert.equal(publishedAnchors({ anchors: null }), null);
 });
 
 test("S1 refuses to start when she already stands beside the anchor, and names the distance that would have been enough", () => {
-  const anchor = { x: 39, y: 18 };
+  const anchors = publishedAnchors();
+  const anchor = anchors.crop.tile;
 
-  const far = attentionStaging({ anchorTile: anchor, companionTile: { x: 32, y: 18 } });
+  // Nine tiles: the world placed her exactly where the record says it would, and the slice may run.
+  const far = attentionStaging({ anchors, companionTile: { x: 30, y: 18 } });
   assert.equal(far.ran, true);
   assert.equal(far.reasonCode, null);
-  assert.equal(far.reads.distance, 7);
-  assert.equal(far.reads.required, S1_MIN_ANCHOR_SEPARATION_TILES);
+  assert.equal(far.reads.distance, 9);
+  assert.equal(far.reads.separationMinimum, anchors.separationMinimum);
+  assert.equal(far.reads.separationMaximum, anchors.separationMaximum);
 
   // ON the anchor, and one beside it: both inside the interaction radius, both refused by the position that makes the
   // reading impossible. A companion who begins here can satisfy the verdict without moving, so the slice cannot tell
   // "she came because she saw the player" from "she was already there".
   for (const companionTile of [anchor, { x: 39, y: 19 }, { x: 40, y: 18 }]) {
-    const staged = attentionStaging({ anchorTile: anchor, companionTile });
+    const staged = attentionStaging({ anchors, companionTile });
     assert.equal(staged.ran, false);
     assert.equal(staged.reasonCode, `paired_s1_companion_already_there:${companionTile.x},${companionTile.y}`);
     assert.ok(staged.reads.distance <= S1_INTERACTION_RADIUS_TILES);
@@ -459,19 +486,31 @@ test("S1 refuses to start when she already stands beside the anchor, and names t
 
   // Outside the interaction radius but INSIDE the six tiles the old window carried: even a genuine walk would prove
   // nothing about `628c0967`, so the refusal carries both numbers rather than only saying "too close".
-  const insideTheOldWindow = attentionStaging({ anchorTile: anchor, companionTile: { x: 34, y: 18 } });
+  const insideTheOldWindow = attentionStaging({ anchors, companionTile: { x: 34, y: 18 } });
   assert.equal(insideTheOldWindow.ran, false);
   assert.equal(insideTheOldWindow.reasonCode, "paired_s1_companion_inside_the_old_radius:34,18:d=5:need=7");
   assert.equal(insideTheOldWindow.reads.distance, 5);
 
+  // And BEYOND the window the fixture declared it would place her in: the slice would then be measuring how long her
+  // walk takes, so this is the world's staging and not her attention either.
+  const beyondTheWindow = attentionStaging({ anchors, companionTile: { x: 55, y: 18 } });
+  assert.equal(beyondTheWindow.ran, false);
+  assert.equal(beyondTheWindow.reasonCode, "paired_s1_companion_outside_the_published_window:55,18:d=16:max=15");
+
+  // A record that published her tile and no world around it stages nothing either, and says which record is missing.
+  assert.equal(
+    attentionStaging({ anchors: null, companionTile: { x: 30, y: 18 } }).reasonCode,
+    "paired_companion_anchors_unpublished",
+  );
+
   // A world that published no tile for her stages nothing: not a pass, and no tile invented from nowhere. The snapshot's
   // tile is a float pair (`BridgeTile`), and a rounding is what makes it comparable with the anchor at all.
   assert.equal(
-    attentionStaging({ anchorTile: anchor, companionTile: null }).reasonCode,
+    attentionStaging({ anchors, companionTile: null }).reasonCode,
     "paired_s1_companion_position_unreadable",
   );
   assert.equal(
-    attentionStaging({ anchorTile: anchor, companionTile: { x: 32.6, y: 18.2 } }).reads.distance,
+    attentionStaging({ anchors, companionTile: { x: 32.6, y: 18.2 } }).reads.distance,
     6,
     "a float tile is read as the tile it is: 33,18 is six tiles from 39,18",
   );
@@ -574,8 +613,8 @@ test("S2: exactly one takes the item, the other is refused BY NAME, and either s
   assert.equal(judgeConcurrentClaim({ contended: null }).reasonCode, "fixture_missing:chest_with_item");
 });
 
-test("S2's plan contends over the container the world published, with one item in it", () => {
-  const plan = planHostClaimScript({ snapshot: chestSnapshot() });
+test("S2's plan contends over the container the FIXTURE built, with one item in it", () => {
+  const plan = planHostClaimScript({ anchors: publishedAnchors() });
   assert.equal(plan.contended.chestId, "chest_0123456789abcdef");
   assert.equal(plan.contended.itemId, "(O)24");
   assert.deepEqual(plan.contended.tile, { x: 30, y: 20 });
@@ -585,10 +624,13 @@ test("S2's plan contends over the container the world published, with one item i
   );
   assert.equal(plan.steps[1].targetRef, "chest_0123456789abcdef");
   assert.equal(plan.steps[1].expectedQualifiedItemId, "(O)24");
-  // The world S2 needs is a container WITH something in it: an empty one is a fixture gap by name.
-  const empty = planHostClaimScript({ snapshot: chestSnapshot({ chests: [{ chestId: "c", x: 1, y: 2, items: [] }] }) });
+  // The world S2 needs is a container WITH something in it, published as such: a record that carried no container item
+  // is a fixture gap by name, not a plan to take nothing.
+  const empty = planHostClaimScript({
+    anchors: { ...publishedAnchors(), chest: { ...publishedAnchors().chest, itemId: null } },
+  });
   assert.equal(empty.contended, null);
-  assert.equal(empty.dropped[0].reason, "snapshot_published_no_chest_holding_an_item");
+  assert.equal(empty.dropped[0].reason, "paired_companion_anchors_unpublished");
 });
 
 test("S3: two readable nights pass; ONE night is a failure, and an unreadable hour is not the farmer's fault", () => {
@@ -1172,7 +1214,7 @@ test("the paired lane key arms its own scenario, and every action it publishes e
   for (const action of actions) assert.ok(published.has(action), `${action} is a published action id`);
 
   // The run's own map of arms names the same scenario, so the line it prints at 3 a.m. is the world that exists.
-  for (const requirement of ["ready_grab_crop", "chest_with_item"])
+  for (const requirement of ["chest_with_item", "s1_staging"])
     assert.match(fixtureGapLine(requirement, "any"), /arm=native_paired_companion_v1/u);
 });
 
@@ -1490,9 +1532,15 @@ test("one launch prints four slice lines, and a missing second body is never a p
         dispose: () => {},
       }),
       observe: async () =>
-        // Her own tile is the world's answer and the staging reads it: seven tiles from the anchor at 39,18 is exactly
-        // the separation S1 requires, so this run is one that is allowed to start.
-        ripeSnapshot({ tile: { x: 32, y: 18 }, otherFarmers: [{ x: 39, y: 19, name: "Player", doing: "emoting" }] }),
+        // HER OWN TILE is the world's answer and the staging reads it; her own ROWS are empty, because she stands nine
+        // tiles from the crop and `harvestTargets`/`chests` are published within six. Both of this run's subjects come
+        // from the placement record, so an empty snapshot here is the paired fixture's own shape rather than a gap.
+        ripeSnapshot({
+          tile: { x: 30, y: 18 },
+          harvestTargets: [],
+          chests: [],
+          otherFarmers: [{ x: 39, y: 19, name: "Player", doing: "emoting" }],
+        }),
       now: (() => {
         let clock = 0;
         return () => (clock += 1_000);
@@ -1502,13 +1550,28 @@ test("one launch prints four slice lines, and a missing second body is never a p
     const sliceLines = printed.filter((line) => line.startsWith("PAIRED_SLICE "));
     assert.equal(sliceLines.length, 4, `every slice printed exactly one line: ${JSON.stringify(sliceLines)}`);
     assert.match(sliceLines[0], /^PAIRED_SLICE s1_attention passed went_to_the_other_farmer/u);
-    // No container in this world: S2 names the arm it needs instead of passing.
-    assert.match(sliceLines[1], /^PAIRED_SLICE s2_claim not_measured fixture_missing:chest_with_item/u);
-    assert.ok(printed.some((line) => line.startsWith("PAIRED_FIXTURE_MISSING chest_with_item")));
+    // S2's container is published, so the run ARMS its two steps; what is missing is the world's own answer (nothing in
+    // this mock ever took the item), and that is `not_measured` rather than a pass.
+    assert.match(sliceLines[1], /^PAIRED_SLICE s2_claim not_measured one_side_never_dispatched/u);
     assert.match(sliceLines[2], /^PAIRED_SLICE s3_night not_measured two_bodies_unavailable/u);
     // The day never rolled over, so the memory slice measured nothing - and says so rather than passing.
     assert.match(sliceLines[3], /^PAIRED_SLICE s4_memory not_measured day_did_not_roll_over/u);
     assert.notEqual(report.state, "passed");
+
+    // THE HOST PLAYER WALKED TO THE TILE THE RECORD PUBLISHED. Her own `harvestTargets` was `[]` (she is nine tiles from
+    // the crop, and the family is six), so a walking destination read off her rows would have been an invented tile or
+    // none at all - which is the defect this whole record exists to make impossible.
+    const script = JSON.parse(readFileSync(join(dir, "host-player-script.json"), "utf8"));
+    assert.deepEqual(
+      {
+        action: script.steps[0].action,
+        location: script.steps[0].location,
+        x: script.steps[0].x,
+        y: script.steps[0].y,
+      },
+      { action: "walk_to_tile", location: "Farm", x: 39, y: 18 },
+      "the record's crop anchor, not a row from her six-tile window",
+    );
 
     // The trace is the deliverable: the slice lines on disk agree with the four printed ones.
     const onDisk = readFileSync(join(dir, "slices.jsonl"), "utf8")
@@ -1561,8 +1624,9 @@ test("the run refuses to start S1 when the world stages her on the anchor, and a
         runTurn: async () => ({ admitted: true, settled: true, turns: [{ text: "嗯。" }] }),
         dispose: () => {},
       }),
-      // The paired fixture's current staging: her body three to six tiles from the crop, and here her own tile is the
-      // crop's tile - the shape the gate exists to refuse, not a world the run may judge.
+      // Her own tile IS the crop's tile here - the shape the gate exists to refuse, not a world the run may judge. The
+      // rest of the world is the record's: her crop row is irrelevant to it, because nothing derives a walking
+      // destination from her six-tile window.
       observe: async () => ripeSnapshot({ tile: { x: 39, y: 18 } }),
       now: (() => {
         let clock = 0;
@@ -1579,19 +1643,20 @@ test("the run refuses to start S1 when the world stages her on the anchor, and a
       "the refusal names her own tile, which is the position that makes the reading impossible",
     );
     assert.match(sliceLines[0], /distance=0/u);
-    assert.match(sliceLines[0], /required=7/u);
+    assert.match(sliceLines[0], /separationMinimum=7/u);
     // The 3 a.m. line names what is missing and what arms it, instead of leaving a reader with a code.
     const gap = printed.find((line) => line.startsWith("PAIRED_FIXTURE_MISSING s1_staging"));
     assert.ok(gap !== undefined, "a refused slice prints the fixture gap by name");
     assert.match(gap, /reason=paired_s1_companion_already_there:39,18/u);
     assert.match(gap, /arm=native_paired_companion_v1/u);
 
-    // THE SLICE ARMED NOTHING AND SPOKE NO COVENANT: the only step in the document is S3's own. A `say` here would be
-    // the harness promising on her behalf after refusing to measure the promise.
+    // S1 ARMED NOTHING AND SPOKE NO COVENANT: no walk, no balloon and - above all - no `say`, because a harness that spoke
+    // the promise after refusing to measure it would be promising on her behalf. S2's own two steps ARE here: the
+    // container is the record's published world, and whether S1 was allowed to judge has nothing to do with it.
     const document = JSON.parse(readFileSync(scriptPath, "utf8"));
     assert.deepEqual(
       document.steps.map((step) => step.action),
-      ["sleep"],
+      ["walk_to_tile", "chest_take", "sleep"],
       "S1's walk/emote/say are absent because S1 never ran",
     );
     const staging = readFileSync(join(dir, "timeline.jsonl"), "utf8")
@@ -1601,7 +1666,8 @@ test("the run refuses to start S1 when the world stages her on the anchor, and a
       .find((record) => record.type === "s1_staging");
     assert.equal(staging.payload.ran, false);
     assert.equal(staging.payload.reads.distance, 0);
-    assert.equal(staging.payload.reads.oldPerceptionRadius, S1_OLD_PERCEPTION_RADIUS_TILES);
+    assert.equal(staging.payload.reads.separationMinimum, 7, "the window is the record's, not this run's");
+    assert.equal(staging.payload.reads.separationMaximum, 15);
   } finally {
     console.log = original;
     rmSync(dir, { recursive: true, force: true });

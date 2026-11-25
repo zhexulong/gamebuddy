@@ -41,17 +41,21 @@ namespace GameBuddy.Stardew;
 /// <item>ON THE FARM, because <c>otherFarmers</c> is bounded by HER MAP (<c>FarmhandTargetDiscovery.DiscoverOtherFarmers</c>)
 /// and the Host player is walked onto the Farm by S1's script - so the map is what makes him visible to her at all.
 /// Guaranteed by the published tile being a Farm tile and by her report naming the tile she actually reached.</item>
-/// <item>NEAR THE CROP: three to <c>ExecutionManager.TargetDiscoveryRadius</c> tiles of it (Chebyshev), which is the
-/// window <c>harvestTargets</c>/<c>cropTargets</c> publish within, so ONE observation from where she lands carries the
-/// subject S1 is about. Guaranteed by the tile being chosen under that predicate, and the lower bound of three is what
-/// keeps S1 from passing by standing still.</item>
-/// <item>NO FURTHER THAN THAT RADIUS FROM THE CONTAINER, so the same observation carries S2's subject too and the
-/// next slice needs no second launch.</item>
+/// <item>OUTSIDE THE OLD SIX-TILE WINDOW: at least <c>PairedCompanionSeparationMinimumTiles</c> and at most
+/// <c>PairedCompanionSeparationMaximumTiles</c> tiles (Chebyshev) from the crop, which is what makes S1 a reading of her
+/// attention rather than of where the world put her. That is exactly why the crop is NOT in her own
+/// <c>harvestTargets</c> any more - and why both anchors travel in the placement record, so the harness's walking
+/// destination is the tile this process built instead of a row she would have to be standing beside to publish.
+/// Guaranteed by the tile being chosen under that window, and published with the window it was chosen in.</item>
+/// <item>NO FURTHER THAN <c>ExecutionManager.TargetDiscoveryRadius</c> FROM THE CONTAINER, so her OWN observation carries
+/// S2's subject too and the next slice needs no second launch. The container is the subject that moves with her, because
+/// hers is the only observation it has to appear in.</item>
 /// <item>A TILE SHE CAN STAND ON, asked of the production predicate (<c>StardewBodyController.IsStandableTile</c>) and
 /// re-asked in her own process before she moves.</item>
 /// </list>
 /// The two distances are NOT re-derived here: <see cref="NativeLocalPairedCompanionWorld"/> is returned by the builder
-/// that chose them, so the published tile and the tile her client stands on cannot be two searches.
+/// that chose them, so the published tile, the published anchors and the tile her client stands on cannot be three
+/// searches.
 /// </para>
 /// </summary>
 public sealed partial class ModEntry
@@ -119,7 +123,8 @@ public sealed partial class ModEntry
                     farm.NameOrUniqueName,
                     world.Standing,
                     world.Standing,
-                    generation)))
+                    generation,
+                    world.Anchors)))
         {
             RefuseNativePairedCompanionPlacement("paired_companion_records_unavailable", "the placement publication could not be written to the fixture's record stream");
             return;
@@ -129,8 +134,8 @@ public sealed partial class ModEntry
             farmhand.UniqueMultiplayerID,
             farm.NameOrUniqueName,
             generation,
-            world.Crop,
-            world.Chest,
+            world.Anchors.Crop.Tile,
+            world.Anchors.Chest.Tile,
             world.Standing,
             world.Radius,
             recordsPath);
@@ -138,11 +143,13 @@ public sealed partial class ModEntry
         this.Monitor.Log(
             "GameBuddy HostAutomation initialized the paired companion world before attachment: "
                 + $"farmhand={farmhand.UniqueMultiplayerID};generation={generation};"
-                + $"crop={(int)world.Crop.X},{(int)world.Crop.Y};chest={(int)world.Chest.X},{(int)world.Chest.Y};"
+                + $"crop={(int)world.Anchors.Crop.Tile.X},{(int)world.Anchors.Crop.Tile.Y};"
+                + $"chest={(int)world.Anchors.Chest.Tile.X},{(int)world.Anchors.Chest.Tile.Y};chest_id={world.Anchors.Chest.Address};"
                 + $"standing={(int)world.Standing.X},{(int)world.Standing.Y};radius={world.Radius};"
+                + $"separation={world.Anchors.SeparationMinimum}..{world.Anchors.SeparationMaximum};"
                 + $"records={recordsPath};"
-                + "this process places the WORLD and publishes the tile; her own process places her body and reports it; "
-                + "production alone harvests, contends and takes.",
+                + "this process places the WORLD and publishes the tile and both anchors; her own process places her body "
+                + "and reports it; production alone harvests, contends and takes.",
             LogLevel.Info);
     }
 

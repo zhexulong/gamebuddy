@@ -29,12 +29,18 @@
  *
  * WHAT EACH SLICE MEASURES NOW, AND WHAT IT MEASURED BEFORE
  * --------------------------------------------------------
- *   S1  a person waves at her from a place the slice has not named, and she starts at least
- *       `S1_MIN_ANCHOR_SEPARATION_TILES` (7) tiles from that place. The prompt carries NO tile and NO instruction to go
- *       anywhere; her only cue is `otherFarmers` in her own observation. The judgement is whether the tile she acts on
- *       is the tile that person is standing beside. The slice REFUSES TO START when the world stages her closer than
- *       that: a companion who begins inside the interaction radius can pass by standing still, and one who begins
- *       inside the six tiles `otherFarmers` used to be bounded by cannot show that the bound was the thing that moved.
+ *   S1  a person waves at her from a place the slice has not named, and the world starts her OUTSIDE the six tiles that
+ *       used to carry other farmers (`separationMin`..`separationMax` in the placement record: seven to fifteen). The
+ *       prompt carries NO tile and NO instruction to go anywhere; her only cue is `otherFarmers` in her own observation.
+ *       The judgement is whether the tile she acts on is the tile that person is standing beside. The slice REFUSES TO
+ *       START when the world stages her on or beside the anchor, inside those six tiles, or outside the published
+ *       window - each for its own reason - so a pass cannot be a companion who began already there, nor one the old
+ *       code would have shown the person anyway.
+ *       WHAT S1 NOW TESTS, SAID PLAINLY: that she notices a person from a tile her own observation could not have
+ *       published the subject from - the cue is the map-wide `otherFarmers` roster, not a six-tile window. WHAT IT DOES
+ *       NOT TEST: that she came BECAUSE of the wave. The wave is the only thing in that world asking anything of her, so
+ *       a companion who would have walked to the crop for her own reasons reads identically; only a second, unrelated
+ *       errand in the same world could separate the two, and this slice does not stage one.
  *   S2  the Host player and the companion contend for ONE container holding ONE item. The judgement reads both sides'
  *       records and the world's own answer afterwards, and it assumes neither order: either side may win.
  *   S3  both farmers sleep in the same night, each with a readable `bedTime`.
@@ -67,12 +73,10 @@ import { awaitCompanionPlacement, tileKey } from "./lib/paired-companion-placeme
 import { openAgentDrivenSession } from "./lib/stardew-multiplayer-agent-runtime.mjs";
 import { observeFresh, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import {
-  chestWithItem,
   gameClockHhmmFromMs,
   gameClockMs,
   gameClockMsFromInGameTime,
   PROBE_EMOTE,
-  readyGrabCrop,
   receiptTargetTile,
   snapshotClock,
 } from "./lib/stardew-player-probe-driver.mjs";
@@ -213,26 +217,24 @@ export const PAIRED_SLICES = Object.freeze([
 /**
  * The fixture scenario that arms each precondition, named so a 3 a.m. reader has the next command and not a diagnosis.
  *
- * ONE SCENARIO NOW CARRIES BOTH FARM FACTS. It did not: a ripe crop lived in `native_harvest_crop_v1`, a chest holding
- * an item in `native_chest_retrieve_v1`, `native_strawberry_covenant_v1` and `native_multi_day_v1` are native-local
- * only, and the shared-world driver arms exactly one scenario per launch - so S1 (a place to stand beside) and S2 (a
- * container with something in it) had to be measured on DIFFERENT launches of this same run. `native_paired_companion_v1`
- * is the world that removes that split: both facts on the Farm, nothing pre-taken, and her body already on that map
- * within the observation's own discovery radius of both. What is still refused here is the other way out - a fixture
- * invented by this run to satisfy its own slice.
+ * ONE SCENARIO CARRIES BOTH FARM FACTS *AND* THE ANCHORS THAT POINT AT THEM. It did not: a ripe crop lived in
+ * `native_harvest_crop_v1`, a chest holding an item in `native_chest_retrieve_v1`,
+ * `native_strawberry_covenant_v1` and `native_multi_day_v1` are native-local only, and the shared-world driver arms
+ * exactly one scenario per launch - so S1 (a place to stand beside) and S2 (a container with something in it) had to be
+ * measured on DIFFERENT launches of this same run. `native_paired_companion_v1` is the world that removes that split:
+ * both facts on the Farm, nothing pre-taken, her body placed outside the window that used to carry other farmers, and
+ * the two tiles published in the placement record so this run walks to WHAT THE FIXTURE BUILT rather than to a row her
+ * own six-tile observation happens to carry. What is still refused here is the other way out - a fixture invented by
+ * this run to satisfy its own slice.
  */
 export const FIXTURE_ARMS = Object.freeze({
-  ready_grab_crop: Object.freeze({
-    scenario: "native_paired_companion_v1",
-    then: "S1 has a ripe crop for the Host player to stand beside (the world grows it with the engine's own SpreadSeeds/GrowCrops commands, and keeps exactly one)",
-  }),
   chest_with_item: Object.freeze({
     scenario: "native_paired_companion_v1",
-    then: "S2 has one container holding one item for two farmers to contend over, within the six-tile discovery radius of the same subject S1 used",
+    then: "S2 has one container holding one item for two farmers to contend over, placed within her own six-tile discovery radius of the tile she starts on, with its address and item published in the placement record",
   }),
   s1_staging: Object.freeze({
-    scenario: "native_paired_companion_v1 - its companion warp is the arm this slice still needs",
-    then: "S1 can start: her own tile at least seven tiles (Chebyshev) from the anchor. The fixture places her three to TargetDiscoveryRadius (6) tiles from the crop today, so S1 refuses to run rather than pass by standing still",
+    scenario: "native_paired_companion_v1 - its placement record is the arm this slice needs",
+    then: "S1 can start: the record publishes crop and chest anchors and the window the fixture placed her in, and she stands inside it (seven to fifteen tiles from the crop)",
   }),
   host_player_stub: Object.freeze({
     scenario: "-HostPlayerScript / -HostPlayerScriptRecords (the fixture's Host player lane)",
@@ -297,32 +299,20 @@ export function gameMinutesBetween(leftMs, rightMs) {
 }
 
 /**
- * THE TWO RADII S1'S STAGING IS MEASURED AGAINST, and where each of them comes from.
+ * THE REACH OF ONE ACT, in tiles: the judge's own pass predicate (`chebyshev(targetTile, hostTile)` against this
+ * constant, inside `judgeJointAttention`) and the `nearby` walk the Host player's script makes, which lands on one
+ * orthogonal neighbour of the subject. A companion who already stands inside it can satisfy the verdict without moving,
+ * and "she was already there" would be read as "she came because she saw the player".
  *
- * `S1_OLD_PERCEPTION_RADIUS_TILES` is `ExecutionManager.TargetDiscoveryRadius`
- * (`integrations/stardew/farmhandexecutioncontroller.cs:28`): the six-tile window every other discovery family still
- * uses, and the window `FarmhandTargetDiscovery.DiscoverOtherFarmers` used for other FARMERS until `628c0967` bounded
- * the roster by the map instead. S1 exists to ask whether she noticed a person the OLD window would not have carried,
- * so the radius that was wrong is the number to stand outside.
- *
- * `S1_INTERACTION_RADIUS_TILES` is the reach one act has: the judge's own pass predicate (`chebyshev(targetTile,
- * hostTile)` against this constant, inside `judgeJointAttention`) and the `nearby` walk the Host player's script makes,
- * which lands on one orthogonal neighbour of the subject. A companion who already stands inside it can satisfy the
- * verdict without moving, and "she was already there" would be read as "she came because she saw the player".
+ * IT IS THE ONLY DISTANCE THIS RUN DECIDES ON ITS OWN. How far she may START from S1's subject, and the six-tile window
+ * S1 exists to stand outside, are the FIXTURE's declaration: the Mod computes them once
+ * (`PairedCompanionSeparationMinimumTiles` = `ExecutionManager.TargetDiscoveryRadius` + 1, `...MaximumTiles` = 15) and
+ * publishes them IN the placement record, and `attentionStaging` stages against THAT record. They were a constant in
+ * this file until `0bb12791` while the fixture had its own - three to six tiles on one side, seven on the other - so
+ * every paired run refused S1 with `paired_s1_companion_inside_the_old_radius:<tile>:d=3..6:need=7`: a slice that could
+ * never run, reported as a world that staged her wrong. One rule, one owner.
  */
-export const S1_OLD_PERCEPTION_RADIUS_TILES = 6;
 export const S1_INTERACTION_RADIUS_TILES = 1;
-
-/**
- * HOW FAR APART THE TWO FARMERS MUST START FOR S1 TO MEAN ANYTHING, in tiles (Chebyshev).
- *
- * SEVEN, NOT THE FURTHEST TILE THE FARM HAS. The property is "outside the radius that was wrong", not "as far as
- * possible", and every extra tile is a longer walk the Host player's script has to complete inside the slice's budget:
- * seven is the nearest tile the old six-tile window could NOT have published, which is exactly the tile that makes the
- * `628c0967` fix observable. It is also outside the interaction radius by six tiles, so a pass here cannot be a
- * companion who began already standing beside the anchor.
- */
-export const S1_MIN_ANCHOR_SEPARATION_TILES = 7;
 
 /** A published tile as an integer pair, or `null`: `BridgeSnapshot.Tile` is a float pair and a guess is not a tile. */
 function readTile(value) {
@@ -331,94 +321,81 @@ function readTile(value) {
 }
 
 /**
- * WHETHER S1 MAY START AT ALL, decided from the world's own two tiles before the slice arms anything.
+ * WHETHER S1 MAY START AT ALL, decided from the world's own tiles before the slice arms anything.
  *
- * A SLICE THAT CAN PASS BY STANDING STILL MUST NOT RUN. Two distances refuse it, and they are two different facts:
+ * A SLICE THAT CAN PASS BY STANDING STILL MUST NOT RUN, and a slice that starts inside the window the fix replaced
+ * cannot show that the window was the thing that moved. Three distances refuse it, and each is a different fact:
+ *   * `paired_companion_anchors_unpublished` - the placement record named the tile she stands on and no world around it.
+ *     The fixture builds S1's subject and S2's container, so an absent anchor is the FEATURE missing, not a tile the
+ *     runner may infer: at seven tiles her own `harvestTargets` is empty by construction, and a fallback to a row she
+ *     published would walk the Host player to whatever she happened to be near.
  *   * `paired_s1_companion_already_there:<tile>` - she begins within the interaction radius, so any act of hers settles
  *     the verdict whatever she understood. The code names her own tile, because that is the position that makes the
  *     reading impossible.
  *   * `paired_s1_companion_inside_the_old_radius:<tile>:d=<distance>:need=<n>` - she begins outside the interaction
  *     radius but inside the six tiles `otherFarmers` used to be bounded by, so even a genuine walk proves nothing about
  *     `628c0967`: the old code would have shown her the person anyway.
- * Both are `not_measured`, one with the numbers in the code, because the missing fact is the WORLD's staging and not her
- * attention.
+ *   * `paired_s1_companion_outside_the_published_window:<tile>:d=<distance>:max=<n>` - she begins further than the
+ *     fixture declared it would place her, so the slice would be measuring how long her walk takes.
+ * `need` and `max` are the RECORD's own numbers, so a refusal here and a world built there cannot disagree.
  */
-export function attentionStaging({ anchorTile, companionTile }) {
-  const anchor = readTile(anchorTile);
+export function attentionStaging({ anchors, companionTile }) {
+  const anchor = readTile(anchors?.crop?.tile ?? null);
   const companion = readTile(companionTile);
+  const minimum = Number.isSafeInteger(anchors?.separationMinimum) ? anchors.separationMinimum : null;
+  const maximum = Number.isSafeInteger(anchors?.separationMaximum) ? anchors.separationMaximum : null;
   const distance = anchor === null || companion === null ? null : chebyshev(companion, anchor);
   const reads = Object.freeze({
     anchorTile: anchor === null ? null : tileKey(anchor),
     companionStartTile: companion === null ? null : tileKey(companion),
     distance,
     interactionRadius: S1_INTERACTION_RADIUS_TILES,
-    oldPerceptionRadius: S1_OLD_PERCEPTION_RADIUS_TILES,
-    required: S1_MIN_ANCHOR_SEPARATION_TILES,
+    separationMinimum: minimum,
+    separationMaximum: maximum,
   });
+  if (anchor === null || minimum === null || maximum === null)
+    return Object.freeze({ ran: false, reasonCode: "paired_companion_anchors_unpublished", reads });
   if (distance === null)
     return Object.freeze({ ran: false, reasonCode: "paired_s1_companion_position_unreadable", reads });
   if (distance <= S1_INTERACTION_RADIUS_TILES)
     return Object.freeze({ ran: false, reasonCode: `paired_s1_companion_already_there:${tileKey(companion)}`, reads });
-  if (distance < S1_MIN_ANCHOR_SEPARATION_TILES)
+  if (distance < minimum)
     return Object.freeze({
       ran: false,
-      reasonCode: `paired_s1_companion_inside_the_old_radius:${tileKey(companion)}:d=${distance}:need=${S1_MIN_ANCHOR_SEPARATION_TILES}`,
+      reasonCode: `paired_s1_companion_inside_the_old_radius:${tileKey(companion)}:d=${distance}:need=${minimum}`,
+      reads,
+    });
+  if (distance > maximum)
+    return Object.freeze({
+      ran: false,
+      reasonCode: `paired_s1_companion_outside_the_published_window:${tileKey(companion)}:d=${distance}:max=${maximum}`,
       reads,
     });
   return Object.freeze({ ran: true, reasonCode: null, reads });
 }
 
 /**
- * The place the Host player should walk to in S1: the world's own answer, not an operator's.
+ * S1's script: stand beside the crop the FIXTURE built, raise one balloon, say the covenant.
  *
- * A ripe grab crop first, because the crop plot is what the harvest arm places; else a chest holding an item, because
- * that is what the container arm places. Either is a real place a person stands beside, and which one it is travels in
- * the verdict (`subject`), so a reader can see what the slice used. Null means this launch armed neither, which is the
- * fixture gap printed by name rather than a substituted tile.
- */
-export function attentionSubject(snapshot) {
-  const location = typeof snapshot?.location === "string" && snapshot.location.length > 0 ? snapshot.location : null;
-  if (location === null) return null;
-  const crop = readyGrabCrop(snapshot, { index: 0 });
-  if (crop !== null)
-    return Object.freeze({
-      kind: "ready_grab_crop",
-      location,
-      tile: Object.freeze({ x: crop.x, y: crop.y }),
-      itemId: crop.qualifiedHarvestItemId ?? null,
-      displayName: crop.displayName ?? null,
-    });
-  const chest = chestWithItem(snapshot);
-  if (chest === null) return null;
-  const item = arrayOf(chest.items).find((entry) => typeof entry?.qualifiedItemId === "string") ?? null;
-  return Object.freeze({
-    kind: "chest_with_item",
-    location,
-    tile: Object.freeze({ x: chest.x, y: chest.y }),
-    chestId: chest.chestId,
-    itemId: item?.qualifiedItemId ?? null,
-    displayName: item?.displayName ?? null,
-  });
-}
-
-/**
- * S1's script: stand beside the subject, raise one balloon, say the covenant.
+ * THE TILE COMES FROM THE PLACEMENT RECORD, never from her observation. `harvestTargets` is published within six tiles
+ * of her, and S1 places her outside that window on purpose - so a script that looked for a ripe crop in her rows would
+ * find none, or, worse, one of the family's other rows: the Host player would then walk somewhere she can already see
+ * instead of to the subject S1 is about. That is the same rule for S2 (`planHostClaimScript`): no path derives the Host
+ * player's destination from a six-tile window.
  *
  * `nearby` is how a person stands beside a crop or a chest that occupies the tile itself; the Mod's channel tries the
  * four orthogonal neighbours in a fixed order and records the tile it reached, so the judgement reads where the player
  * ACTUALLY stood. The covenant is spoken here rather than in the prompt because it is the player's line, and because a
  * promise she was told by the harness is not a promise she keeps.
  */
-export function planHostAttentionScript({ snapshot, covenant = COVENANT_LINE }) {
-  const subject = attentionSubject(snapshot);
-  if (subject === null)
-    return Object.freeze({
-      subject: null,
-      steps: Object.freeze([]),
-      dropped: Object.freeze([
-        Object.freeze({ step: "all", reason: "snapshot_published_no_ripe_crop_and_no_chest_holding_an_item" }),
-      ]),
-    });
+export function planHostAttentionScript({ anchors, covenant = COVENANT_LINE }) {
+  const subject = Object.freeze({
+    kind: "published_crop_anchor",
+    location: anchors.location,
+    tile: Object.freeze({ x: anchors.crop.tile.x, y: anchors.crop.tile.y }),
+    itemId: anchors.crop.itemId,
+    displayName: anchors.crop.displayName,
+  });
   return Object.freeze({
     subject,
     steps: Object.freeze([
@@ -438,27 +415,29 @@ export function planHostAttentionScript({ snapshot, covenant = COVENANT_LINE }) 
 }
 
 /**
- * S2's script: stand beside the container, take the item.
+ * S2's script: stand beside the container the FIXTURE built, take the item it put there.
  *
- * The container's published id is the whole address the Mod resolves, and the item is the stack the world says it
- * holds. There is exactly ONE item, because contention over a row with two of them would let both farmers succeed and
- * measure nothing.
+ * THE CONTAINER'S ADDRESS AND ITS ITEM COME FROM THE SAME RECORD, because both are facts the Host created: it placed the
+ * chest and filled it with one item. Her own `chests` family would only carry the container while she stood inside six
+ * tiles of it, and S1 has just walked her to a person standing beside a crop up to fifteen tiles away - so a plan built
+ * from her rows would be a plan that may not exist by the time S2 runs.
+ *
+ * One item, because contention over a row with two of them would let both farmers succeed and measure nothing: what the
+ * record publishes is what the Host filled.
  */
-export function planHostClaimScript({ snapshot }) {
-  const chest = chestWithItem(snapshot);
-  const location = typeof snapshot?.location === "string" && snapshot.location.length > 0 ? snapshot.location : null;
-  if (chest === null || location === null)
+export function planHostClaimScript({ anchors }) {
+  const chest = anchors?.chest ?? null;
+  if (chest === null || chest.address === null || chest.itemId === null || !anchors.location)
     return Object.freeze({
       contended: null,
       steps: Object.freeze([]),
-      dropped: Object.freeze([Object.freeze({ step: "all", reason: "snapshot_published_no_chest_holding_an_item" })]),
+      dropped: Object.freeze([Object.freeze({ step: "all", reason: "paired_companion_anchors_unpublished" })]),
     });
-  const item = arrayOf(chest.items).find((entry) => typeof entry?.qualifiedItemId === "string") ?? null;
   const contended = Object.freeze({
-    chestId: chest.chestId,
-    tile: Object.freeze({ x: chest.x, y: chest.y }),
-    itemId: item?.qualifiedItemId ?? null,
-    displayName: item?.displayName ?? item?.qualifiedItemId ?? null,
+    chestId: chest.address,
+    tile: Object.freeze({ x: chest.tile.x, y: chest.tile.y }),
+    itemId: chest.itemId,
+    displayName: chest.displayName ?? chest.itemId,
   });
   return Object.freeze({
     contended,
@@ -466,15 +445,15 @@ export function planHostClaimScript({ snapshot }) {
       Object.freeze({
         stepId: "walk",
         action: "walk_to_tile",
-        location,
-        x: chest.x,
-        y: chest.y,
+        location: anchors.location,
+        x: chest.tile.x,
+        y: chest.tile.y,
         nearby: true,
       }),
       Object.freeze({
         stepId: "chest",
         action: "chest_take",
-        targetRef: chest.chestId,
+        targetRef: contended.chestId,
         expectedQualifiedItemId: contended.itemId,
       }),
     ]),
@@ -662,10 +641,13 @@ function hostStubReason(records) {
  * S1 - JOINT ATTENTION, between two real farmers: did she go to where the person waving is.
  *
  * `not_measured` BEFORE `failed`, five times, and each time for a different fact:
- *   * the WORLD staged her too close to see the difference - `attentionStaging` refused the slice before it armed
- *     anything, because a companion who begins inside the interaction radius passes by standing still and one who
- *     begins inside the six tiles the old `otherFarmers` window carried cannot show that the window was the thing that
- *     moved (`paired_s1_companion_already_there`, `paired_s1_companion_inside_the_old_radius`);
+ *   * the WORLD staged her where the reading is impossible - `attentionStaging` refused the slice before it armed
+ *     anything, because a companion who begins inside the interaction radius passes by standing still, one who begins
+ *     inside the six tiles the old `otherFarmers` window carried cannot show that the window was the thing that moved,
+ *     one who begins outside the window the fixture published would have her walk measured instead, and a placement
+ *     record that published her tile and no anchors points at no subject at all (`paired_s1_companion_already_there`,
+ *     `paired_s1_companion_inside_the_old_radius`, `paired_s1_companion_outside_the_published_window`,
+ *     `paired_companion_anchors_unpublished`);
  *   * the prompt named the tile - the slice measured its own sentence, not her attention;
  *   * the Host player never arrived - the cue was never given;
  *   * the person was not in her observation - `otherFarmers` publishes every other player on HER map
@@ -1304,6 +1286,7 @@ export async function runPairedLiveRun({
   const results = [];
   let stoppedBy = null;
   let s1Anchor = null;
+  let pairedAnchors = null;
   let s1Observation = null;
   let contendedTile = null;
 
@@ -1389,25 +1372,25 @@ export async function runPairedLiveRun({
       return verdict("s1_attention", "failed", placement.reasonCode, { placement });
     }
     const snapshot = await observeFn();
-    const plan = planHostAttentionScript({ snapshot, covenant: COVENANT_LINE });
-    if (plan.subject === null) {
-      print(fixtureGapLine("ready_grab_crop", plan.dropped[0]?.reason ?? "unknown"));
-      return judgeJointAttention({ hostRecords: null, companion: [] });
+    // S2'S SUBJECT IS ARMED HERE, NOT AFTER THE GATE BELOW: the container is a fact the placement record published, so
+    // whether S1 may judge anything has nothing to do with whether S2 has a world to contend over.
+    pairedAnchors = placement.anchors;
+    // WHETHER THIS SLICE MAY RUN AT ALL, from the placement record's own anchors and window and her own tile, before
+    // anything is armed: a companion who starts beside the anchor would pass by standing still, one who starts inside the
+    // six tiles `otherFarmers` used to be bounded by would pass even if `628c0967` had never landed, and one who starts
+    // outside the window the fixture declared would pay for her walk instead. The timeline keeps the numbers either way.
+    const staging = attentionStaging({ anchors: placement.anchors, companionTile: snapshot?.tile ?? null });
+    timeline({ atMs: now() - startedAtMs, type: "s1_staging", payload: staging });
+    if (staging.ran !== true) {
+      print(fixtureGapLine("s1_staging", staging.reasonCode));
+      return judgeJointAttention({ hostRecords: null, companion: [], staging });
     }
+    const plan = planHostAttentionScript({ anchors: placement.anchors, covenant: COVENANT_LINE });
     s1Anchor = Object.freeze({
       tile: plan.subject.tile,
       itemId: plan.subject.itemId ?? null,
       displayName: plan.subject.displayName ?? null,
     });
-    // WHETHER THIS SLICE MAY RUN AT ALL, from the world's own two tiles and before anything is armed: a companion who
-    // starts beside the anchor would pass by standing still, and one who starts inside the six tiles `otherFarmers` used
-    // to be bounded by would pass even if `628c0967` had never landed. The timeline keeps the numbers either way.
-    const staging = attentionStaging({ anchorTile: plan.subject.tile, companionTile: snapshot?.tile ?? null });
-    timeline({ atMs: now() - startedAtMs, type: "s1_staging", payload: staging });
-    if (staging.ran !== true) {
-      print(fixtureGapLine("s1_staging", staging.reasonCode));
-      return judgeJointAttention({ hostRecords: null, companion: [], subject: plan.subject.kind, staging });
-    }
     const allocation = sliceAllocation("s1_attention");
     const promptTileLeak = allocationLeaksTile(allocation, plan.subject.tile);
     timeline({ atMs: now() - startedAtMs, type: "s1_allocation", payload: { allocation, promptTileLeak } });
@@ -1449,8 +1432,9 @@ export async function runPairedLiveRun({
 
   // ---- S2: two independent farmers contend for one container -----------------------------------------------
   await runSlice("s2_claim", async (budgetMs) => {
-    const snapshot = await observeFn();
-    const plan = planHostClaimScript({ snapshot });
+    // S2'S SUBJECT COMES FROM THE SAME RECORD S1'S DID, not from her observation: S1 has just walked her to a person
+    // beside a crop, and a container only appears in her `chests` family within six tiles of where she is NOW.
+    const plan = planHostClaimScript({ anchors: pairedAnchors });
     if (plan.contended === null) {
       print(fixtureGapLine("chest_with_item", plan.dropped[0]?.reason ?? "unknown"));
       return judgeConcurrentClaim({ contended: null });

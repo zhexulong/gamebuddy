@@ -7,6 +7,12 @@
  * calls it (Farmer.cs:5753 -> Game1.cs:10019-10032). So the Host builds the world and publishes the tile, and HER process
  * stands there and reports the tile it reached.
  *
+ * THE WORLD'S TWO ANCHORS TRAVEL WITH THAT PUBLICATION (`anchors`, below) because they are the tiles the fixture BUILT,
+ * and the companion's own observation cannot carry them: `harvestTargets` and `chests` are published within
+ * `ExecutionManager.TargetDiscoveryRadius` (six tiles) of HER, and S1 places her outside that window by construction. A
+ * harness that derived the Host player's walking destination from her rows could therefore either find nothing or walk
+ * to a DIFFERENT subject, which is exactly the pair of readings the paired run must not be able to produce.
+ *
  * WHY IT IS ITS OWN MODULE. Both records travel the fixture's existing record stream - the same file the Host player's
  * steps are written to - and the GENERATION is what binds a report to this publication rather than to whichever launch
  * wrote a line first. Both sides of that handshake are read here, so the runner's S1 gate and any future harness read one
@@ -21,6 +27,40 @@ export const PLACEMENT_RECORD_ACTION = "placement";
 
 /** A tile as the one spelling every reason code uses: `<x>,<y>`, or `null` for a tile that was never named. */
 export const tileKey = (tile) => (tile === null || tile === undefined ? null : `${tile.x},${tile.y}`);
+
+/** A published tile as an integer pair, or `null` when the record does not carry one. */
+const readTile = (x, y) => (Number.isSafeInteger(x) && Number.isSafeInteger(y) ? Object.freeze({ x, y }) : null);
+
+const readText = (value) => (typeof value === "string" && value.length > 0 ? value : null);
+
+/**
+ * The world's two anchors and the staging window the fixture placed her in, or `null` when this line carries none.
+ *
+ * ONE PARTIAL ANCHOR SET IS NOT AN ANCHOR SET. A record missing a tile, a container address, the item to take or either
+ * end of the window is `null` here rather than a subject half assembled out of the fields that happened to parse: the
+ * runner's refusal then names the record (`paired_companion_anchors_unpublished`) instead of a tile nobody published.
+ */
+export function placementAnchorsOf(record) {
+  const crop = readTile(record?.cropX, record?.cropY);
+  const chest = readTile(record?.chestX, record?.chestY);
+  const separationMinimum = Number.isSafeInteger(record?.separationMin) ? record.separationMin : null;
+  const separationMaximum = Number.isSafeInteger(record?.separationMax) ? record.separationMax : null;
+  const location = readText(record?.location);
+  if (crop === null || chest === null || location === null) return null;
+  if (separationMinimum === null || separationMaximum === null) return null;
+  return Object.freeze({
+    location,
+    crop: Object.freeze({ tile: crop, itemId: readText(record.cropItem), displayName: readText(record.cropItemName) }),
+    chest: Object.freeze({
+      tile: chest,
+      address: readText(record.chestId),
+      itemId: readText(record.chestItem),
+      displayName: readText(record.chestItemName),
+    }),
+    separationMinimum,
+    separationMaximum,
+  });
+}
 
 /** Every placement record on the stream, in file order. A line that does not parse is skipped (another process appends). */
 export function readPlacementRecords(path) {
@@ -42,7 +82,7 @@ export function readPlacementRecords(path) {
       continue;
     }
     if (parsed?.action !== PLACEMENT_RECORD_ACTION) continue;
-    if (!Number.isInteger(parsed?.x) || !Number.isInteger(parsed?.y)) continue;
+    if (!(Number.isInteger(parsed?.x) && Number.isInteger(parsed?.y))) continue;
     records.push(
       Object.freeze({
         state: typeof parsed.state === "string" ? parsed.state : "unknown",
@@ -54,6 +94,7 @@ export function readPlacementRecords(path) {
           y: Number.isInteger(parsed.requestedY) ? parsed.requestedY : parsed.y,
         }),
         generation: generationOf(parsed.detail),
+        anchors: placementAnchorsOf(parsed),
       }),
     );
   }
@@ -105,6 +146,10 @@ export function readPlacementHandshake(path) {
  * `paired_companion_placement_unconfirmed` with the tile that was published and the wall time spent - because a slice
  * that ran with her still in her Cabin would find no subject and blame the world for a handshake this run never
  * completed.
+ *
+ * `anchors` is the published world's own two subjects, or `null` when the publication carried none. It is returned rather
+ * than looked up a second time: the run stages and walks from THESE, and the record that named the tile she stands on is
+ * the same record that must name the world around it.
  */
 export async function awaitCompanionPlacement({ path, timeoutMs, now = () => Date.now(), pollMs = 250 }) {
   const startedAtMs = now();
@@ -119,6 +164,7 @@ export async function awaitCompanionPlacement({ path, timeoutMs, now = () => Dat
         publishedTile: handshake.published?.tile ?? null,
         placedTile: handshake.rejected.tile,
         generation: handshake.published?.generation ?? null,
+        anchors: handshake.published?.anchors ?? null,
         elapsedMs,
       });
     if (handshake.placed !== null)
@@ -128,6 +174,7 @@ export async function awaitCompanionPlacement({ path, timeoutMs, now = () => Dat
         publishedTile: handshake.published.tile,
         placedTile: handshake.placed.tile,
         generation: handshake.published.generation,
+        anchors: handshake.published.anchors,
         elapsedMs,
       });
     if (now() >= deadline) {
@@ -138,6 +185,7 @@ export async function awaitCompanionPlacement({ path, timeoutMs, now = () => Dat
         publishedTile: handshake.published?.tile ?? null,
         placedTile: null,
         generation: handshake.published?.generation ?? null,
+        anchors: handshake.published?.anchors ?? null,
         elapsedMs,
       });
     }

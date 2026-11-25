@@ -407,8 +407,8 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// THE PAIRED WORLD: one ripe crop AND one chest holding one item, on the SAME map, with her body already on that
-    /// map inside the observation's own discovery radius of both.
+    /// THE PAIRED WORLD: one ripe crop AND one chest holding one item, on the SAME map, with her body placed outside the
+    /// six-tile window that used to carry other farmers and inside the discovery radius of the container.
     ///
     /// <para>
     /// WHY IT EXISTS. The paired companion run's first two slices need two world facts that the single-player fixtures
@@ -426,16 +426,20 @@ public sealed partial class ModEntry
     /// crop is kept (nearest the arrival anchor, so every walk to it is short), because the observation publishes the
     /// whole family and the two sides must agree on which row the subject is without a sorting assumption.</item>
     /// <item>THE CONTAINER is an ordinary, witness-owned `Chest` holding exactly ONE item, filled through
-    /// `Chest.addItem` and read back through `GetItemsForPlayer`. It stands on empty untilled ground beside that crop
-    /// (`FindNativeLocalPairedChestTile`) and holds an item id DIFFERENT from the crop's own harvest, so no reading can
-    /// confuse the two subjects.</item>
-    /// <item>WHERE THE ACTOR STARTS is a tile `StardewBodyController.IsStandableTile` accepts, three to
-    /// `ExecutionManager.TargetDiscoveryRadius` tiles from the crop and no further than that radius from the chest,
-    /// reached by the engine's own warp into the Farm (`Farmer.warpFarmer`, the call every sibling fixture uses).
-    /// THAT radius is what the observation publishes CROPS and CHESTS within (`FarmhandTargetDiscovery`); other PLAYERS
-    /// are bounded by the MAP instead (`DiscoverOtherFarmers`), which is why being on the Farm at all is what makes the
-    /// Host player visible to her. The lower bound of three is the half that keeps S1 honest: starting her beside the
-    /// subject would let any action at all read as joint attention.</item>
+    /// `Chest.addItem` and read back through `GetItemsForPlayer`. It stands on empty untilled ground inside
+    /// <c>ExecutionManager.TargetDiscoveryRadius</c> of WHERE SHE STARTS (`FindNativeLocalPairedChestTile`) and holds an
+    /// item id DIFFERENT from the crop's own harvest, so no reading can confuse the two subjects. Beside her and not
+    /// beside the crop, because the crop is now deliberately out of her six-tile window: an arm she cannot see is an arm
+    /// S2 would report as missing.</item>
+    /// <item>WHERE THE ACTOR STARTS is a tile `StardewBodyController.IsStandableTile` accepts, at least
+    /// <see cref="PairedCompanionSeparationMinimumTiles"/> and at most <see cref="PairedCompanionSeparationMaximumTiles"/>
+    /// tiles from the crop (Chebyshev), reached by the engine's own warp into the Farm (`Farmer.warpFarmer`, the call every
+    /// sibling fixture uses). THAT window is what makes S1 a question about her attention rather than about where the
+    /// fixture put her: the subject is outside the six tiles <c>FarmhandTargetDiscovery.DiscoverOtherFarmers</c> used to
+    /// be bounded by, so her only way to know a person is beside it is the map-wide roster it publishes now. Other
+    /// PLAYERS are bounded by the MAP (`DiscoverOtherFarmers`), which is why being on the Farm at all is what makes the
+    /// Host player visible to her; CROPS and CHESTS are still bounded by <c>ExecutionManager.TargetDiscoveryRadius</c>
+    /// around HER, which is why the container - and not the crop - is placed beside her spawn.</item>
     /// </list>
     /// </para>
     ///
@@ -462,13 +466,39 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// The paired world, as the tiles it decided. Returned rather than re-derived by each caller: the tile one lane
-    /// publishes for the companion to stand on and the tile the other lane warps her to are the SAME fact, and two
-    /// searches would be two spellings of it. <see cref="ChestItem"/> travels with them for the one log line both lanes
-    /// write, so neither has to state the container's item id a second time.
+    /// HOW FAR FROM S1'S SUBJECT THE PAIRED WORLD MAY PLACE HER, in tiles (Chebyshev) - declared ONCE, here, because
+    /// the world that places her and the harness that refuses to judge her are two languages: the placement record
+    /// publishes this window (<see cref="FixtureRecordStream.PlacementAnchors"/>'s <c>separationMin</c>/
+    /// <c>separationMax</c>) and the runner stages against THAT, so there is no second copy to drift.
+    ///
+    /// <para>
+    /// THE MINIMUM IS SEVEN - `ExecutionManager.TargetDiscoveryRadius` plus one tile. S1 asks whether she noticed a
+    /// person the OLD six-tile window would not have carried (`628c0967` bounded <c>otherFarmers</c> by the map instead),
+    /// and seven is the nearest tile that window could not have published: exactly the tile at which the fix becomes
+    /// observable. Three - the floor this world used to use - was inside it, so the slice could not have told the two
+    /// code paths apart even had she moved.
+    /// </para>
+    ///
+    /// <para>
+    /// THE MAXIMUM IS FIFTEEN, AND "AS FAR AS THE FARM GOES" IS NOT THE RULE. <c>otherFarmers</c> is map-wide now, so
+    /// she would see the person from any tile of it; what is finite is the WALK her own turn has to complete inside S1's
+    /// window (a model turn bounded by the slice, on the engine's own pathfinder) and the Host player's step budget for
+    /// the walk to the subject's neighbour. Fifteen keeps the reading about whether she noticed the person, rather than
+    /// about how long a path across an eighty-tile farm takes. The container is unaffected by this ceiling: it is placed
+    /// inside <c>ExecutionManager.TargetDiscoveryRadius</c> of wherever she starts.
+    /// </para>
+    /// </summary>
+    internal const int PairedCompanionSeparationMinimumTiles = ExecutionManager.TargetDiscoveryRadius + 1;
+    internal const int PairedCompanionSeparationMaximumTiles = 15;
+
+    /// <summary>
+    /// THE SAME WORLD AS THE PAIRED RUNNER READS IT: the two anchors the builder chose (with the address and the name each
+    /// client is published by), the window it placed her in, and the tile she stands on. Returned rather than re-derived
+    /// by each caller: the tile one lane publishes for the companion to stand on and the tile the other lane warps her to
+    /// are the SAME fact, and two searches would be two spellings of it.
     /// </summary>
     private sealed record NativeLocalPairedCompanionWorld(
-        Vector2 Crop, Vector2 Chest, string ChestItem, Vector2 Standing, int Radius);
+        FixtureRecordStream.PlacementAnchors Anchors, Vector2 Standing, int Radius);
 
     /// <summary>
     /// Builds the paired world on <paramref name="farm"/> and refuses by name when any half of it cannot exist.
@@ -500,6 +530,7 @@ public sealed partial class ModEntry
         if (selected is null || selected.Value.Value.crop is null)
             throw new InvalidOperationException("fixture_native_local_ready_grab_crop_missing");
         Vector2 cropTile = selected.Value.Key;
+        StardewValley.Item cropItem = ItemRegistry.Create(selected.Value.Value.crop.indexOfHarvest.Value, 1);
         // ONE ready crop, so both sides read the same subject without either sorting the family.
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
         {
@@ -510,8 +541,29 @@ public sealed partial class ModEntry
                 farm.terrainFeatures.Remove(pair.Key);
         }
 
+        // HER TILE FIRST, then the container beside it: she is placed outside the six tiles that used to carry other
+        // farmers, and the container is a subject her OWN observation has to carry for S2 - so the container is the
+        // thing that moves with her, never the other way round.
+        Vector2? companionTile = Enumerable.Range(-PairedCompanionSeparationMaximumTiles, PairedCompanionSeparationMaximumTiles * 2 + 1)
+            .SelectMany(offsetX => Enumerable.Range(-PairedCompanionSeparationMaximumTiles, PairedCompanionSeparationMaximumTiles * 2 + 1)
+                .Select(offsetY => new Vector2(cropTile.X + offsetX, cropTile.Y + offsetY)))
+            .Where(tile => farm.isTileOnMap(tile)
+                && !farm.objects.ContainsKey(tile)
+                && !farm.terrainFeatures.ContainsKey(tile)
+                && !farm.warps.Any(warp => warp.X == (int)tile.X && warp.Y == (int)tile.Y)
+                && ChebyshevTileDistance(tile, cropTile) >= PairedCompanionSeparationMinimumTiles
+                && ChebyshevTileDistance(tile, cropTile) <= PairedCompanionSeparationMaximumTiles
+                && StardewBodyController.IsStandableTile(farm, witness, tile))
+            .OrderBy(tile => ChebyshevTileDistance(tile, cropTile))
+            .ThenBy(tile => tile.X)
+            .ThenBy(tile => tile.Y)
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+        if (companionTile is null)
+            throw new InvalidOperationException("fixture_native_paired_companion_standing_missing");
+
         const string pairedChestItemId = "(O)388";
-        Vector2? chestTile = FindNativeLocalPairedChestTile(farm, cropTile);
+        Vector2? chestTile = FindNativeLocalPairedChestTile(farm, companionTile.Value);
         if (chestTile is null)
             throw new InvalidOperationException("fixture_native_paired_companion_chest_tile_missing");
         StardewValley.Objects.Chest chest = new(playerChest: true, chestTile.Value);
@@ -528,26 +580,6 @@ public sealed partial class ModEntry
             || chest.GetItemsForPlayer().Count(item => item is not null) != 1)
             throw new InvalidOperationException("fixture_native_paired_companion_chest_placement_failed");
 
-        int radius = ExecutionManager.TargetDiscoveryRadius;
-        Vector2? companionTile = Enumerable.Range(-radius, radius * 2 + 1)
-            .SelectMany(offsetX => Enumerable.Range(-radius, radius * 2 + 1)
-                .Select(offsetY => new Vector2(cropTile.X + offsetX, cropTile.Y + offsetY)))
-            .Where(tile => farm.isTileOnMap(tile)
-                && !farm.objects.ContainsKey(tile)
-                && !farm.terrainFeatures.ContainsKey(tile)
-                && !farm.warps.Any(warp => warp.X == (int)tile.X && warp.Y == (int)tile.Y)
-                && Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)) >= 3
-                && Math.Max(Math.Abs(tile.X - chestTile.Value.X), Math.Abs(tile.Y - chestTile.Value.Y)) <= radius
-                && StardewBodyController.IsStandableTile(farm, witness, tile))
-            .OrderBy(tile => Math.Abs(tile.X - chestTile.Value.X) + Math.Abs(tile.Y - chestTile.Value.Y))
-            .ThenBy(tile => Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)))
-            .ThenBy(tile => tile.X)
-            .ThenBy(tile => tile.Y)
-            .Cast<Vector2?>()
-            .FirstOrDefault();
-        if (companionTile is null)
-            throw new InvalidOperationException("fixture_native_paired_companion_standing_missing");
-
         int readyGrabCrops = farm.terrainFeatures.Pairs.Count(pair =>
             pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
             && dirt.crop is not null
@@ -555,10 +587,19 @@ public sealed partial class ModEntry
             && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab);
         if (readyGrabCrops != 1)
             throw new InvalidOperationException($"fixture_native_paired_companion_crop_count_not_one:{readyGrabCrops}");
-        if (Math.Max(Math.Abs(companionTile.Value.X - cropTile.X), Math.Abs(companionTile.Value.Y - cropTile.Y)) > radius
-            || Math.Max(Math.Abs(companionTile.Value.X - chestTile.Value.X), Math.Abs(companionTile.Value.Y - chestTile.Value.Y)) > radius)
-            throw new InvalidOperationException("fixture_native_paired_companion_geometry_out_of_range");
-        return new NativeLocalPairedCompanionWorld(cropTile, chestTile.Value, pairedChestItemId, companionTile.Value, radius);
+        return new NativeLocalPairedCompanionWorld(
+            new FixtureRecordStream.PlacementAnchors(
+                Crop: new FixtureRecordStream.PlacementSubject(
+                    cropTile, cropItem.QualifiedItemId, cropItem.DisplayName, Address: string.Empty),
+                Chest: new FixtureRecordStream.PlacementSubject(
+                    chestTile.Value,
+                    contained.QualifiedItemId,
+                    contained.DisplayName,
+                    ExecutionManager.BuildContainerTargetId(farm, (int)chestTile.Value.X, (int)chestTile.Value.Y, chest, isFridge: false)),
+                SeparationMinimum: PairedCompanionSeparationMinimumTiles,
+                SeparationMaximum: PairedCompanionSeparationMaximumTiles),
+            Standing: companionTile.Value,
+            Radius: ExecutionManager.TargetDiscoveryRadius);
     }
 
     /// <summary>
@@ -567,33 +608,39 @@ public sealed partial class ModEntry
     /// </summary>
     private static string NativeLocalPairedCompanionWorldLine(NativeLocalPairedCompanionWorld world) =>
         "GameBuddy native-local-player initialized the paired companion world before bridge attachment: "
-            + $"crop={(int)world.Crop.X},{(int)world.Crop.Y};ready_grab_crops=1;chest_item={world.ChestItem};"
-            + $"chest={(int)world.Chest.X},{(int)world.Chest.Y};"
-            + $"standing={(int)world.Standing.X},{(int)world.Standing.Y};radius={world.Radius}; "
+            + $"crop={(int)world.Anchors.Crop.Tile.X},{(int)world.Anchors.Crop.Tile.Y};"
+            + $"crop_item={world.Anchors.Crop.ItemId};ready_grab_crops=1;"
+            + $"chest={(int)world.Anchors.Chest.Tile.X},{(int)world.Anchors.Chest.Tile.Y};"
+            + $"chest_id={world.Anchors.Chest.Address};chest_item={world.Anchors.Chest.ItemId};"
+            + $"standing={(int)world.Standing.X},{(int)world.Standing.Y};radius={world.Radius};"
+            + $"separation={world.Anchors.SeparationMinimum}..{world.Anchors.SeparationMaximum}; "
+            + "both anchors are published with the placement, so nothing derives them from her six-tile observation; "
             + "production alone harvests, contends and takes.";
 
     /// <summary>
     /// Where the paired world's container stands: empty, untilled ground, with at least one cardinal approach a farmer
-    /// can stand on, and inside <see cref="ExecutionManager.TargetDiscoveryRadius"/> of the crop - so ONE observation
-    /// publishes both subjects to her from wherever the run starts her.
+    /// can stand on, inside <see cref="ExecutionManager.TargetDiscoveryRadius"/> of WHERE SHE STARTS and not at arm's
+    /// length from it - so her own observation carries S2's subject from the tile the world placed her on, and taking it
+    /// is still an approach she makes rather than a row already in reach.
     /// </summary>
-    private static Vector2? FindNativeLocalPairedChestTile(Farm farm, Vector2 cropTile)
+    private static Vector2? FindNativeLocalPairedChestTile(Farm farm, Vector2 standingTile)
     {
         int radius = ExecutionManager.TargetDiscoveryRadius;
         return Enumerable.Range(-radius, radius * 2 + 1)
             .SelectMany(offsetX => Enumerable.Range(-radius, radius * 2 + 1)
-                .Select(offsetY => new Vector2(cropTile.X + offsetX, cropTile.Y + offsetY)))
+                .Select(offsetY => new Vector2(standingTile.X + offsetX, standingTile.Y + offsetY)))
             .Where(tile => farm.isTileOnMap(tile)
                 && !farm.objects.ContainsKey(tile)
                 && !farm.terrainFeatures.ContainsKey(tile)
+                && ChebyshevTileDistance(tile, standingTile) >= 2
                 // A warp the map itself carries is not ground: a container there would swallow the door, and a walk to
                 // it would leave the map instead of reaching the chest.
                 && !farm.warps.Any(warp => warp.X == (int)tile.X && warp.Y == (int)tile.Y)
                 && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
                     .Any(approach => farm.isTileOnMap(approach) && farm.isTilePassable(approach)
                         && !farm.IsTileOccupiedBy(approach, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)))
-            .OrderBy(tile => Math.Max(Math.Abs(tile.X - cropTile.X), Math.Abs(tile.Y - cropTile.Y)))
-            .ThenBy(tile => Math.Abs(tile.X - cropTile.X) + Math.Abs(tile.Y - cropTile.Y))
+            .OrderBy(tile => ChebyshevTileDistance(tile, standingTile))
+            .ThenBy(tile => Math.Abs(tile.X - standingTile.X) + Math.Abs(tile.Y - standingTile.Y))
             .ThenBy(tile => tile.X)
             .ThenBy(tile => tile.Y)
             .Cast<Vector2?>()
