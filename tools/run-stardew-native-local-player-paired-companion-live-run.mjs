@@ -29,15 +29,20 @@
  *
  * WHAT EACH SLICE MEASURES NOW, AND WHAT IT MEASURED BEFORE
  * --------------------------------------------------------
- *   S1  a person waves at her from a place the slice has not named. The prompt carries NO tile and NO instruction to go
+ *   S1  a person waves at her from a place the slice has not named, and she starts at least
+ *       `S1_MIN_ANCHOR_SEPARATION_TILES` (7) tiles from that place. The prompt carries NO tile and NO instruction to go
  *       anywhere; her only cue is `otherFarmers` in her own observation. The judgement is whether the tile she acts on
- *       is the tile that person is standing beside.
+ *       is the tile that person is standing beside. The slice REFUSES TO START when the world stages her closer than
+ *       that: a companion who begins inside the interaction radius can pass by standing still, and one who begins
+ *       inside the six tiles `otherFarmers` used to be bounded by cannot show that the bound was the thing that moved.
  *   S2  the Host player and the companion contend for ONE container holding ONE item. The judgement reads both sides'
  *       records and the world's own answer afterwards, and it assumes neither order: either side may win.
  *   S3  both farmers sleep in the same night, each with a readable `bedTime`.
  *   S4  a promise the field cannot answer, made on day one, asked again after the session is REBUILT - a fresh game
  *       runtime session on the same durable runtime root and the same continuity identity, so the conversation is gone
- *       and anything recalled has to come from durable memory rather than from two screens of history.
+ *       and anything recalled has to come from durable memory rather than from two screens of history. It is read for
+ *       the PROMISE she says, not for the tree she names: the subject is what the field publishes, and naming it is not
+ *       remembering (`covenant_subject_without_the_promise`).
  *
  * `tGameMs` IS ONE MEASUREMENT ACROSS BOTH SIDES
  * ---------------------------------------------
@@ -51,12 +56,14 @@ import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } fr
 import { join } from "node:path";
 
 import { assessCompanionBehaviourRubric } from "./lib/companion-behaviour-rubric.mjs";
+import { collectMemoryCacheLedger, describeMemoryCacheLedger } from "./lib/memory-cache-ledger.mjs";
 import {
   NIGHT_CAUSE_SLEEP,
   parseReceiptEvidence,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
 } from "./lib/multiday-baseline.mjs";
+import { awaitCompanionPlacement, tileKey } from "./lib/paired-companion-placement.mjs";
 import { openAgentDrivenSession } from "./lib/stardew-multiplayer-agent-runtime.mjs";
 import { observeFresh, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import {
@@ -91,11 +98,51 @@ export const HOST_PLAYER_SCRIPT_SCHEMA = "gamebuddy-host-player-script/v2";
  * observation publishes - no tile address, no item id, no display name - and `covenantIsFieldDerivable` re-checks that
  * against the observation actually taken, so a future edit that names a world thing fails the slice instead of
  * passing it.
+ *
+ * THE LINE IS THE TEMPLATE AND THE TOKENS BELONG TO IT: both families are read off this one sentence - the subject family
+ * word for word, and at least one promise token, since a recital that satisfied no promise token would fail its own
+ * covenant - and a test pins exactly that. An edit here that rewords the promise fails that test instead of quietly
+ * widening the instrument.
  */
 export const COVENANT_LINE = "记住我们说好的：东边那棵树先别动，等我回来一起看。";
 
-/** The words a recalled covenant must contain. Every one of them: one token is not a remembered promise. */
-export const COVENANT_RECALL_TOKENS = Object.freeze(["东边", "树"]);
+/**
+ * WHAT THE COVENANT IS ABOUT, as opposed to WHAT IT PROMISES - two facts, because only the second one is memory.
+ *
+ * The check below used to hold both of these and nothing else (`["东边", "树"]`) and called it a recall. Both belong to
+ * the SUBJECT side: a companion who had forgotten the promise entirely passed by saying "东边那片树", and "she
+ * remembered" was read out of a landmark the field itself publishes. The subject is what a look at the farm can
+ * already answer; the promise is the only thing the conversation added.
+ *
+ * THE SUBJECT FAMILY IS AN `every`: `东边` alone is a bare direction and `树` alone is any tree on the farm, so both are
+ * needed to name the one tree the covenant is about.
+ */
+export const COVENANT_SUBJECT_TOKENS = Object.freeze(["东边", "树"]);
+
+/**
+ * THE PROMISE ITSELF, as the words a farmer actually says it in.
+ *
+ *   token   the part of the promise it carries
+ *   ------  ---------------------------------------------------------------------------------------------------
+ *   别动    THE NON-INTERFERENCE CONSTRAINT, in the covenant's own words: do not touch or move it yet.
+ *   别砍    the SAME constraint named by the act a farmer would name instead: do not chop it.
+ *   留着    the same constraint in its POSITIVE form: keep it for later, rather than forbid an act.
+ *   等      THE DEFERRAL: wait until I come back - the half that says the promise outlives this morning.
+ *
+ * THE FAMILY IS A `some`, and that is the whole of how a paraphrase is recognised: each token is one spelling of one
+ * half of the promise, so any one of them plus the subject family is a recall - "东边那棵树你留着，等你回来" is as
+ * much a remembered covenant as the sentence itself, and demanding the exact line is how the old check was overfitted
+ * to one phrasing.
+ *
+ * WHAT IT CANNOT RECOGNISE, said here rather than discovered later: a promise phrased outside these four families
+ * ("那棵树我不碰", "我记着呢") is invisible to the instrument. An answer of that shape names no subject either, so it
+ * lands in `nothing_to_recall` (`not_measured`) and `not_measured` stays available for it; an answer that names the
+ * subject and no promise family is reported as `covenant_subject_without_the_promise`, whose code names what is missing
+ * rather than claiming she forgot. `等` is the loosest of the four - it also matches an unrelated "等会儿" - so it can
+ * over-count a promise where the other three cannot; the cost is stated rather than hidden, because a miss in this
+ * direction would fail a companion who did remember.
+ */
+export const COVENANT_PROMISE_TOKENS = Object.freeze(["别动", "别砍", "留着", "等"]);
 
 /**
  * The words a next-day answer uses when it asserts that a day-one act COMPLETED - as opposed to mentioning the thing it
@@ -183,6 +230,10 @@ export const FIXTURE_ARMS = Object.freeze({
     scenario: "native_paired_companion_v1",
     then: "S2 has one container holding one item for two farmers to contend over, within the six-tile discovery radius of the same subject S1 used",
   }),
+  s1_staging: Object.freeze({
+    scenario: "native_paired_companion_v1 - its companion warp is the arm this slice still needs",
+    then: "S1 can start: her own tile at least seven tiles (Chebyshev) from the anchor. The fixture places her three to TargetDiscoveryRadius (6) tiles from the crop today, so S1 refuses to run rather than pass by standing still",
+  }),
   host_player_stub: Object.freeze({
     scenario: "-HostPlayerScript / -HostPlayerScriptRecords (the fixture's Host player lane)",
     then: "the Host player can be walked, waved, asked to speak and sent to bed without a second bridge",
@@ -235,7 +286,6 @@ function verdict(slice, state, reasonCode, reads = {}) {
   return Object.freeze({ slice, state, reasonCode, reads: Object.freeze({ ...reads }) });
 }
 
-const tileKey = (tile) => (tile === null || tile === undefined ? null : `${tile.x},${tile.y}`);
 const addressOf = (tile) => (tile === null || tile === undefined ? null : `${tile.x}:${tile.y}`);
 const chebyshev = (left, right) => Math.max(Math.abs(left.x - right.x), Math.abs(left.y - right.y));
 const arrayOf = (value) => (Array.isArray(value) ? value : []);
@@ -244,6 +294,78 @@ const arrayOf = (value) => (Array.isArray(value) ? value : []);
 export function gameMinutesBetween(leftMs, rightMs) {
   if (!(Number.isFinite(leftMs) && Number.isFinite(rightMs))) return null;
   return Math.round((rightMs - leftMs) / 60_000);
+}
+
+/**
+ * THE TWO RADII S1'S STAGING IS MEASURED AGAINST, and where each of them comes from.
+ *
+ * `S1_OLD_PERCEPTION_RADIUS_TILES` is `ExecutionManager.TargetDiscoveryRadius`
+ * (`integrations/stardew/farmhandexecutioncontroller.cs:28`): the six-tile window every other discovery family still
+ * uses, and the window `FarmhandTargetDiscovery.DiscoverOtherFarmers` used for other FARMERS until `628c0967` bounded
+ * the roster by the map instead. S1 exists to ask whether she noticed a person the OLD window would not have carried,
+ * so the radius that was wrong is the number to stand outside.
+ *
+ * `S1_INTERACTION_RADIUS_TILES` is the reach one act has: the judge's own pass predicate (`chebyshev(targetTile,
+ * hostTile)` against this constant, inside `judgeJointAttention`) and the `nearby` walk the Host player's script makes,
+ * which lands on one orthogonal neighbour of the subject. A companion who already stands inside it can satisfy the
+ * verdict without moving, and "she was already there" would be read as "she came because she saw the player".
+ */
+export const S1_OLD_PERCEPTION_RADIUS_TILES = 6;
+export const S1_INTERACTION_RADIUS_TILES = 1;
+
+/**
+ * HOW FAR APART THE TWO FARMERS MUST START FOR S1 TO MEAN ANYTHING, in tiles (Chebyshev).
+ *
+ * SEVEN, NOT THE FURTHEST TILE THE FARM HAS. The property is "outside the radius that was wrong", not "as far as
+ * possible", and every extra tile is a longer walk the Host player's script has to complete inside the slice's budget:
+ * seven is the nearest tile the old six-tile window could NOT have published, which is exactly the tile that makes the
+ * `628c0967` fix observable. It is also outside the interaction radius by six tiles, so a pass here cannot be a
+ * companion who began already standing beside the anchor.
+ */
+export const S1_MIN_ANCHOR_SEPARATION_TILES = 7;
+
+/** A published tile as an integer pair, or `null`: `BridgeSnapshot.Tile` is a float pair and a guess is not a tile. */
+function readTile(value) {
+  if (!(Number.isFinite(value?.x) && Number.isFinite(value?.y))) return null;
+  return Object.freeze({ x: Math.round(value.x), y: Math.round(value.y) });
+}
+
+/**
+ * WHETHER S1 MAY START AT ALL, decided from the world's own two tiles before the slice arms anything.
+ *
+ * A SLICE THAT CAN PASS BY STANDING STILL MUST NOT RUN. Two distances refuse it, and they are two different facts:
+ *   * `paired_s1_companion_already_there:<tile>` - she begins within the interaction radius, so any act of hers settles
+ *     the verdict whatever she understood. The code names her own tile, because that is the position that makes the
+ *     reading impossible.
+ *   * `paired_s1_companion_inside_the_old_radius:<tile>:d=<distance>:need=<n>` - she begins outside the interaction
+ *     radius but inside the six tiles `otherFarmers` used to be bounded by, so even a genuine walk proves nothing about
+ *     `628c0967`: the old code would have shown her the person anyway.
+ * Both are `not_measured`, one with the numbers in the code, because the missing fact is the WORLD's staging and not her
+ * attention.
+ */
+export function attentionStaging({ anchorTile, companionTile }) {
+  const anchor = readTile(anchorTile);
+  const companion = readTile(companionTile);
+  const distance = anchor === null || companion === null ? null : chebyshev(companion, anchor);
+  const reads = Object.freeze({
+    anchorTile: anchor === null ? null : tileKey(anchor),
+    companionStartTile: companion === null ? null : tileKey(companion),
+    distance,
+    interactionRadius: S1_INTERACTION_RADIUS_TILES,
+    oldPerceptionRadius: S1_OLD_PERCEPTION_RADIUS_TILES,
+    required: S1_MIN_ANCHOR_SEPARATION_TILES,
+  });
+  if (distance === null)
+    return Object.freeze({ ran: false, reasonCode: "paired_s1_companion_position_unreadable", reads });
+  if (distance <= S1_INTERACTION_RADIUS_TILES)
+    return Object.freeze({ ran: false, reasonCode: `paired_s1_companion_already_there:${tileKey(companion)}`, reads });
+  if (distance < S1_MIN_ANCHOR_SEPARATION_TILES)
+    return Object.freeze({
+      ran: false,
+      reasonCode: `paired_s1_companion_inside_the_old_radius:${tileKey(companion)}:d=${distance}:need=${S1_MIN_ANCHOR_SEPARATION_TILES}`,
+      reads,
+    });
+  return Object.freeze({ ran: true, reasonCode: null, reads });
 }
 
 /**
@@ -539,15 +661,19 @@ function hostStubReason(records) {
 /**
  * S1 - JOINT ATTENTION, between two real farmers: did she go to where the person waving is.
  *
- * `not_measured` BEFORE `failed`, four times, and each time for a different fact:
+ * `not_measured` BEFORE `failed`, five times, and each time for a different fact:
+ *   * the WORLD staged her too close to see the difference - `attentionStaging` refused the slice before it armed
+ *     anything, because a companion who begins inside the interaction radius passes by standing still and one who
+ *     begins inside the six tiles the old `otherFarmers` window carried cannot show that the window was the thing that
+ *     moved (`paired_s1_companion_already_there`, `paired_s1_companion_inside_the_old_radius`);
  *   * the prompt named the tile - the slice measured its own sentence, not her attention;
  *   * the Host player never arrived - the cue was never given;
  *   * the person was not in her observation - `otherFarmers` publishes every other player on HER map
  *     (`FarmhandTargetDiscovery.DiscoverOtherFarmers`, bounded by the map rather than by the six-tile item radius), so a
  *     person it does not carry is a fact she was never shown rather than one she ignored;
  *   * the slice's own budget cut her turn - that is our clock, not her.
- * What is left is measured: an action on a tile adjacent to the person's tile is the property, an action somewhere else
- * is `failed/acted_away_from_the_other_farmer`, and no action at all is `failed/late`.
+ * What is left is measured: an action within `S1_INTERACTION_RADIUS_TILES` of the person's tile is the property, an action
+ * somewhere else is `failed/acted_away_from_the_other_farmer`, and no action at all is `failed/late`.
  */
 export function judgeJointAttention({
   hostRecords = null,
@@ -558,7 +684,16 @@ export function judgeJointAttention({
   companionDay = null,
   turnTimedOut = false,
   promptTileLeak = false,
+  staging = null,
 }) {
+  // FIRST, because a slice that was never allowed to run did not measure anything else either.
+  if (staging !== null && staging !== undefined && staging.ran !== true)
+    return verdict("s1_attention", "not_measured", staging.reasonCode, {
+      subject,
+      ...staging.reads,
+      fixtureArm: "s1_staging",
+      rule: "S1 must not start where it could pass by standing still, or inside the radius 628c0967 replaced",
+    });
   const hostTile = hostWalkTile(hostRecords);
   if (promptTileLeak === true)
     return verdict("s1_attention", "not_measured", "prompt_leaks_the_tile", {
@@ -600,7 +735,7 @@ export function judgeJointAttention({
       ...reads,
       companionReceipts: companion.length,
     });
-  if (withTargets.some((receipt) => chebyshev(receipt.targetTile, hostTile) <= 1))
+  if (withTargets.some((receipt) => chebyshev(receipt.targetTile, hostTile) <= S1_INTERACTION_RADIUS_TILES))
     return verdict("s1_attention", "passed", "went_to_the_other_farmer", reads);
   return verdict("s1_attention", "failed", "acted_away_from_the_other_farmer", reads);
 }
@@ -839,10 +974,16 @@ function assertedDayOneActs(companionTurns, tokens, backedByAReceipt) {
  * by three different facts and the old judge read all three out of one.
  *
  *   (a) THE COVENANT - "do you remember what we agreed yesterday?". This is the ONLY thing the question asks, and the
- *       only pass condition. `covenantSaid` requires every token of the promise, and nothing else: reciting the
- *       day-one tile, the crop's name or a coordinate is not required, because nobody asked for one. A companion who
- *       answers "东边那棵树先别动，等我回来一起看" has recalled the covenant exactly, and a judge that then failed her
- *       for not also naming a tile was reading its own question into hers.
+ *       only pass condition. `covenantSaid` requires the SUBJECT family AND the PROMISE family, and nothing else:
+ *       reciting the day-one tile, the crop's name or a coordinate is not required, because nobody asked for one. A
+ *       companion who answers "东边那棵树先别动，等我回来一起看" has recalled the covenant exactly, and a judge that then
+ *       failed her for not also naming a tile was reading its own question into hers.
+ *
+ *       THE PROMISE IS THE PROPERTY AND THE SUBJECT IS NOT. A companion who says only "东边那片树" has named a landmark
+ *       the field publishes - she could have answered by looking, or by guessing - and asserting nothing about what was
+ *       promised. That answer is `failed/covenant_subject_without_the_promise`, its own code, because "she named it and
+ *       promised nothing" is a different fact from "she said nothing about it" (`covenant_not_recalled`) and from "there
+ *       was nothing to recall" (`nothing_to_recall`).
  *
  *   (b) A MENTION OF A DAY-ONE ACT SHE TOOK - read against her OWN receipts (`dayOneReceipts`), never against the
  *       anchor tile, and in every state: a receipt that was REFUSED is a fact about what happened to that subject just
@@ -857,7 +998,9 @@ function assertedDayOneActs(companionTurns, tokens, backedByAReceipt) {
  * The gates before all three are about the QUESTION rather than about her: `covenant_field_derivable` means the field
  * already answers it and a companion who never remembered anything could reply by looking; `covenant_never_spoken` and
  * `covenant_absent` mean there was no promise. The instrument is a TOKEN match throughout - high precision and LOW
- * recall - so `covenant_not_recalled` means "no covenant token appeared", never "she forgot".
+ * recall - so `covenant_not_recalled` means "no covenant token appeared", never "she forgot", and
+ * `covenant_subject_without_the_promise` means "the subject appeared and no promise family did", never "she promised
+ * nothing" (see `COVENANT_PROMISE_TOKENS` for what the families cannot recognise).
  */
 export function judgeCrossDayMemory({
   anchor,
@@ -873,7 +1016,8 @@ export function judgeCrossDayMemory({
     covenantLine: covenant?.line ?? null,
     covenantSpoken: covenant?.spoken ?? null,
     covenantFieldDerivable: covenant?.fieldDerivable ?? null,
-    covenantTokens: Array.isArray(covenant?.tokens) ? covenant.tokens.length : 0,
+    covenantSubjectTokens: Array.isArray(covenant?.subjectTokens) ? covenant.subjectTokens.length : 0,
+    covenantPromiseTokens: Array.isArray(covenant?.promiseTokens) ? covenant.promiseTokens.length : 0,
   };
   if (covenant === null || covenant === undefined)
     return verdict("s4_memory", "not_measured", "covenant_absent:no_verbal_promise_before_the_boundary", covenantReads);
@@ -893,9 +1037,19 @@ export function judgeCrossDayMemory({
     return verdict("s4_memory", "not_measured", "no_next_day_turn", { ...covenantReads, anchor: tileKey(anchor.tile) });
   const tokens = anchorTokens(anchor);
   const mentions = companionTurns.filter((text) => tokens.some((token) => String(text).toLowerCase().includes(token)));
-  const covenantSaid = (covenant.tokens ?? []).every((token) =>
-    companionTurns.some((text) => String(text).toLowerCase().includes(String(token).toLowerCase())),
-  );
+  const saidSomewhere = (token) =>
+    companionTurns.some((text) => String(text).toLowerCase().includes(String(token).toLowerCase()));
+  // TWO FAMILIES, TWO QUANTIFIERS, and the pass is their conjunction: the subject is EVERY token (a direction alone or a
+  // bare "tree" names nothing yet), the promise is ANY one token (each is one spelling of one half of the promise, so a
+  // paraphrase is a recall). The subject-only failure below is this same predicate minus its second half, so there is
+  // one spelling of each fact. An EMPTY family is not a satisfied one: `[].every(...)` would pass, so a descriptor that
+  // declares no subject tokens can only ever fail.
+  const subjectTokens = Array.isArray(covenant.subjectTokens) ? covenant.subjectTokens : [];
+  const promiseTokens = Array.isArray(covenant.promiseTokens) ? covenant.promiseTokens : [];
+  const subjectSaid = subjectTokens.length > 0 && subjectTokens.every(saidSomewhere);
+  const promiseTokensSeen = promiseTokens.filter(saidSomewhere);
+  const promiseSaid = promiseTokensSeen.length > 0;
+  const covenantSaid = subjectSaid && promiseSaid;
   // The receipts that would prove a day-one act on this subject, in EVERY state: a refusal at the container is a fact
   // about what happened to it just as a success is, and on this topology the Host player winning the race is an
   // ordinary outcome (see the header).
@@ -910,14 +1064,24 @@ export function judgeCrossDayMemory({
     dayOneReceipts: arrayOf(dayOneReceipts).length,
     receiptsNamingTheAnchor: backing.length,
     mentionsTheDayOneSubject: mentions.length > 0,
+    covenantSubjectSaid: subjectSaid,
+    covenantPromiseSaid: promiseSaid,
+    covenantPromiseTokensSeen: Object.freeze(promiseTokensSeen),
     covenantSaid,
     nextDayTurns: companionTurns.length,
   };
   if (fabricated.length > 0)
     return verdict("s4_memory", "failed", "claim_without_fact", { ...reads, fabricatedClaims: fabricated });
-  if (!covenantSaid && mentions.length === 0 && arrayOf(dayOneReceipts).length === 0)
-    return verdict("s4_memory", "not_measured", "nothing_to_recall", reads);
-  if (!covenantSaid) return verdict("s4_memory", "failed", "covenant_not_recalled", reads);
+  if (!covenantSaid) {
+    if (subjectSaid)
+      return verdict("s4_memory", "failed", "covenant_subject_without_the_promise", {
+        ...reads,
+        rule: "the subject is what the field publishes; the promise is what the conversation added",
+      });
+    if (mentions.length === 0 && arrayOf(dayOneReceipts).length === 0)
+      return verdict("s4_memory", "not_measured", "nothing_to_recall", reads);
+    return verdict("s4_memory", "failed", "covenant_not_recalled", reads);
+  }
   return verdict("s4_memory", "passed", "recalled_the_promise_the_field_cannot_answer", reads);
 }
 
@@ -999,7 +1163,12 @@ export function readHostNightFromSleepRecord(record) {
     day,
     bedTime,
     bedTimeSource: bedTime === null ? null : HOST_BED_TIME_SOURCE,
-    bedTimeAbsent: bedTime === null ? (started ? "host_sleep_step_unreadable" : (record.reasonCode ?? "host_sleep_step_unreadable")) : null,
+    bedTimeAbsent:
+      bedTime === null
+        ? started
+          ? "host_sleep_step_unreadable"
+          : (record.reasonCode ?? "host_sleep_step_unreadable")
+        : null,
   });
 }
 
@@ -1204,6 +1373,21 @@ export async function runPairedLiveRun({
 
   // ---- S1: joint attention, with the Host player as the cue --------------------------------------------------
   await runSlice("s1_attention", async (budgetMs) => {
+    // HER PLACEMENT FIRST, before anything is observed or armed. S1 asks whether she went to a person she SAW, which
+    // presumes her own observation is taken from the world the slice was armed on: if she is still in her Cabin there is
+    // no subject to stand beside and no person on her map, and `not_measured:fixture_missing` would blame the world for a
+    // handshake this run never completed. The record is an act written by HER process, not a tile this runner assumed.
+    const placement = await awaitCompanionPlacement({
+      path: hostPlayerScriptRecords,
+      timeoutMs: budgetMs,
+      now,
+      pollMs,
+    });
+    timeline({ atMs: now() - startedAtMs, type: "s1_placement", payload: placement });
+    if (placement.confirmed !== true) {
+      print(`PAIRED_PLACEMENT_UNCONFIRMED ${placement.reasonCode}`);
+      return verdict("s1_attention", "failed", placement.reasonCode, { placement });
+    }
     const snapshot = await observeFn();
     const plan = planHostAttentionScript({ snapshot, covenant: COVENANT_LINE });
     if (plan.subject === null) {
@@ -1215,12 +1399,27 @@ export async function runPairedLiveRun({
       itemId: plan.subject.itemId ?? null,
       displayName: plan.subject.displayName ?? null,
     });
+    // WHETHER THIS SLICE MAY RUN AT ALL, from the world's own two tiles and before anything is armed: a companion who
+    // starts beside the anchor would pass by standing still, and one who starts inside the six tiles `otherFarmers` used
+    // to be bounded by would pass even if `628c0967` had never landed. The timeline keeps the numbers either way.
+    const staging = attentionStaging({ anchorTile: plan.subject.tile, companionTile: snapshot?.tile ?? null });
+    timeline({ atMs: now() - startedAtMs, type: "s1_staging", payload: staging });
+    if (staging.ran !== true) {
+      print(fixtureGapLine("s1_staging", staging.reasonCode));
+      return judgeJointAttention({ hostRecords: null, companion: [], subject: plan.subject.kind, staging });
+    }
     const allocation = sliceAllocation("s1_attention");
     const promptTileLeak = allocationLeaksTile(allocation, plan.subject.tile);
     timeline({ atMs: now() - startedAtMs, type: "s1_allocation", payload: { allocation, promptTileLeak } });
     const armed = appendHostPlayerScript(hostPlayerScript, plan.steps);
     if (!armed.ok)
-      return judgeJointAttention({ hostRecords: null, companion: [], subject: plan.subject.kind, promptTileLeak });
+      return judgeJointAttention({
+        hostRecords: null,
+        companion: [],
+        subject: plan.subject.kind,
+        promptTileLeak,
+        staging,
+      });
     const stub = await awaitHostPlayerRecords({
       path: hostPlayerScriptRecords,
       seqs: armed.seqs,
@@ -1244,6 +1443,7 @@ export async function runPairedLiveRun({
       companionDay: clock.dayOfMonth,
       turnTimedOut: turn.timedOut === true,
       promptTileLeak,
+      staging,
     });
   });
 
@@ -1362,7 +1562,8 @@ export async function runPairedLiveRun({
     );
     const covenant = Object.freeze({
       line: COVENANT_LINE,
-      tokens: COVENANT_RECALL_TOKENS,
+      subjectTokens: COVENANT_SUBJECT_TOKENS,
+      promiseTokens: COVENANT_PROMISE_TOKENS,
       spoken: said !== undefined && said !== null,
       fieldDerivable: covenantIsFieldDerivable(COVENANT_LINE, s1Observation),
     });
@@ -1397,6 +1598,18 @@ export async function runPairedLiveRun({
     : results.some((entry) => entry.state !== "passed")
       ? "blocked"
       : "passed";
+  // THE MEMORY AND PROMPT-CACHE LEDGER, once per paired run.
+  //
+  // The paired run crosses a session boundary on ONE continuity identity, which is the only topology in this repository
+  // where durable memory is shared while the conversation is not - so the funnel this publishes (`memories`,
+  // `historian_runs`, `notes`, `primers`, `dream_runs`) is the WP-C/WP-D evidence a Chat or Game session cannot supply.
+  // The project scope is resolved from the store's own `session_projects` rows by this run's own continuity suffix;
+  // a store that cannot name it reports `not_measured` and reads nothing globally.
+  const memoryLedger = collectMemoryCacheLedger({
+    contextsRoot: join(runtimeRoot, "contexts"),
+    continuityId: identity,
+  });
+  console.error("PAIRED_MEMORY_LEDGER", describeMemoryCacheLedger(memoryLedger), JSON.stringify(memoryLedger));
   const report = Object.freeze({
     state,
     reasonCode: results.find((entry) => entry.state !== "passed")?.reasonCode ?? "all_four_slices_passed",
@@ -1412,6 +1625,8 @@ export async function runPairedLiveRun({
     }),
     traceBytes,
     rubric,
+    // Recorded, not blocking: the six §4 metrics and the three red lines this run's own store and session imply.
+    memoryLedger,
   });
   writeFileSync(join(traceDir, "paired-report.json"), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`PAIRED_TOPOLOGY ${JSON.stringify(report.topology)}`);

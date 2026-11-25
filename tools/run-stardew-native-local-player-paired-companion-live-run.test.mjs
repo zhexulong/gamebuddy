@@ -15,10 +15,12 @@ import {
 import {
   allocationLeaksTile,
   appendHostPlayerScript,
+  attentionStaging,
   attentionSubject,
   awaitHostPlayerRecords,
   COVENANT_LINE,
-  COVENANT_RECALL_TOKENS,
+  COVENANT_PROMISE_TOKENS,
+  COVENANT_SUBJECT_TOKENS,
   covenantIsFieldDerivable,
   fixtureGapLine,
   gameMinutesBetween,
@@ -38,6 +40,9 @@ import {
   readHostPlayerRecords,
   renderSliceLine,
   runPairedLiveRun,
+  S1_INTERACTION_RADIUS_TILES,
+  S1_MIN_ANCHOR_SEPARATION_TILES,
+  S1_OLD_PERCEPTION_RADIUS_TILES,
   sealHostPlayerScript,
   sliceAllocation,
   topologyFacts,
@@ -45,6 +50,46 @@ import {
 } from "./run-stardew-native-local-player-paired-companion-live-run.mjs";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "gb-paired-"));
+
+/**
+ * THE COMPANION'S PLACEMENT, as the two records the Host and her own process exchange on the fixture's stream.
+ *
+ * Every slice that may run needs it: S1 refuses to start without a `placed` record answering the newest publication,
+ * because a slice that ran with her still in her Cabin would find no subject and blame the world for a handshake this
+ * run never completed. A test that skipped it would be measuring the handshake instead of the companion.
+ */
+const placementRows = ({
+  generation = "gen-paired-1",
+  published = { x: 33, y: 16 },
+  placed = { x: 34, y: 17 },
+} = {}) => [
+  {
+    action: "placement",
+    state: "published",
+    reasonCode: "paired_companion_placement_published",
+    location: "Farm",
+    x: published.x,
+    y: published.y,
+    requestedX: published.x,
+    requestedY: published.y,
+    detail: `generation=${generation}`,
+  },
+  ...(placed === null
+    ? []
+    : [
+        {
+          action: "placement",
+          state: "placed",
+          reasonCode: "paired_companion_placement_reported",
+          location: "Farm",
+          x: placed.x,
+          y: placed.y,
+          requestedX: published.x,
+          requestedY: published.y,
+          detail: `generation=${generation}`,
+        },
+      ]),
+];
 
 /**
  * Two ripe grab crops on 38/39,18 - the shape `native_harvest_crop_v1` grows - and one chest holding one item, which is
@@ -365,6 +410,86 @@ test("S1 passes on the tile the person stands beside, and refuses to judge when 
   assert.equal(cut.reasonCode, "turn_budget_exhausted");
 });
 
+/**
+ * S1 MUST NOT RUN WHERE IT COULD PASS BY STANDING STILL, or inside the radius the fix replaced.
+ *
+ * The two numbers are not interchangeable and neither is a taste: 6 is `ExecutionManager.TargetDiscoveryRadius`, the
+ * window `otherFarmers` was bounded by until `628c0967`; 1 is the reach of one act (the judge's own pass predicate and
+ * the `nearby` walk the Host player's script makes). Seven is the NEAREST tile outside the wrong radius - not the
+ * furthest the farm offers, because the property is "outside the radius that was wrong" and every extra tile is a walk
+ * the slice's budget has to pay for.
+ */
+test("S1's staging distance is outside both radii, and the nearest tile outside them", () => {
+  assert.ok(
+    S1_MIN_ANCHOR_SEPARATION_TILES > S1_OLD_PERCEPTION_RADIUS_TILES,
+    "beyond the six-tile window 628c0967 replaced",
+  );
+  assert.ok(S1_MIN_ANCHOR_SEPARATION_TILES > S1_INTERACTION_RADIUS_TILES, "beyond the reach of one act");
+  assert.equal(
+    S1_MIN_ANCHOR_SEPARATION_TILES,
+    S1_OLD_PERCEPTION_RADIUS_TILES + 1,
+    "the nearest tile the old radius could not have published, not the far corner of the farm",
+  );
+  assert.equal(
+    S1_OLD_PERCEPTION_RADIUS_TILES,
+    6,
+    "the number in integrations/stardew/farmhandexecutioncontroller.cs:28",
+  );
+  assert.equal(S1_INTERACTION_RADIUS_TILES, 1, "the judge's own pass predicate and the `nearby` walk");
+});
+
+test("S1 refuses to start when she already stands beside the anchor, and names the distance that would have been enough", () => {
+  const anchor = { x: 39, y: 18 };
+
+  const far = attentionStaging({ anchorTile: anchor, companionTile: { x: 32, y: 18 } });
+  assert.equal(far.ran, true);
+  assert.equal(far.reasonCode, null);
+  assert.equal(far.reads.distance, 7);
+  assert.equal(far.reads.required, S1_MIN_ANCHOR_SEPARATION_TILES);
+
+  // ON the anchor, and one beside it: both inside the interaction radius, both refused by the position that makes the
+  // reading impossible. A companion who begins here can satisfy the verdict without moving, so the slice cannot tell
+  // "she came because she saw the player" from "she was already there".
+  for (const companionTile of [anchor, { x: 39, y: 19 }, { x: 40, y: 18 }]) {
+    const staged = attentionStaging({ anchorTile: anchor, companionTile });
+    assert.equal(staged.ran, false);
+    assert.equal(staged.reasonCode, `paired_s1_companion_already_there:${companionTile.x},${companionTile.y}`);
+    assert.ok(staged.reads.distance <= S1_INTERACTION_RADIUS_TILES);
+  }
+
+  // Outside the interaction radius but INSIDE the six tiles the old window carried: even a genuine walk would prove
+  // nothing about `628c0967`, so the refusal carries both numbers rather than only saying "too close".
+  const insideTheOldWindow = attentionStaging({ anchorTile: anchor, companionTile: { x: 34, y: 18 } });
+  assert.equal(insideTheOldWindow.ran, false);
+  assert.equal(insideTheOldWindow.reasonCode, "paired_s1_companion_inside_the_old_radius:34,18:d=5:need=7");
+  assert.equal(insideTheOldWindow.reads.distance, 5);
+
+  // A world that published no tile for her stages nothing: not a pass, and no tile invented from nowhere. The snapshot's
+  // tile is a float pair (`BridgeTile`), and a rounding is what makes it comparable with the anchor at all.
+  assert.equal(
+    attentionStaging({ anchorTile: anchor, companionTile: null }).reasonCode,
+    "paired_s1_companion_position_unreadable",
+  );
+  assert.equal(
+    attentionStaging({ anchorTile: anchor, companionTile: { x: 32.6, y: 18.2 } }).reads.distance,
+    6,
+    "a float tile is read as the tile it is: 33,18 is six tiles from 39,18",
+  );
+
+  // The judge reports the refusal as `not_measured` WITH the numbers, whatever she went on to do: the missing fact is
+  // the world's staging, not her attention.
+  const refused = judgeJointAttention({
+    hostRecords: [{ action: "walk_to_tile", state: "succeeded", targetTile: { x: 39, y: 19 } }],
+    otherFarmers: [{ x: 39, y: 19, name: "Player" }],
+    companion: [{ targetTile: { x: 39, y: 18 }, state: "succeeded" }],
+    staging: insideTheOldWindow,
+  });
+  assert.equal(refused.state, "not_measured");
+  assert.equal(refused.reasonCode, "paired_s1_companion_inside_the_old_radius:34,18:d=5:need=7");
+  assert.equal(refused.reads.distance, 5);
+  assert.equal(refused.reads.fixtureArm, "s1_staging");
+});
+
 test("S2: exactly one takes the item, the other is refused BY NAME, and either side may win", () => {
   const contended = { chestId: "chest_0123456789abcdef", tile: { x: 30, y: 20 }, itemId: "(O)24", displayName: "Ruby" };
   const hostWon = {
@@ -556,7 +681,7 @@ test("S3 fails BY NAME when the Host's sleep settled and no night followed", () 
   // step that never settled is the instrument, not the farmer.
   const driven = judgeCoopNight({
     hostNight: {
-        state: "rejected",
+      state: "rejected",
       reasonCode: "script_stopped_by:sleep",
       day: null,
       bedTime: null,
@@ -617,7 +742,11 @@ test("the Host night is read from the sleep step's own record, hour and day incl
 
   // A step the channel refused states its own reason rather than an hour: the body never went to bed, and the judgement
   // must read that as the fixture's failure rather than as a farmer who woke early.
-  const refused = readHostNightFromSleepRecord({ ...settled, state: "rejected", reasonCode: "script_stopped_by:sleep" });
+  const refused = readHostNightFromSleepRecord({
+    ...settled,
+    state: "rejected",
+    reasonCode: "script_stopped_by:sleep",
+  });
   assert.equal(refused.bedTime, null);
   assert.equal(refused.bedTimeSource, null);
   assert.equal(refused.bedTimeAbsent, "script_stopped_by:sleep");
@@ -698,7 +827,13 @@ test("the covenant the run speaks is one the FIELD cannot answer", () => {
 
 test("S4 judges the promise across the rebuilt session, and names a covenant too weak to test", () => {
   const anchor = { tile: { x: 39, y: 18 }, itemId: "(O)256", displayName: "番茄" };
-  const covenant = { line: COVENANT_LINE, tokens: COVENANT_RECALL_TOKENS, spoken: true, fieldDerivable: false };
+  const covenant = {
+    line: COVENANT_LINE,
+    subjectTokens: COVENANT_SUBJECT_TOKENS,
+    promiseTokens: COVENANT_PROMISE_TOKENS,
+    spoken: true,
+    fieldDerivable: false,
+  };
   // Her day one, as the trace holds it: the crop on the anchor tile was harvested by her.
   const harvestedTheAnchor = [
     {
@@ -812,16 +947,127 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
     }).reasonCode,
     "no_next_day_turn",
   );
-  // The tile is a token too, so a companion that says WHERE is recognised without knowing the item's name.
+  // THE SUBJECT WITHOUT THE PROMISE IS NOT A RECALL. The tile is a token too, so this answer is recognised as naming
+  // yesterday's subject - and THAT is all it does: it names the thing and promises nothing. The old instrument passed
+  // it, because both of its tokens came from the subject side.
+  const subjectOnly = judgeCrossDayMemory({
+    anchor,
+    dayOneReceipts: harvestedTheAnchor,
+    companionTurns: ["39,18 那一格是我收的。", "东边的树我没砍。"],
+    dayRolledOver: true,
+    covenant,
+  });
+  assert.equal(subjectOnly.state, "failed", JSON.stringify(subjectOnly.reads));
+  assert.equal(subjectOnly.reasonCode, "covenant_subject_without_the_promise");
+  assert.equal(subjectOnly.reads.mentionsTheDayOneSubject, true, "the tile is a token too, so WHERE is recognised");
+  assert.equal(subjectOnly.reads.covenantSubjectSaid, true);
+  assert.equal(subjectOnly.reads.covenantPromiseSaid, false);
+  assert.deepEqual(subjectOnly.reads.covenantPromiseTokensSeen, []);
+});
+
+/**
+ * THE PROMISE, NOT THE SUBJECT - the defect this instrument had, one case each way.
+ *
+ * `["东边", "树"]` are both SUBJECT tokens: they name WHICH tree, which is the half a look at the farm already answers.
+ * A companion who forgot the promise entirely could say "东边那片树" and pass. The two cases below are the property:
+ * naming the subject alone FAILS by its own code, and a promise in her own words PASSES.
+ */
+test("the covenant is read for its PROMISE: the subject alone fails, a paraphrase of the promise passes", () => {
+  const anchor = { tile: { x: 39, y: 18 }, itemId: "(O)256", displayName: "番茄" };
+  const covenant = {
+    line: COVENANT_LINE,
+    subjectTokens: COVENANT_SUBJECT_TOKENS,
+    promiseTokens: COVENANT_PROMISE_TOKENS,
+    spoken: true,
+    fieldDerivable: false,
+  };
+  const judge = (companionTurns) =>
+    judgeCrossDayMemory({ anchor, dayOneReceipts: [], companionTurns, dayRolledOver: true, covenant });
+
+  // THE SUBJECT, AND NOTHING ELSE: this is the exact sentence the old check passed.
+  const subjectOnly = judge(["东边那片树。"]);
+  assert.equal(subjectOnly.state, "failed");
+  assert.equal(subjectOnly.reasonCode, "covenant_subject_without_the_promise");
+  assert.equal(subjectOnly.reads.covenantSubjectSaid, true);
+  assert.equal(subjectOnly.reads.covenantPromiseSaid, false);
+  // The rule is written once, in the code: this is `covenantSaid` minus its promise half.
+  assert.equal(
+    subjectOnly.reads.rule,
+    "the subject is what the field publishes; the promise is what the conversation added",
+  );
+
+  // A HALF-NAMED SUBJECT is not the subject: a bare direction is an off-topic sentence, not a mis-remembered promise.
+  const directionOnly = judge(["东边有个人在拔草。"]);
+  assert.equal(directionOnly.state, "not_measured", "not_measured stays available for what the tokens cannot read");
+  assert.equal(directionOnly.reasonCode, "nothing_to_recall");
+
+  // THE PROMISE IN HER OWN WORDS, carrying none of the covenant's word order: every one of these is a recall, because
+  // one promise-family token plus the subject family is what a promised thing looks like in a paraphrase.
+  for (const paraphrase of [
+    "东边那棵树你留着，别砍，等你回来。",
+    "就是东边那棵树，我没动过，等你回来再说。",
+    "东边那棵树我先留着。",
+    "东边那棵树别动。",
+  ]) {
+    const recalled = judge([paraphrase]);
+    assert.equal(recalled.state, "passed", `${paraphrase}: ${JSON.stringify(recalled.reads)}`);
+    assert.equal(recalled.reasonCode, "recalled_the_promise_the_field_cannot_answer");
+    assert.equal(recalled.reads.covenantSubjectSaid, true);
+    assert.equal(recalled.reads.covenantPromiseSaid, true);
+    assert.ok(recalled.reads.covenantPromiseTokensSeen.length > 0, "the verdict names which promise word it read");
+  }
+
+  // ... and the pair is what is demanded: a promise word without the subject is not a recall of THIS covenant either.
+  assert.equal(judge(["那棵树先别动。"]).state, "not_measured", "no subject token and no receipt: nothing to recall");
+});
+
+/**
+ * THE TOKENS BELONG TO THE LINE. The covenant is a constant in this file and S1 speaks exactly it, so the instrument is
+ * pinned to the sentence instead of to remembered vocabulary: a future edit that rewords the promise without moving the
+ * tokens fails here instead of silently reading an answer that no longer exists. (`别砍` and `留着` are deliberately NOT
+ * in the sentence: they are the words a COMPANION would use, not the words the player used - which is why only one
+ * promise token has to appear in the line, and every subject token does.)
+ */
+test("the covenant's two token families describe the one line the player speaks", () => {
+  for (const token of COVENANT_SUBJECT_TOKENS)
+    assert.ok(COVENANT_LINE.includes(token), `the subject token ${token} is a word of the covenant`);
+  assert.ok(
+    COVENANT_PROMISE_TOKENS.some((token) => COVENANT_LINE.includes(token)),
+    "reciting the covenant must satisfy its own promise family, or the exact recall would fail",
+  );
+  // THE FAMILIES ARE DISJOINT: if a promise token were also a subject token, the subject-only failure above could never
+  // fire - the defect would be back with the token lists looking correct.
+  for (const token of COVENANT_PROMISE_TOKENS)
+    assert.equal(COVENANT_SUBJECT_TOKENS.includes(token), false, `${token} carries the promise, not the subject`);
+  assert.deepEqual([...COVENANT_SUBJECT_TOKENS], ["东边", "树"]);
+  assert.deepEqual([...COVENANT_PROMISE_TOKENS], ["别动", "别砍", "留着", "等"]);
+  // The exact recital passes, which is the case the pinning above exists to keep true.
   assert.equal(
     judgeCrossDayMemory({
-      anchor,
-      dayOneReceipts: harvestedTheAnchor,
-      companionTurns: ["39,18 那一格是我收的。", "东边的树我没砍。"],
+      anchor: { tile: { x: 39, y: 18 } },
+      dayOneReceipts: [],
+      companionTurns: [COVENANT_LINE],
       dayRolledOver: true,
-      covenant,
+      covenant: {
+        subjectTokens: COVENANT_SUBJECT_TOKENS,
+        promiseTokens: COVENANT_PROMISE_TOKENS,
+        spoken: true,
+        fieldDerivable: false,
+      },
     }).state,
     "passed",
+  );
+  // AN EMPTY FAMILY IS NOT A SATISFIED ONE: `[].every(...)` is true, so a descriptor that declares no subject tokens
+  // would report a recall out of an answer it could not read at all. It fails closed instead.
+  assert.equal(
+    judgeCrossDayMemory({
+      anchor: { tile: { x: 39, y: 18 } },
+      dayOneReceipts: [],
+      companionTurns: [COVENANT_LINE],
+      dayRolledOver: true,
+      covenant: { subjectTokens: [], promiseTokens: COVENANT_PROMISE_TOKENS, spoken: true, fieldDerivable: false },
+    }).state,
+    "not_measured",
   );
 });
 
@@ -832,7 +1078,13 @@ test("S4 judges the promise across the rebuilt session, and names a covenant too
  */
 test("S4 separates remembering the covenant, mentioning a day-one act, and claiming one she never took", () => {
   const anchor = { tile: { x: 39, y: 18 }, itemId: "(O)256", displayName: "番茄" };
-  const covenant = { line: COVENANT_LINE, tokens: COVENANT_RECALL_TOKENS, spoken: true, fieldDerivable: false };
+  const covenant = {
+    line: COVENANT_LINE,
+    subjectTokens: COVENANT_SUBJECT_TOKENS,
+    promiseTokens: COVENANT_PROMISE_TOKENS,
+    spoken: true,
+    fieldDerivable: false,
+  };
   const judge = (overrides) => judgeCrossDayMemory({ anchor, dayRolledOver: true, covenant, ...overrides });
 
   // (a) THE QUESTION ANSWERED, AND NO COORDINATE. She never names the tile or the crop, because nobody asked her to:
@@ -1175,6 +1427,7 @@ test("one launch prints four slice lines, and a missing second body is never a p
     writeFileSync(
       recordsPath,
       [
+        ...placementRows(),
         {
           seq: 1,
           stepId: "walk",
@@ -1236,7 +1489,10 @@ test("one launch prints four slice lines, and a missing second body is never a p
         },
         dispose: () => {},
       }),
-      observe: async () => ripeSnapshot({ otherFarmers: [{ x: 39, y: 19, name: "Player", doing: "emoting" }] }),
+      observe: async () =>
+        // Her own tile is the world's answer and the staging reads it: seven tiles from the anchor at 39,18 is exactly
+        // the separation S1 requires, so this run is one that is allowed to start.
+        ripeSnapshot({ tile: { x: 32, y: 18 }, otherFarmers: [{ x: 39, y: 19, name: "Player", doing: "emoting" }] }),
       now: (() => {
         let clock = 0;
         return () => (clock += 1_000);
@@ -1268,6 +1524,84 @@ test("one launch prints four slice lines, and a missing second body is never a p
       .map((line) => JSON.parse(line))
       .find((record) => record.type === "session_boundary");
     assert.equal(boundary.payload.conversation, "fresh_game_runtime_session");
+  } finally {
+    console.log = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * THE RUN REFUSES TO START S1 WHERE IT COULD PASS BY STANDING STILL. The world here puts her ON the anchor's own tile,
+ * which is the case that motivated the gate: her start position alone would satisfy the verdict, so the slice must
+ * spend no budget, arm no step and speak no covenant - "she was already there" is never allowed to read as "she came
+ * because she saw the player".
+ */
+test("the run refuses to start S1 when the world stages her on the anchor, and arms none of its steps", async () => {
+  const dir = scratch();
+  const printed = [];
+  const original = console.log;
+  const scriptPath = join(dir, "host-player-script.json");
+  console.log = (line) => printed.push(String(line));
+  try {
+    // Her placement is on the stream, so the slice reaches its OWN refusal rather than the placement gate's: what is
+    // being measured here is the staging distance, not the handshake.
+    writeFileSync(
+      join(dir, "host-player-records.jsonl"),
+      placementRows()
+        .map((record) => JSON.stringify(record))
+        .join("\n"),
+    );
+    await runPairedLiveRun({
+      config: {},
+      traceDir: dir,
+      hostPlayerScript: scriptPath,
+      hostPlayerScriptRecords: join(dir, "host-player-records.jsonl"),
+      sessionFactory: async () => ({
+        client: { close: () => {} },
+        runTurn: async () => ({ admitted: true, settled: true, turns: [{ text: "嗯。" }] }),
+        dispose: () => {},
+      }),
+      // The paired fixture's current staging: her body three to six tiles from the crop, and here her own tile is the
+      // crop's tile - the shape the gate exists to refuse, not a world the run may judge.
+      observe: async () => ripeSnapshot({ tile: { x: 39, y: 18 } }),
+      now: (() => {
+        let clock = 0;
+        return () => (clock += 1_000);
+      })(),
+      pollMs: 0,
+    });
+
+    const sliceLines = printed.filter((line) => line.startsWith("PAIRED_SLICE "));
+    assert.equal(sliceLines.length, 4, JSON.stringify(sliceLines));
+    assert.match(
+      sliceLines[0],
+      /^PAIRED_SLICE s1_attention not_measured paired_s1_companion_already_there:39,18/u,
+      "the refusal names her own tile, which is the position that makes the reading impossible",
+    );
+    assert.match(sliceLines[0], /distance=0/u);
+    assert.match(sliceLines[0], /required=7/u);
+    // The 3 a.m. line names what is missing and what arms it, instead of leaving a reader with a code.
+    const gap = printed.find((line) => line.startsWith("PAIRED_FIXTURE_MISSING s1_staging"));
+    assert.ok(gap !== undefined, "a refused slice prints the fixture gap by name");
+    assert.match(gap, /reason=paired_s1_companion_already_there:39,18/u);
+    assert.match(gap, /arm=native_paired_companion_v1/u);
+
+    // THE SLICE ARMED NOTHING AND SPOKE NO COVENANT: the only step in the document is S3's own. A `say` here would be
+    // the harness promising on her behalf after refusing to measure the promise.
+    const document = JSON.parse(readFileSync(scriptPath, "utf8"));
+    assert.deepEqual(
+      document.steps.map((step) => step.action),
+      ["sleep"],
+      "S1's walk/emote/say are absent because S1 never ran",
+    );
+    const staging = readFileSync(join(dir, "timeline.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((record) => record.type === "s1_staging");
+    assert.equal(staging.payload.ran, false);
+    assert.equal(staging.payload.reads.distance, 0);
+    assert.equal(staging.payload.reads.oldPerceptionRadius, S1_OLD_PERCEPTION_RADIUS_TILES);
   } finally {
     console.log = original;
     rmSync(dir, { recursive: true, force: true });

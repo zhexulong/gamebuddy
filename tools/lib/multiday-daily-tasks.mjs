@@ -948,6 +948,159 @@ export function dayTaskSchedule({
 }
 
 /**
+ * THE ONE THING A MULTI-DAY RUN CAN CARRY THAT NONE OF ITS DAYS CAN PRODUCE: a constraint said on day one.
+ *
+ * <p>
+ * THE DEFECT THIS ANSWERS. Every task the pool rotates through is SELF-CONTAINED: `clear_ground_clutter` asks for a
+ * count of pieces, `tend_the_animals` for an animal petted and fed, `run_the_machines` for a machine loaded and emptied
+ * - and each is decided from its own day's receipts. So a companion who forgot every word of yesterday's conversation
+ * finishes a three-day run exactly as a companion who remembered all of it, and the run's green verdict says nothing
+ * about memory. The single-player multi-day baseline is the instrument that can carry a memory question (`memory_covenant`
+ * is the OTHER lane's, and it needs a rebuilt session); this is the one fact a day-one note can add that no later day's
+ * world can imply.
+ * </p>
+ *
+ * <p>
+ * THE TEST OF FIELD-INDEPENDENCE IS THE ONE S4'S COVENANT USES, AND IT IS APPLIED RATHER THAN ASSERTED. A constraint is
+ * FIELD-DERIVABLE when its own words name something the observation publishes ("there is a tree somewhere east" is in
+ * the world) and FIELD-INDEPENDENT when its words name nothing the field states ("leave that tree alone until I come
+ * back" is only in the conversation). The vocabulary it is tested against is built from the observation the constraint
+ * was judged against - published identities, tile addresses, item ids, display names, villager names, the map's own
+ * name, AND the `targetLocation` of every warp and door. That last half is deliberately stronger than S4's token list: a
+ * warp out of the map she stands on announces the place it leads to, so a constraint about a place the field shows a
+ * door to is one she could have answered by looking. See `crossDayFieldReading` in `multiday-baseline.mjs`, which applies
+ * it to the day-one observation, and `crossDayVocabularyTokens` there for the one spelling of that vocabulary.
+ * </p>
+ *
+ * <p>
+ * WHY THIS ONE PASSES, stated so it can be argued with. The promise is a PLACE she must go, and the farm publishes no
+ * door to it: `warps` and `doorTargets` are whole-map and name only the maps this map leads to (`Farm`, `FarmHouse`,
+ * `BusStop`), while the smithy is a door off the town square two maps away - so the farm she wakes on cannot announce
+ * it. The thing asked for is also narrower than `town_visit`'s purpose: that criterion is satisfied by a conversation
+ * in ANY declared town map (`TOWN_MAP_ANSWERS`), and `Blacksmith` is one of twelve, so no task the pool holds REQUIRES
+ * this door - which is what keeps the pairing from being a trap (see `readCrossDayPairing`). TWO DAYS can answer it for
+ * their own reason and are therefore declared as AMBIGUOUS rather than counted as a continuation
+ * (`answeredByItsOwnWork`): `town_visit`, whose criterion IS an arrival in a town map, and `town_market`, which needs a
+ * counter stocking what she carries and Clint's counter is one.
+ * </p>
+ */
+
+/** The day of a multi-day run whose note carries the constraint. Every later day is asked whether it was continued. */
+export const CROSS_DAY_CONSTRAINT_DAY = 1;
+
+/**
+ * The constraint itself: the words, the two halves a later day is judged on, and the pool's own overlap.
+ *
+ * `subjectTokens` are HER side - the words she uses when she is carrying it - and `maps` with `arrival` is THE WORLD'S
+ * side: which map a receipt has to name. A continuation is credited only when both hold
+ * (`judgeCrossDayContinuation`), and either alone is a different verdict, never a pass.
+ *
+ * `arrival` is declared per action because the map is published in a different evidence field by different actions
+ * (`travel` and `enter_exit` both write `actual=<map>:x,y` - the two shapes `task-purpose.mjs`'s town row reads), and
+ * `standingField` is the second reading: a receipt may carry the observation it settled against, whose own `location`
+ * is where she was standing. A visit is proved by either, so neither is a guess about a key name.
+ */
+export const CROSS_DAY_CONSTRAINT = Object.freeze({
+  id: "look_in_at_the_smithy",
+  // One player message, first person, the day's own words - the shape every note in this scenario keeps (see
+  // `tools/live-run/game/multiday-day-note.test.mjs`): no stage direction, no label, nothing about being a note.
+  say: Object.freeze({
+    zh: "这几天我都待在镇上，你有空拐去铁匠铺问一声，看我放在那儿的东西好了没有。",
+    en: "I'm in town the next few days - while you're about it, get to the blacksmith's and ask whether what I left there is ready.",
+  }),
+  subjectTokens: Object.freeze(["铁匠", "blacksmith"]),
+  maps: Object.freeze(["Blacksmith"]),
+  arrival: Object.freeze({ actionIds: Object.freeze(["travel", "enter_exit"]), field: "actual" }),
+  standingField: "observation.location",
+  // THE POOL'S OWN OVERLAP, declared beside the constraint so a day that could produce the world half for its OWN
+  // reason is named instead of counted. TWO KINDS, and the difference is real: `town_visit`'s criterion reads the MAP (an
+  // arrival in any declared town map is its purpose, so the smithy is one of the ways its own work is done), while
+  // `town_market`'s reads only two action ids - a purchase and the post - and its purchase can simply happen at Clint's
+  // counter. The first is derivable from the criteria table (the gate in `multiday-daily-tasks.test.mjs` derives it); the
+  // second is a judgement about where a counter may be, and it is declared with its reason rather than left to be
+  // discovered. A key naming no task in the rotation fails in `readCrossDayPairing`.
+  answeredByItsOwnWork: Object.freeze({
+    town_visit:
+      "its criterion IS an arrival in a declared town map, and the smithy is one of the twelve: a conversation there " +
+      "is the task's own purpose, so the visit cannot be credited to memory",
+    town_market:
+      "its purpose is a purchase at a counter that stocks what she carries, and Clint's counter is one; a visit that " +
+      "day is ambiguous rather than a continuation",
+  }),
+});
+
+/**
+ * The constraint's sentence for one day of a run: the words on the day it is spoken, and nothing on any other day.
+ *
+ * ONE SPELLING, TWO READERS. The note builder composes the day's message from this, and the judgement searches the
+ * day-one note for the same string - so "the promise she was handed" and "the promise the verdict charges her with"
+ * cannot come apart, which is the defect `covenant_never_spoken` names on the other lane. An unknown locale answers
+ * `""` rather than inventing a translation: a run in a locale nobody translated has NO constraint, and a judgement
+ * about a promise never spoken is not a judgement.
+ */
+export function crossDayConstraintLine(locale, day = CROSS_DAY_CONSTRAINT_DAY) {
+  if (Number.isInteger(day) && day !== CROSS_DAY_CONSTRAINT_DAY) return "";
+  const line = CROSS_DAY_CONSTRAINT.say[locale];
+  return typeof line === "string" ? line : "";
+}
+
+/**
+ * WHICH SCHEDULED DAYS COULD ANSWER THE CONSTRAINT BY DOING THEIR OWN WORK, and whether the declaration still fits the
+ * pool.
+ *
+ * <p>
+ * THE QUESTION IS ABOUT PAIRINGS, NOT ABOUT HER. A constraint is a trap when another day's task produces it for the
+ * task's own reason - "leave the trees" beside a day that says clear them, or a smithy errand beside a day that goes
+ * to the smithy anyway - because the continuation then proves obedience to today's prompt rather than memory of
+ * yesterday's. So this reading answers, per scheduled day after the day the constraint is spoken on, whether that
+ * day's task could produce the world half by itself. It does NOT remove such a day: the schedule's jobs are the
+ * rotation's (`dayTaskSchedule`), and a day that does its work and happens to pass the smithy is exactly the shape
+ * `judgeCrossDayContinuation` reports as AMBIGUOUS. What this refuses, by name, is a declaration that has gone stale or
+ * a constraint with no world side at all.
+ * </p>
+ *
+ * <p>
+ * THE DECLARATION'S POPULATION IS THE ROTATION, so a task id that no longer exists fails here rather than quietly
+ * exempting nobody, and `examined` is printed beside the overlaps: `0 ambiguous` over `days 0` is what an empty
+ * schedule says, which is not the same reading as a run whose two later days were both reviewed.
+ * </p>
+ */
+export function readCrossDayPairing({
+  scheduled = [],
+  constraint = CROSS_DAY_CONSTRAINT,
+  rotation = DAILY_TASK_ROTATION,
+} = {}) {
+  const findings = [];
+  if (!Array.isArray(constraint?.maps) || constraint.maps.length === 0)
+    findings.push("cross_day_constraint_has_no_world_side");
+  if (!Array.isArray(constraint?.subjectTokens) || constraint.subjectTokens.length === 0)
+    findings.push("cross_day_constraint_has_no_word_side");
+  for (const task of Object.keys(constraint?.answeredByItsOwnWork ?? {})) {
+    if (!rotation.includes(task)) findings.push(`cross_day_constraint_declared_for_no_such_task:${task}`);
+  }
+  const days = [];
+  for (const entry of scheduled) {
+    if (!Number.isInteger(entry?.day) || typeof entry?.task !== "string" || entry.task.length === 0) continue;
+    if (entry.day <= CROSS_DAY_CONSTRAINT_DAY) continue;
+    days.push(
+      Object.freeze({
+        day: entry.day,
+        task: entry.task,
+        answeredByItsOwnWork: constraint.answeredByItsOwnWork?.[entry.task] ?? null,
+      }),
+    );
+  }
+  const ambiguous = days.filter((day) => day.answeredByItsOwnWork !== null).length;
+  return Object.freeze({
+    examined: days.length,
+    ambiguous,
+    days: Object.freeze(days),
+    findings: Object.freeze(findings),
+    reading: `pairing examined ${String(days.length)} later day(s) · could answer it by its own work ${String(ambiguous)}`,
+  });
+}
+
+/**
  * WHAT WAS SCHEDULED FOR EACH DAY VERSUS WHAT WAS ACTUALLY DELIVERED.
  *
  * <p>

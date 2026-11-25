@@ -27,6 +27,7 @@
  *     night crossed. Her `sleep` receipt can end without carrying the crossing (`NIGHT_CAUSE_SLEEP_UNSETTLED`) while
  *     the calendar crosses it, and the receipt she did mint travels on the record so that verdict is checkable.
  */
+import { CROSS_DAY_CONSTRAINT, CROSS_DAY_CONSTRAINT_DAY } from "./multiday-daily-tasks.mjs";
 
 /** The season index the world reported after this night, whichever of the two shapes carried it. */
 function seasonIndexFor(after) {
@@ -36,6 +37,7 @@ function seasonIndexFor(after) {
 
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+const asArray = (value) => (Array.isArray(value) ? value : []);
 
 /** The engine's own season order, and the days each season holds a festival on. */
 const SEASON_NAMES = Object.freeze(["spring", "summer", "fall", "winter"]);
@@ -1061,6 +1063,336 @@ export function nightCauseSupportLine(support) {
 }
 
 /**
+ * THE VOCABULARY A CONSTRAINT IS TESTED AGAINST: everything the observation before her already says out loud.
+ *
+ * <p>
+ * ONE SPELLING OF S4'S INSTRUMENT (`worldVocabularyTokens` in the paired run), and deliberately a little stronger. The
+ * subject of a memory probe has to be something the field CANNOT answer, and "can the field answer it" is a question
+ * about what that observation published - so the vocabulary is read off the observation rather than from a list this
+ * tree decided on. Three kinds of token are in it:
+ * </p>
+ *
+ * <ul>
+ *   <li>published IDENTITIES - item ids, display names, opaque target ids, chest ids, villager names, `otherFarmers`;</li>
+ *   <li>tile ADDRESSES, in the two spellings receipts use (`x,y` and `x:y`);</li>
+ *   <li>the map's own NAME, and the `targetLocation` of every warp and door it publishes. This last half is what S4's
+ *     list does not have and what a PLACE-shaped constraint needs: a warp out of the map she stands on announces where
+ *     it leads, so a promise about a place the field shows a door to is one she could have answered by looking.</li>
+ * </ul>
+ *
+ * <p>
+ * It is deliberately NOT a dump of every string in the snapshot. A snapshot carries prose (`actorDispositionDetail`),
+ * capability ids and content keys, and a token set that wide would match almost any sentence - a test that fires on
+ * everything stops being a test of anything.
+ * </p>
+ */
+export function crossDayVocabularyTokens(observation) {
+  const tokens = new Set();
+  const push = (value) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed.length > 1) tokens.add(trimmed);
+  };
+  const pushTile = (row) => {
+    if (Number.isSafeInteger(row?.x) && Number.isSafeInteger(row?.y)) {
+      push(`${String(row.x)},${String(row.y)}`);
+      push(`${String(row.x)}:${String(row.y)}`);
+    }
+  };
+  push(observation?.location);
+  for (const row of asArray(observation?.warps)) push(row?.targetLocation);
+  for (const row of asArray(observation?.doorTargets)) push(row?.targetLocation);
+  for (const row of asArray(observation?.otherFarmers)) {
+    push(row?.name);
+    push(row?.displayName);
+  }
+  for (const family of TARGET_FAMILIES) {
+    for (const row of asArray(observation?.[family])) {
+      push(row?.displayName);
+      push(row?.qualifiedItemId);
+      push(row?.targetId);
+      push(row?.chestId);
+      push(row?.npc);
+      pushTile(row);
+    }
+  }
+  return Object.freeze([...tokens]);
+}
+
+/**
+ * The snapshot families whose rows name something: the identity half of the vocabulary, declared once.
+ *
+ * A family that is absent from a snapshot simply contributes nothing, which is why this can be a fixed list while the
+ * published surface keeps growing: a family this misses makes the test narrower, never wrong in the direction that
+ * excuses a probe.
+ */
+const TARGET_FAMILIES = Object.freeze([
+  "harvestTargets",
+  "cropTargets",
+  "forageTargets",
+  "treeChopSourceTargets",
+  "treeStumpTargets",
+  "shakeTreeTargets",
+  "rockSourceTargets",
+  "weedTargets",
+  "grassTargets",
+  "machineTargets",
+  "chests",
+  "worldObjectTargets",
+  "petTargets",
+  "farmAnimalPetTargets",
+  "villagers",
+  "npcRelationshipTargets",
+]);
+
+/**
+ * Whether one constraint was already answered by the world she was standing in - the field-independence test, applied.
+ *
+ * <p>
+ * TWO ANSWERS, AND THE SECOND IS THE ONE A PLACE-SHAPED PROMISE FAILS. `wordsInVocabulary` is S4's rule: a word of the
+ * line that also appears in the observation (an item's name, a tile, a villager) means she could have answered by
+ * looking. `placesTheFieldPublishes` is the map half: the constraint's own map named by this observation - either as the
+ * map she is on, or as the `targetLocation` of a door or warp she can see. "Go to the smithy" is field-independent on a
+ * farm whose only doors lead to `Farm` and `BusStop`; it stops being one the moment the observation she is handed names
+ * it.
+ * </p>
+ *
+ * <p>
+ * `tested: false` IS NOT A PASS. An observation that publishes no location AND no door has nothing to test either half
+ * against - the same silence `covenant_derivability_unknown` names - so the reading says it was not tested instead of
+ * reporting `derivable: false` on a probe it never ran.
+ * </p>
+ */
+export function crossDayFieldReading({ line, observation, constraint = CROSS_DAY_CONSTRAINT } = {}) {
+  if (typeof line !== "string" || line.trim().length === 0)
+    return Object.freeze({ tested: false, derivable: null, wordsInVocabulary: Object.freeze([]), placesTheFieldPublishes: Object.freeze([]) });
+  if (observation === null || observation === undefined || typeof observation !== "object")
+    return Object.freeze({ tested: false, derivable: null, wordsInVocabulary: Object.freeze([]), placesTheFieldPublishes: Object.freeze([]) });
+  const tokens = crossDayVocabularyTokens(observation);
+  const text = line.toLowerCase();
+  const wordsInVocabulary = tokens.filter((token) => text.includes(token));
+  const named = new Set([
+    typeof observation.location === "string" ? observation.location : null,
+    ...asArray(observation.warps).map((row) => row?.targetLocation ?? null),
+    ...asArray(observation.doorTargets).map((row) => row?.targetLocation ?? null),
+  ]);
+  const placesTheFieldPublishes = (constraint?.maps ?? []).filter((map) => named.has(map));
+  const tested = tokens.length > 0 && named.size > 0;
+  return Object.freeze({
+    tested,
+    derivable: tested ? wordsInVocabulary.length > 0 || placesTheFieldPublishes.length > 0 : null,
+    wordsInVocabulary: Object.freeze(wordsInVocabulary),
+    placesTheFieldPublishes: Object.freeze(placesTheFieldPublishes),
+  });
+}
+
+/**
+ * THE MAPS ONE RECEIPT NAMES, from the two shapes declared beside the constraint and from nothing else.
+ *
+ * <p>
+ * `arrival` is the door and the walk: `travel` and `enter_exit` publish `actual=<map>:x,y`, and only a receipt whose own
+ * terminal is `succeeded` is an arrival - a refused `enter_exit` names the map it did NOT reach, and reading it as a
+ * visit would credit her for a door that stayed shut. `standingField` is the second reading and needs no state: every
+ * receipt may carry the observation it settled against, whose `location` is where she was standing, and an action
+ * refused IN the smithy still puts her in the smithy.
+ * </p>
+ *
+ * <p>
+ * WHY THE SHAPES ARE DECLARED RATHER THAN MATCHED BY KEY NAME: a receipt's evidence keys are per-action
+ * (`MOVEMENT_ACTIONS_WITHOUT_ARRIVAL` in `task-purpose.mjs` records the same lesson for the fishing day), so
+ * "any field called `actual`" is a guess about a key that some action may publish for something else. A map this
+ * reader cannot see is reported as unread, never as absent.
+ * </p>
+ */
+function crossDayMapsOf(receipt, constraint) {
+  const payload = isPlainObject(receipt?.worldFactPayload) ? receipt.worldFactPayload : isPlainObject(receipt) ? receipt : {};
+  const actionId = typeof payload.actionId === "string" ? payload.actionId : null;
+  const maps = [];
+  const arrival = constraint?.arrival ?? null;
+  if (arrival !== null && actionId !== null && asArray(arrival.actionIds).includes(actionId) && payload.state === "succeeded") {
+    const detail = parseReceiptEvidence(payload.evidence)[arrival.field];
+    if (typeof detail === "string") {
+      const map = detail.split(":")[0];
+      if (map.length > 0) maps.push(Object.freeze({ map, from: "arrival", actionId }));
+    }
+  }
+  const standing = dotPath(payload, constraint?.standingField ?? null);
+  if (typeof standing === "string" && standing.length > 0)
+    maps.push(Object.freeze({ map: standing, from: "standing", actionId }));
+  return maps;
+}
+
+/** One declared dotted field of a receipt (`observation.location`), or `undefined` when the shape stops before it. */
+function dotPath(source, path) {
+  if (typeof path !== "string" || path.length === 0) return undefined;
+  let value = source;
+  for (const key of path.split(".")) {
+    if (value === null || typeof value !== "object") return undefined;
+    value = value[key];
+  }
+  return value;
+}
+
+/**
+ * THE FOUR ANSWERS A DAY CAN GIVE, strongest first, so a run publishes the one that matters and not the first one it met.
+ *
+ * `cross_day_continued` is absent on purpose: it is the only pass, and a run where it holds must not carry a code at all.
+ */
+const CROSS_DAY_VERDICTS_BY_WEIGHT = Object.freeze([
+  "cross_day_claimed_without_the_fact",
+  "cross_day_not_continued",
+  "cross_day_action_without_the_reason",
+  "cross_day_not_measured:day_not_delivered",
+  "cross_day_not_measured:world_unreadable",
+]);
+
+/**
+ * DID A LATER DAY CONTINUE WHAT DAY ONE SAID - judged in TWO HALVES, apart, because they are two different facts.
+ *
+ * <p>
+ * THE DEFECT THIS ANSWERS is the one in `multiday-daily-tasks.mjs`'s `CROSS_DAY_CONSTRAINT` note: a three-day run of
+ * self-contained tasks is finished identically by a companion who forgot everything, so its green verdict is not a
+ * reading about memory at all. The constraint is spoken once, on day one, and every later day is asked the same two
+ * questions: did SHE continue it (a receipt that goes where it said, or a line that carries it), and does THE WORLD
+ * show it. They are asked apart because the four possible answers are four different findings:
+ * </p>
+ *
+ * <ul>
+ *   <li>`cross_day_continued` - she named it and the world shows it. The only pass.</li>
+ *   <li>`cross_day_action_without_the_reason` - the world shows it and she never said a word about it. A RIGHT ACTION
+ *     FROM THE WRONG REASON: the errand happened, and nothing in the record says why, so a companion that wandered in
+ *     for its own sake and one that remembered are the same evidence. Never a pass.</li>
+ *   <li>`cross_day_claimed_without_the_fact` - she said she was carrying it and the world does not show it. A RIGHT
+ *     LINE WITH NO ACTION, and its own verdict rather than the previous one's mirror: this is the only one of the four
+ *     that is a statement she made and the world contradicted.</li>
+ *   <li>`cross_day_not_continued` - neither. The memory did not cross the night, which is a reading about her and not a
+ *     harness failure.</li>
+ * </ul>
+ *
+ * <p>
+ * `cross_day_not_measured` IS ITS OWN ANSWER, with its reason: a day that was scheduled and never delivered had no turn
+ * to carry anything, and a day whose receipts name no map at all is a day nobody can say she did not spend where the
+ * constraint pointed. Neither is a failure and neither is a pass - the same rule `not_measured` keeps everywhere in this
+ * module.
+ * </p>
+ *
+ * <p>
+ * THE GATES BEFORE ANY DAY are about the QUESTION, not about her: `cross_day_constraint_never_spoken` when day one's own
+ * note does not carry the sentence (a run whose note predates the constraint cannot be judged against a promise it never
+ * heard), and `cross_day_constraint_field_derivable` / `cross_day_derivability_unknown` from
+ * `crossDayFieldReading`. Those three are published even when every day continued it, because a probe that could be
+ * answered by looking is a probe whose `continued` proves nothing.
+ * </p>
+ *
+ * <p>
+ * AMBIGUITY IS NAMED, NOT REMOVED. When the day's task is one the pool declares as `answeredByItsOwnWork`, an
+ * action-only continuation is reported with that reason attached: the visit is exactly what that task's own purpose
+ * asked for, so the world half cannot be credited to memory. Her words still can, which is why a said-and-shown day is
+ * `continued` even there.
+ * </p>
+ *
+ * <p>
+ * `days` is one entry per scheduled day of the run: `{ day, task, delivered, noteText, receipts, spokenLines }`. A day
+ * without `delivered: true` is judged `not_measured` rather than failed - the caller knows whether its first turn ran
+ * (`readTaskDelivery`), and this reading refuses to turn the harness's own dropped day into her forgetfulness.
+ * </p>
+ */
+export function judgeCrossDayContinuation({
+  constraint = CROSS_DAY_CONSTRAINT,
+  days = [],
+  observation = null,
+  daySpokenOn = CROSS_DAY_CONSTRAINT_DAY,
+} = {}) {
+  const list = asArray(days).filter(isPlainObject);
+  const spokenDay = list.find((entry) => entry.day === daySpokenOn) ?? null;
+  const noteText = typeof spokenDay?.noteText === "string" ? spokenDay.noteText : "";
+  const lines = [constraint?.say?.zh, constraint?.say?.en].filter(
+    (line) => typeof line === "string" && line.trim().length > 0,
+  );
+  // BOTH LOCALES ARE SEARCHED, because the note text carries no locale field of its own and a run in either language is
+  // the same promise. An empty table is `never spoken` and not a pass: a constraint nobody wrote is a promise nobody
+  // made.
+  const spoken = lines.length > 0 && lines.some((line) => noteText.includes(line));
+  const field = crossDayFieldReading({ line: lines[0] ?? "", observation, constraint });
+  const later = list.filter((entry) => Number.isInteger(entry.day) && entry.day > daySpokenOn);
+  const judged = [];
+  for (const entry of later) {
+    const task = typeof entry.task === "string" ? entry.task : null;
+    const ambiguousReason = task === null ? null : (constraint?.answeredByItsOwnWork?.[task] ?? null);
+    const receipts = asArray(entry.receipts);
+    const maps = receipts.flatMap((receipt) => crossDayMapsOf(receipt, constraint));
+    const seen = [...new Set(maps.map((entryMap) => entryMap.map))].sort();
+    const did = maps.find((entryMap) => asArray(constraint?.maps).includes(entryMap.map)) ?? null;
+    const spokenLines = asArray(entry.spokenLines).filter((line) => typeof line === "string");
+    const tokens = asArray(constraint?.subjectTokens);
+    const saidIn = spokenLines.find((line) => tokens.some((token) => line.toLowerCase().includes(String(token).toLowerCase())));
+    const said = saidIn !== undefined;
+    const delivered = entry.delivered !== false;
+    const worldReadable = seen.length > 0;
+    let verdict;
+    if (!delivered) verdict = "cross_day_not_measured:day_not_delivered";
+    else if (!worldReadable) verdict = "cross_day_not_measured:world_unreadable";
+    else if (said && did !== null) verdict = "cross_day_continued";
+    else if (did !== null) verdict = "cross_day_action_without_the_reason";
+    else if (said) verdict = "cross_day_claimed_without_the_fact";
+    else verdict = "cross_day_not_continued";
+    judged.push(
+      Object.freeze({
+        day: entry.day,
+        task,
+        delivered,
+        worldReadable,
+        mapsSeen: Object.freeze(seen),
+        did: did === null ? null : Object.freeze({ map: did.map, from: did.from, actionId: did.actionId }),
+        said,
+        saidLine: said ? saidIn : null,
+        // THE DAY'S OWN TASK COULD HAVE PRODUCED THE WORLD HALF WITHOUT ANY MEMORY, and that is stated on the day it
+        // applies to rather than buried in the pool's declaration.
+        answeredByItsOwnWork: ambiguousReason,
+        verdict,
+      }),
+    );
+  }
+  const count = (verdict) => judged.filter((entry) => entry.verdict === verdict).length;
+  const readable = judged.filter((entry) => entry.worldReadable && entry.delivered).length;
+  // ONE CODE, IN THE ORDER THE ANSWERS MATTER. A claim the world contradicted outranks a day she simply did not continue,
+  // which outranks an action nobody explained, which outranks a day nobody could judge: the reader needs the strongest
+  // thing the run can say about her, and `not_measured` is the last choice rather than the first.
+  const worstDay =
+    CROSS_DAY_VERDICTS_BY_WEIGHT.find((verdict) => judged.some((entry) => entry.verdict === verdict)) ?? null;
+  const verdictCode = !spoken
+    ? "cross_day_constraint_never_spoken"
+    : field.derivable === null
+      ? "cross_day_derivability_unknown"
+      : field.derivable === true
+        ? "cross_day_constraint_field_derivable"
+        : worstDay;
+  return Object.freeze({
+    constraintId: constraint?.id ?? null,
+    spoken,
+    fieldDerivable: field.derivable,
+    fieldWordsInVocabulary: field.wordsInVocabulary,
+    fieldPlacesPublished: field.placesTheFieldPublishes,
+    examined: judged.length,
+    // HOW MANY DAYS COULD HAVE BEEN JUDGED AT ALL, printed beside the verdicts: `0 continued` over `0 examined` is what
+    // an empty schedule says, and a constraint nobody could ever observe is one that would always answer `not_measured`.
+    judgeable: readable,
+    continued: count("cross_day_continued"),
+    actionOnly: count("cross_day_action_without_the_reason"),
+    claimedOnly: count("cross_day_claimed_without_the_fact"),
+    notContinued: count("cross_day_not_continued"),
+    notMeasured: count("cross_day_not_measured:day_not_delivered") + count("cross_day_not_measured:world_unreadable"),
+    days: Object.freeze(judged),
+    verdictCode,
+    reading:
+      `cross-day ${constraint?.id ?? "(none)"} · days ${String(judged.length)} · judgeable ${String(readable)} · ` +
+      `continued ${String(count("cross_day_continued"))} · action-only ${String(count("cross_day_action_without_the_reason"))} · ` +
+      `claim-only ${String(count("cross_day_claimed_without_the_fact"))} · not continued ${String(count("cross_day_not_continued"))} · ` +
+      `not measured ${String(count("cross_day_not_measured:day_not_delivered") + count("cross_day_not_measured:world_unreadable"))}`,
+  });
+}
+
+/**
  * Judge one run's day records against the baseline's rules. Every rule can fail on its own and names
  * itself, so a red result says which single-game fact was missing instead of "multi-day timed out".
  *
@@ -1076,6 +1408,7 @@ export function assessMultiDayBaseline({
   worldDayStarts = null,
   worldNightEndings = null,
   sleepPromises = null,
+  crossDayContinuation = null,
 } = {}) {
   const violations = [];
   if (!Array.isArray(dayRecords)) {
@@ -1593,6 +1926,16 @@ export function assessMultiDayBaseline({
     // WHAT SUPPORTS EACH NIGHT'S CAUSE, printed as `causes C · supported S · bare B` beside the nights it describes:
     // `bare 0` on its own would also be what an empty population prints.
     nightCauseSupport: causeSupport,
+    // DID A LATER DAY CONTINUE WHAT DAY ONE SAID (`judgeCrossDayContinuation`), or `null` when nobody measured it.
+    //
+    // A READING AND NOT A VIOLATION, on purpose. The rules above verify a property of the ENGINE's day pipeline - every
+    // night crossed, the menus closed, the calendar agreeing with the totals - and those are harness facts a run must be
+    // blocked for. Whether a companion carried a promise across a night is a reading about HER, in four answers
+    // (`continued`, the two wrong-reason halves, and `not_measured`), and folding a forgotten errand into `state:
+    // blocked` would make the baseline's first red day indistinguishable from a night that never crossed. It is
+    // published here so the run's artifact carries it beside the verdict, and its own codes name which of the four
+    // findings a day was - `null` is "nobody looked", never "nothing to see".
+    crossDayContinuation: crossDayContinuation ?? null,
     violations: Object.freeze(violations),
     checkedRules: CHECKED_RULES,
   });

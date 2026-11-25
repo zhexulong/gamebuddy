@@ -6,8 +6,11 @@ import test from "node:test";
 import {
   assessMultiDayBaseline,
   classifyNight,
+  crossDayFieldReading,
+  crossDayVocabularyTokens,
   DISMISSIBLE_ROLLOVER_MENUS,
   dayOfMonthForTotalDays,
+  judgeCrossDayContinuation,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
   NIGHT_CAUSE_ENGINE,
@@ -2096,4 +2099,188 @@ test("a night that names a cause names what supports it (round81)", () => {
     nightCauseSupportLine(assessMultiDayBaseline({ dayRecords: null }).nightCauseSupport),
     "causes not_measured · supported not_measured · bare not_measured",
   );
+});
+
+/**
+ * THE CROSS-DAY CONSTRAINT'S OWN FALSIFIERS: the field-independence test, the two halves, and `not_measured`.
+ *
+ * The three of them answer the three questions a memory probe has to survive. ① is "could she have answered it by
+ * looking?" - asked of the world she was standing in, with a red case that proves the test fires. ② is "did a later day
+ * continue it, and does the run say WHICH half held?" - four findings, not one pass/fail. ④ is "is `not_measured` still
+ * available?" - because a probe that can only say continued or failed turns a dropped day and an unreadable world into
+ * accusations.
+ */
+
+/** A farm morning: the map she wakes on, its two doors, and one weed it publishes. */
+const FARM_MORNING = Object.freeze({
+  location: "Farm",
+  warps: Object.freeze([{ targetLocation: "BusStop", sourceX: 3, sourceY: 12 }]),
+  doorTargets: Object.freeze([{ targetLocation: "FarmHouse", sourceX: 3, sourceY: 12 }]),
+  weedTargets: Object.freeze([{ targetId: "weed_56c2c3aa15616e5a", x: 33, y: 19 }]),
+});
+
+/** The day-one note as the runner composes it: the task, the hand-over, and the pooled constraint sentence. */
+const dayOneNote = (line) => `我今天去镇上办事，你把这活儿干一下：把今天农场上的杂草清掉。${line}`;
+
+test("the constraint's words are not derivable from the world it was spoken in", () => {
+  const reading = crossDayFieldReading({ line: dayOneNote("这几天我都待在镇上，你有空拐去铁匠铺问一声。"), observation: FARM_MORNING });
+  assert.equal(reading.tested, true, "a farm morning publishes a map and two doors, so the test could be run");
+  assert.equal(
+    reading.derivable,
+    false,
+    `the field answered the promise: words=${JSON.stringify(reading.wordsInVocabulary)} places=${JSON.stringify(reading.placesTheFieldPublishes)}`,
+  );
+  assert.deepEqual(
+    reading.placesTheFieldPublishes,
+    [],
+    "the farm's own doors lead to BusStop and FarmHouse, and neither is the smithy",
+  );
+  // THE RED PROOF: the same promise in a world that shows a door to it. This is the shape a run starting in `Town` has,
+  // and the reason the test is asked at all - a promise the field can answer proves nothing about memory.
+  const answerable = crossDayFieldReading({
+    line: dayOneNote("这几天我都待在镇上，你有空拐去铁匠铺问一声。"),
+    observation: { location: "Town", warps: [{ targetLocation: "Blacksmith" }], doorTargets: [] },
+  });
+  assert.equal(answerable.derivable, true, "a door to the smithy makes the promise answerable by looking");
+  assert.deepEqual(answerable.placesTheFieldPublishes, ["Blacksmith"]);
+  // And the identity half of the same instrument: a sentence that quotes what the observation publishes is derivable
+  // whichever map she stands on - S4's rule, kept rather than replaced.
+  const quoted = crossDayFieldReading({ line: dayOneNote("先把 weed_56c2c3aa15616e5a 那棵弄干净。"), observation: FARM_MORNING });
+  assert.equal(quoted.derivable, true, "a target id in the promise is a word the field already said");
+  assert.deepEqual(quoted.wordsInVocabulary, ["weed_56c2c3aa15616e5a"]);
+  // NOT TESTED is neither true nor false: an observation that publishes no map and no door has nothing to compare with,
+  // and `derivable: false` there would be a probe nobody ran reported as a pass.
+  assert.equal(crossDayFieldReading({ line: dayOneNote("去铁匠铺"), observation: null }).derivable, null);
+  assert.equal(crossDayFieldReading({ line: dayOneNote("去铁匠铺"), observation: { inventoryItemFacts: [] } }).tested, false);
+  // The vocabulary is read off the observation, so it grows with the snapshot rather than with a list kept here.
+  assert.ok(crossDayVocabularyTokens(FARM_MORNING).includes("busstop"));
+  assert.ok(crossDayVocabularyTokens(FARM_MORNING).includes("33,19"));
+});
+
+/** One later day of a run, in the shape the runner hands the judgement. */
+const laterDay = ({ day = 2, task = "tend_the_animals", receipts = [], spokenLines = [], delivered = true } = {}) => ({
+  day,
+  task,
+  delivered,
+  noteText: "",
+  receipts,
+  spokenLines,
+});
+
+/** An `enter_exit` receipt into a map, in the same shape `recordedReceipt` hands the assessment. */
+const arrival = (map, { state = "succeeded", standing = map } = {}) => ({
+  actionId: "enter_exit",
+  state,
+  evidence: { detail: `expected=Farm:64,15;actual=${map}:3,9;steps=1` },
+  observation: { location: standing, inGameTime: "0930" },
+});
+
+test("a later day is judged in two halves, apart, and each of the four answers is its own verdict", () => {
+  const said = "铁匠铺那边我去问过了，东西还没好。";
+  const judged = (days) =>
+    judgeCrossDayContinuation({ observation: FARM_MORNING, days: [{ day: 1, task: "clear_ground_clutter", delivered: true, noteText: "这几天我都待在镇上，你有空拐去铁匠铺问一声，看我放在那儿的东西好了没有。", receipts: [], spokenLines: [] }, ...days] });
+  const verdictOf = (days) => judged(days).days[0].verdict;
+
+  // (a) HER SIDE AND (b) THE WORLD, both: the only pass.
+  assert.equal(verdictOf([laterDay({ receipts: [arrival("Blacksmith")], spokenLines: [said] })]), "cross_day_continued");
+  // (b) without (a): a right action from the wrong reason. The errand happened and nothing says why, so a companion that
+  // wandered in and one that remembered are the same evidence - published under its own code, never as a pass.
+  assert.equal(
+    verdictOf([laterDay({ receipts: [arrival("Blacksmith")] })]),
+    "cross_day_action_without_the_reason",
+  );
+  // (a) without (b): a right line with no action, and the only one of the four where her words are contradicted. The
+  // world is readable on that day - she was somewhere the receipts name - so "not the smithy" is a measurement.
+  assert.equal(
+    verdictOf([laterDay({ receipts: [arrival("Farm")], spokenLines: [said] })]),
+    "cross_day_claimed_without_the_fact",
+  );
+  // Neither: the memory did not cross the night.
+  assert.equal(verdictOf([laterDay({ receipts: [arrival("FarmHouse")] })]), "cross_day_not_continued");
+  // THE RUN'S OWN CODE IS THE STRONGEST FINDING, not the first day it met: a claim the world contradicted outranks a day
+  // she simply did not continue, whichever order the days arrive in.
+  assert.equal(
+    judged([
+      laterDay({ day: 2, receipts: [arrival("Farm")] }),
+      laterDay({ day: 3, task: "run_the_machines", receipts: [arrival("FarmHouse")], spokenLines: [said] }),
+    ]).verdictCode,
+    "cross_day_claimed_without_the_fact",
+  );
+  // A REFUSED ARRIVAL IS NOT A VISIT BY THE ARRIVAL HALF: the door that stayed shut names the map it did not reach. It is
+  // still an observation of where she stood, which is the other declared shape - so a refusal measured on the farm is a
+  // day without the errand, and the same receipt measured inside the smithy would be a visit she really made.
+  assert.equal(
+    verdictOf([laterDay({ receipts: [arrival("Blacksmith", { state: "rejected", standing: "Farm" })] })]),
+    "cross_day_not_continued",
+  );
+  assert.equal(
+    verdictOf([laterDay({ receipts: [arrival("Blacksmith", { state: "rejected", standing: "Blacksmith" })] })]),
+    "cross_day_action_without_the_reason",
+  );
+  // AND THE DAY'S OWN TASK CAN ANSWER IT: `town_market` is declared as the one purpose that could walk into the smithy
+  // for its own reason, so the ambiguity is published on the day it applies to instead of credited to memory.
+  assert.equal(
+    verdictOf([laterDay({ task: "town_market", receipts: [arrival("Blacksmith")] })]),
+    "cross_day_action_without_the_reason",
+  );
+  assert.ok(
+    judged([laterDay({ task: "town_market", receipts: [arrival("Blacksmith")] })]).days[0].answeredByItsOwnWork !== null,
+    "the overlap has to be named on the reading, not left in the pool's table",
+  );
+  // Her words still carry memory on that day, which is why a said-and-shown one is a continuation even there.
+  assert.equal(
+    verdictOf([laterDay({ task: "town_market", receipts: [arrival("Blacksmith")], spokenLines: [said] })]),
+    "cross_day_continued",
+  );
+});
+
+test("not_measured stays available, and it names which half nobody could read", () => {
+  const spoken = {
+    day: 1,
+    task: "clear_ground_clutter",
+    delivered: true,
+    noteText: "这几天我都待在镇上，你有空拐去铁匠铺问一声，看我放在那儿的东西好了没有。",
+    receipts: [],
+    spokenLines: [],
+  };
+  // A day that was scheduled and never delivered had no turn to carry anything: the harness's own dropped day, which
+  // must not read as her forgetfulness.
+  const undelivered = judgeCrossDayContinuation({
+    days: [spoken, laterDay({ task: "run_the_machines", delivered: false })],
+  });
+  assert.equal(undelivered.days[0].verdict, "cross_day_not_measured:day_not_delivered");
+  assert.equal(undelivered.notMeasured, 1);
+  assert.equal(undelivered.judgeable, 0);
+  // A delivered day whose receipts name no map at all is a day nobody can say she did not spend where the constraint
+  // pointed. Silence is not an absence.
+  const unreadable = judgeCrossDayContinuation({ days: [spoken, laterDay({ receipts: [] })] });
+  assert.equal(unreadable.days[0].verdict, "cross_day_not_measured:world_unreadable");
+  // AND THE GATES BEFORE ANY DAY, each of which is published even when every day continued it.
+  const neverSpoken = judgeCrossDayContinuation({ days: [{ ...spoken, noteText: "去把草清了。" }, laterDay({ receipts: [arrival("Blacksmith")], spokenLines: ["铁匠铺去了"] })] });
+  assert.equal(neverSpoken.spoken, false);
+  assert.equal(
+    neverSpoken.verdictCode,
+    "cross_day_constraint_never_spoken",
+    "a run whose note predates the constraint cannot be judged against a promise it never heard",
+  );
+  const answerable = judgeCrossDayContinuation({
+    observation: { location: "Town", warps: [{ targetLocation: "Blacksmith" }] },
+    days: [spoken, laterDay({ receipts: [arrival("Blacksmith")], spokenLines: ["铁匠铺去了"] })],
+  });
+  assert.equal(answerable.verdictCode, "cross_day_constraint_field_derivable");
+  assert.equal(
+    judgeCrossDayContinuation({ observation: null, days: [spoken, laterDay({})] }).verdictCode,
+    "cross_day_derivability_unknown",
+  );
+  // The population is printed with the verdict, so `0 continued` never travels alone.
+  assert.match(answerable.reading, /judgeable \d+ · continued \d+/u);
+});
+
+test("the assessment publishes the continuation beside the verdict and never folds it into it", () => {
+  const continuation = judgeCrossDayContinuation({ days: [{ day: 1, task: "clear_ground_clutter", delivered: true, noteText: "", receipts: [], spokenLines: [] }] });
+  const measured = assessMultiDayBaseline({ dayRecords: [DAY(), DAY({ day: 2 })], daysRequested: 2, crossDayContinuation: continuation });
+  assert.equal(measured.crossDayContinuation, continuation, "the reading travels on the artifact with the verdict");
+  assert.deepEqual(codes(measured), [], "a forgotten errand is a reading about her, not a failure of the day pipeline");
+  // `null` is "nobody looked", never "nothing to see".
+  assert.equal(assessMultiDayBaseline({ dayRecords: [DAY(), DAY({ day: 2 })], daysRequested: 2 }).crossDayContinuation, null);
 });

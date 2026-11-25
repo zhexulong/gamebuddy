@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+import { sortedDirents } from "./directory-entries.mjs";
+import { judgeCrossDayContinuation } from "./multiday-baseline.mjs";
 import {
   buildTaskRotation,
+  CROSS_DAY_CONSTRAINT,
+  crossDayConstraintLine,
   DAILY_TASK_ACTION_HINTS,
   DAILY_TASK_ROTATION,
   dailyTaskFor,
@@ -12,6 +17,7 @@ import {
   describeTaskDelivery,
   overriddenTaskForDay,
   pillarOfTask,
+  readCrossDayPairing,
   readPillarWindows,
   readTaskDelivery,
   runOffsetFor,
@@ -20,7 +26,7 @@ import {
   TASK_PILLAR_ORDER,
   TASK_PILLARS,
 } from "./multiday-daily-tasks.mjs";
-import { judgesAPublishedFact, judgeTaskPurpose, TASK_PURPOSE_CRITERIA } from "./task-purpose.mjs";
+import { judgesAPublishedFact, judgeTaskPurpose, TASK_PURPOSE_CRITERIA, TOWN_MAP_ANSWERS } from "./task-purpose.mjs";
 
 /**
  * A fake multi-day session: the loop starts a day, which SCHEDULES its task, and then that day's first turn either reaches
@@ -612,4 +618,221 @@ test("every rotation entry is filed under exactly one group, and the tail keeps 
     assert.ok(TASK_PILLARS[pillar].length > 0, `pillar ${pillar} is declared with no members`);
     assert.equal(pillarOfTask(TASK_PILLARS[pillar][0]), pillar, `a ${pillar} day prints its own pillar`);
   }
+});
+
+/**
+ * THE CROSS-DAY CONSTRAINT: spoken once, in both locales, and no day of the pool can produce it by itself.
+ *
+ * Two of the three questions a memory probe has to survive are asked here, because both are about the POOL rather than
+ * about a run: ① the promise's words must be the pool's single spelling and must not name the calendar, and ③ no task the
+ * rotation can hand a later day may require the errand (a trap) or be the reason she does it (an ambiguity that has to be
+ * declared). The third - could she have answered it by looking - is applied to a real observation in
+ * `multiday-baseline.test.mjs`'s `crossDayFieldReading` tests, where the world is.
+ */
+test("the day-one constraint is one sentence, in both locales, and it names no day of the run", () => {
+  const zh = crossDayConstraintLine("zh", 1);
+  const en = crossDayConstraintLine("en", 1);
+  assert.ok(zh.length > 0 && en.length > 0, "both locales have to carry the constraint, or one of them proves nothing");
+  // ONCE: the days it does not belong to answer with nothing, so the note cannot restate a promise whose continuation is
+  // the reading. A second sentence would also make `noteLater` differ for a reason nobody declared.
+  for (const day of [2, 3, 7]) {
+    assert.equal(crossDayConstraintLine("zh", day), "", `day ${String(day)} must not carry the constraint again`);
+    assert.equal(crossDayConstraintLine("en", day), "");
+  }
+  // A sentence in a locale nobody wrote is `""` rather than invented: a run in that locale has no constraint, and a
+  // judgement about a promise never spoken is not a judgement.
+  assert.equal(crossDayConstraintLine("fr", 1), "");
+  for (const line of [zh, en]) {
+    assert.doesNotMatch(line, /[0-9]/u, "the promise must not count the days");
+    assert.ok(!line.includes("第"), "the promise must not name the day it is spoken on");
+  }
+  // The two halves a later day is judged on are declared and non-empty; a constraint missing one of them could only ever
+  // answer `not_measured`, which is the defect the corpus test below exists to catch.
+  assert.ok(CROSS_DAY_CONSTRAINT.subjectTokens.length > 0, "her side has to have words to look for");
+  assert.ok(CROSS_DAY_CONSTRAINT.maps.length > 0, "the world side has to name a place a receipt can prove");
+  assert.ok(CROSS_DAY_CONSTRAINT.arrival.actionIds.length > 0, "and the shapes that publish that place");
+});
+
+test("no task the pool can hand a later day requires the errand, and the ones that could answer it are declared", () => {
+  // ③'s two halves, from the pool's own declarations.
+  //
+  // (a) NO TASK REQUIRES IT. The constraint's world side is a map, and the only criterion in the pool that reads a map is
+  // `town_visit`'s - which accepts ANY declared town map (`TOWN_MAP_ANSWERS`), so no day is ever satisfied only by the
+  // smithy. A pool where the in-town answer set narrowed to the constraint's own maps would be a trap: the day's task
+  // would hand her the errand and the run could never tell memory from the prompt.
+  const inTown = Object.values(TOWN_MAP_ANSWERS)
+    .filter((answer) => answer.inTown === true)
+    .length;
+  assert.ok(inTown > 1, `a town-visit day accepts ${String(inTown)} maps, so none of them can be required`);
+  const placeReading = DAILY_TASK_ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task]?.town !== undefined);
+  assert.ok(placeReading.length > 0, "the population of map-reading tasks must not be empty, or this proves nothing");
+  // (b) EVERY TASK THAT COULD ANSWER IT FOR ITS OWN REASON IS DECLARED, so the ambiguity is named on the day it happens
+  // instead of being counted as a continuation. The population is derived from the criteria table, so a task added or
+  // edited to read a place tomorrow fails here until it is answered.
+  for (const task of placeReading) {
+    const answer = TASK_PURPOSE_CRITERIA[task].town.arrival;
+    if (!CROSS_DAY_CONSTRAINT.arrival.actionIds.some((actionId) => answer.actionIds.includes(actionId))) continue;
+    assert.ok(
+      task in CROSS_DAY_CONSTRAINT.answeredByItsOwnWork,
+      `${task} can arrive in the constraint's own map for its own reason, so its ambiguity has to be declared beside the constraint`,
+    );
+  }
+  // The declared overlap is a real task, and the constraint's map is one a town day may reach: that is why the overlap
+  // exists at all rather than being a hypothetical.
+  for (const task of Object.keys(CROSS_DAY_CONSTRAINT.answeredByItsOwnWork)) {
+    assert.ok(DAILY_TASK_ROTATION.includes(task), `${task} is declared as an overlap and is not in the rotation`);
+    assert.equal(TOWN_MAP_ANSWERS[CROSS_DAY_CONSTRAINT.maps[0]].inTown, true, "the constraint's map has to be a town map");
+  }
+  // AND THE PAIRING READING NAMES IT, per scheduled day, leaving the schedule alone: the rotation's jobs stay the
+  // rotation's, and a day that both does its work and passes the smithy is reported rather than removed.
+  const pairing = readCrossDayPairing({
+    scheduled: [
+      { day: 1, task: DAILY_TASK_ROTATION[0] },
+      { day: 2, task: Object.keys(CROSS_DAY_CONSTRAINT.answeredByItsOwnWork)[0] },
+      { day: 3, task: "run_the_machines" },
+    ],
+  });
+  assert.deepEqual(pairing.findings, [], "a declaration naming a task the pool holds is not a finding");
+  assert.equal(pairing.examined, 2, "only the days AFTER the one the constraint is spoken on are paired");
+  assert.equal(pairing.ambiguous, 1);
+  assert.equal(pairing.days[0].answeredByItsOwnWork, CROSS_DAY_CONSTRAINT.answeredByItsOwnWork[pairing.days[0].task]);
+  assert.equal(pairing.days[1].answeredByItsOwnWork, null);
+  // The declaration's own hygiene: a constraint with no world side, or one naming a task the pool no longer has, is
+  // refused by name rather than quietly exempting nobody.
+  assert.ok(
+    readCrossDayPairing({ constraint: { ...CROSS_DAY_CONSTRAINT, maps: [] } }).findings.includes(
+      "cross_day_constraint_has_no_world_side",
+    ),
+  );
+  assert.ok(
+    readCrossDayPairing({ constraint: { ...CROSS_DAY_CONSTRAINT, answeredByItsOwnWork: { no_such_task: "x" } } }).findings.includes(
+      "cross_day_constraint_declared_for_no_such_task:no_such_task",
+    ),
+  );
+});
+
+/**
+ * ⑤ THE CORPUS: how many of the recorded runs' later days COULD have been judged at all.
+ *
+ * <p>
+ * A constraint nobody could ever observe is one that answers `not_measured` for ever, and a `not_measured` verdict reads
+ * exactly like a probe that was never worth running. So the schedule the pool hands a three-day run is replayed over the
+ * multiday bundles on this machine: for every day after the first, the day's own receipts are read through
+ * `judgeCrossDayContinuation`, and the day counts as judgeable when the world half is readable - she was somewhere a
+ * receipt names, so "not the smithy" is a measurement rather than a silence.
+ * </p>
+ *
+ * <p>
+ * WHAT THE CORPUS CANNOT ANSWER, said here rather than discovered later: every recorded run predates the constraint, so
+ * no day-one note carries the sentence and no run can answer `continued`. What the count does answer is the question it
+ * is asked - whether a later day's world is readable enough to judge the constraint - and `spoken: false` is reported on
+ * every one of them so nobody reads a corpus of `not continued` days as a corpus of companions who forgot.
+ * </p>
+ *
+ * <p>
+ * THE DAY A RECEIPT BELONGS TO is found from the run's own night crossings (`sleep` receipts and the Mod's
+ * `night_ended_*` facts), in wall-clock order: a bundle carries `atMs` on every fact and no day number on any receipt, so
+ * the crossing is the only boundary the artifact states. A bundle that predates `multiday.tasks.scheduled` or
+ * `bridgeFacts` is not in the population at all and is counted as such.
+ * </p>
+ */
+test("the recorded corpus says how many later days a constraint like this one could be judged on", (t) => {
+  const root = new URL("../../.live-runs/game-ladder/", import.meta.url);
+  const bundles = [];
+  for (const entry of sortedDirents(fileURLToPath(root))) {
+    if (!entry.isDirectory() || !entry.name.includes("multiday_routine")) continue;
+    const file = new URL(`${entry.name}/result.json`, root);
+    try {
+      bundles.push(JSON.parse(readFileSync(file, "utf8")));
+    } catch {
+      // A run that never wrote a result bundle is not evidence about anything, and the count below is of the ones that
+      // did.
+    }
+  }
+  const receiptOf = (fact) =>
+    fact?.type === "execution_receipt" && fact.worldFactPayload !== null && typeof fact.worldFactPayload === "object"
+      ? fact.worldFactPayload
+      : null;
+  let considered = 0;
+  let laterDays = 0;
+  let judgeable = 0;
+  let notMeasured = 0;
+  let theSmithy = 0;
+  const maps = new Map();
+  for (const result of bundles) {
+    const scheduled = result?.multiday?.tasks?.scheduled ?? null;
+    const facts = Array.isArray(result?.bridgeFacts) ? result.bridgeFacts : [];
+    if (scheduled === null || facts.length === 0) continue;
+    considered += 1;
+    const days = Object.entries(scheduled)
+      .map(([key, task]) => ({ day: Number(key.slice("day".length)), task }))
+      .filter((entry) => Number.isInteger(entry.day))
+      .sort((left, right) => left.day - right.day);
+    const boundaries = facts
+      .filter((fact) => {
+        const payload = receiptOf(fact);
+        if (payload !== null && payload.actionId === "sleep") return true;
+        const kind = fact?.worldFactPayload?.kind ?? fact?.kind;
+        return typeof kind === "string" && kind.startsWith("night_ended_");
+      })
+      .map((fact) => fact.atMs)
+      .filter((at) => Number.isFinite(at))
+      .sort((left, right) => left - right);
+    const receiptsByDay = new Map();
+    for (const fact of facts) {
+      const payload = receiptOf(fact);
+      if (payload === null || !Number.isFinite(fact.atMs)) continue;
+      let day = 1;
+      for (const boundary of boundaries) if (fact.atMs >= boundary) day += 1;
+      if (!receiptsByDay.has(day)) receiptsByDay.set(day, []);
+      receiptsByDay.get(day).push(payload);
+    }
+    const turns = Array.isArray(result?.sessionTurns) ? result.sessionTurns : [];
+    const reading = judgeCrossDayContinuation({
+      observation: result?.multiday?.dayRecords?.[0]?.after ?? null,
+      days: days.map((entry) => ({
+        day: entry.day,
+        task: entry.task,
+        delivered: turns.some((turn) => turn.day === entry.day),
+        // The recorded bundles predate the constraint, so the words she was handed are the day's own goal. That is also
+        // why every one of them answers `spoken: false` below.
+        noteText: turns.find((turn) => turn.day === entry.day)?.goal ?? "",
+        receipts: receiptsByDay.get(entry.day) ?? [],
+        spokenLines: turns.filter((turn) => turn.day === entry.day).flatMap((turn) => turn.spokenLines ?? []),
+      })),
+    });
+    laterDays += reading.examined;
+    judgeable += reading.judgeable;
+    notMeasured += reading.notMeasured;
+    for (const day of reading.days) {
+      for (const map of day.mapsSeen) maps.set(map, (maps.get(map) ?? 0) + 1);
+      if (day.mapsSeen.some((map) => CROSS_DAY_CONSTRAINT.maps.includes(map))) theSmithy += 1;
+    }
+  }
+  const mapLine = [...maps.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 6)
+    .map(([map, count]) => `${map}:${String(count)}`)
+    .join(" ");
+  t.diagnostic(
+    `CROSS_DAY_CORPUS bundles ${String(bundles.length)} · readable ${String(considered)} · later days ${String(laterDays)} · ` +
+      `judgeable ${String(judgeable)} · not measured ${String(notMeasured)} · named the smithy ${String(theSmithy)} · maps ${mapLine || "(none)"}`,
+  );
+  // NOT MEASURED ON THIS MACHINE IS NOT A FAILURE, and it is not a pass either: a corpus that is not here says so.
+  if (considered === 0) {
+    t.diagnostic("CROSS_DAY_CORPUS not_measured: no recorded multiday bundle carries `multiday.tasks.scheduled`");
+    return;
+  }
+  // THE PROPERTY THE COUNT PROTECTS: a later day's world is readable for the great majority of the corpus. A constraint
+  // whose world half nobody publishes would print `judgeable 0` here, which is the reading that says "do not ship this
+  // probe" rather than "the companions forgot".
+  assert.ok(
+    judgeable > 0,
+    `no later day of ${String(laterDays)} could be judged, so this constraint answers not_measured for ever: ${mapLine}`,
+  );
+  assert.ok(
+    judgeable * 2 >= laterDays,
+    `only ${String(judgeable)} of ${String(laterDays)} later days could be judged; a constraint the world mostly cannot ` +
+      `observe is a constraint that will always read not_measured (maps seen: ${mapLine || "none"})`,
+  );
 });

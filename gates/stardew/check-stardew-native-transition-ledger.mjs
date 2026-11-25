@@ -187,6 +187,9 @@ async function main() {
     {},
   );
   process.stdout.write(
+    `source mechanisms examined ${expected.mechanismIds.length} · source files examined ${Object.keys(sourceFiles).length} · transitions examined ${result.transitionCount}\n`,
+  );
+  process.stdout.write(
     `${JSON.stringify({ artifactKind: "native_transition_ledger_check", sourceMechanismCount: expected.mechanismIds.length, mechanismReviewDispositionCounts: dispositionCounts, ...result }, null, 2)}\n`,
   );
 }
