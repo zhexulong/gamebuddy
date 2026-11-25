@@ -103,6 +103,14 @@ public sealed partial class ModEntry
             return new(HostAutomationFixturePhase.AfterSharedValidation, static (mod, farm, houses) => mod.InitializeNativeFeedAnimalFixture(farm, houses));
         if (string.Equals(FixtureScenario, "native_animal_product_v2", StringComparison.Ordinal))
             return new(HostAutomationFixturePhase.AfterSharedValidation, static (mod, farm, houses) => mod.InitializeNativeAnimalProductFixture(farm, houses));
+        // THE PAIRED WORLD. Both halves of it need the FINAL Farm: the world is built after SetupBigFarm and after the
+        // shared Cabin/animal-house validation (the Cabin is what proves the bound farmhand is this save's), and the
+        // phase driver is the same one every other farmhand scenario arms in. The companion's BODY is not this
+        // process's to place - see ModEntry.Fixtures.HostAutomation.PairedCompanion.cs - so this row publishes the tile
+        // and verifies the report instead.
+        if (FixtureScenario == "native_paired_companion_v1")
+            return new(HostAutomationFixturePhase.AfterSharedValidation, static (mod, farm, _) => mod.InitializeNativePairedCompanionFixture(farm));
+
         return null;
     }
 
@@ -114,6 +122,12 @@ public sealed partial class ModEntry
     /// </summary>
     private void TryInitializeNativeFixtureScenario()
     {
+        // THE PAIRED WORLD HAS ONE HALF IN EACH PROCESS, and both are pumped from here because this is the fixture
+        // family's per-tick entry on both roles. On the LAN master the first call verifies the placement report the
+        // companion's own process writes back; in her process the second one performs that placement. Each is a no-op
+        // on the other side, and on every run that never published one.
+        this.TryVerifyNativePairedCompanionPlacement();
+        this.TryPlaceNativePairedCompanionFixture();
         HostAutomationConfig? automation = this.config.HostAutomation;
         if (this.hostAutomationFixtureInitialized || this.hostAutomationTerminal || automation is not { Enable: true })
             return;

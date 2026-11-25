@@ -9,7 +9,7 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager
 {
-    private static readonly Dictionary<string, int> EmoteMap = new(StringComparer.Ordinal)
+    internal static readonly Dictionary<string, int> EmoteMap = new(StringComparer.Ordinal)
     {
         ["happy"] = 32,
         ["sad"] = 28,

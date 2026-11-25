@@ -93,7 +93,7 @@ internal sealed partial class ExecutionManager
     /// not public from a Mod assembly, so it is reflected, and any drift in its name, type or
     /// staticness fails closed rather than binding a different member.
     /// </summary>
-    private static bool TryResolveMultiplayerEgress(out Multiplayer? multiplayer)
+    internal static bool TryResolveMultiplayerEgress(out Multiplayer? multiplayer)
     {
         FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
         multiplayer = NativeChatPresentationPolicy.IsExactMultiplayerField(field) ? field!.GetValue(null) as Multiplayer : null;
