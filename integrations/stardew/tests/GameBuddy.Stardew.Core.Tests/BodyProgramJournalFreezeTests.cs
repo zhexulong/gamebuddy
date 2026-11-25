@@ -40,6 +40,9 @@ public sealed class BodyProgramJournalFreezeTests
     /// <summary>
     /// One node with EVERY field set to a value the type can tell apart from its default, so a field the freeze drops is
     /// the only reason any comparison here can fail.
+    ///
+    /// The values are deliberately NOT a shape `TryValidate` would admit (a `Failed` node carrying proof, a reason and a
+    /// chore at once): this gate asks the freeze to keep every field, not the journal to accept the result.
     /// </summary>
     private static BodyProgramJournalNode EveryFieldSet() => new(
         "n01",
@@ -65,7 +68,8 @@ public sealed class BodyProgramJournalFreezeTests
         "policy_denied",
         "row_target_identity_unavailable:plant_seed:seedtargets",
         "refused=2;row_target_identity_unavailable:plant_seed:seedtargets=2",
-        "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1");
+        "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1",
+        "harvestTargets");
 
     private static BodyProgramJournalState State(BodyProgramJournalNode node) => new(
         BodyProgramJournalPersistence.SchemaVersion,

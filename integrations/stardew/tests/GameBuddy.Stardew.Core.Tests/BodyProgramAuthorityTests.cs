@@ -605,6 +605,49 @@ public sealed class BodyProgramAuthorityTests
      }
 
      /// <summary>
+     /// THE FAMILY A NODE'S WORK CONSUMED IS PART OF THE DURABLE NODE, and it is refused where it would claim work nobody
+     /// saw happen.
+     ///
+     /// <para>
+     /// The clause `;chore=&lt;family&gt;` used to be the only statement of it, so a reader had to find it inside a string -
+     /// and `host/src/fact-brief.ts` did, with `indexOf`, which turned a finished chore into `未测` whenever the string's
+     /// shape moved. This is the field that lets that scan be deleted, so it has to survive the record: encoded, read back
+     /// from the store, and validated on the way in. A chore is legal exactly where the node proved an effect, which is the
+     /// states its `Evidence` rides.
+     /// </para>
+     /// </summary>
+     [Fact]
+     public void AChoreSurvivesTheJournalAndIsRefusedWhereItWouldBeASecondClaim()
+     {
+         var store = new MemoryStore(); var authority = Open(store);
+         // A programme whose action declares NO output fact: a chore is the only thing under test, and a success that owed
+         // a fact would fail its own provenance gate first.
+         authority.Submit(NoOutputFactProgram("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+         static BodyProgramTerminalResult settled(NodeExecutionBinding execution) => new(
+             execution, BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt-1", "evidence-1", "postcondition-1");
+
+         // A family that is not an identifier would be a value the wire's own grammar could never carry.
+         authority.TryComplete(grant, settled(Execution(grant)) with { Chore = "harvest targets" })
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+         // A node that proved no effect finished no chore, so a terminal that names one there is refused rather than stored.
+         authority.TryComplete(grant, TerminalReason(grant, BodyProgramNodeOutcome.Failed, "no_native_path") with { Chore = "harvestTargets" })
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+
+         // Nothing was mutated by either refusal, and the real terminal now names the family it consumed.
+         authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
+         authority.TryComplete(grant, settled(Execution(grant)) with { Chore = "harvestTargets" }).IsSuccess.Should().BeTrue();
+
+         authority.Status("program").Snapshot!.Nodes.Single().Chore.Should().Be("harvestTargets");
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+         BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? reason).Should().BeTrue(reason);
+         reopened.Snapshot.Programs.Single().Nodes.Single().Chore
+             .Should().Be("harvestTargets", "the family is part of the durable node, not a value the reader re-derives");
+     }
+
+     /// <summary>
      /// A LEGITIMATE REFUSAL DOES NOT CHANGE ITS STATE BECAUSE ITS TEXT WAS LONG.
      ///
      /// <para>

@@ -771,6 +771,11 @@ public sealed class OpenBodyProgramJournalAuthority
         // Its grammar is the journal's own identifier rule, which is exactly the alphabet a wire family key is made of.
         if (result.Chore is not null && (!provesEffect || !BodyProgramValidation.IsIdentifier(result.Chore)))
             return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+        // THE TYPED EVICTIONS RIDE THE SAME STATES, and each entry must be an address this journal can store: an opaque row
+        // id or a tile. Anything else is refused here rather than persisted and handed to a reader as an address it cannot
+        // subtract - a value that is neither has to be named, not silently dropped.
+        if (result.Evicted is not null && (!provesEffect || result.Evicted.Any(address => !BodyProgramValidation.IsEvictedAddress(address))))
+            return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
         IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? released = node.ClaimOwnership is { } claims ? BodyProgramValidation.FreezeMap(claims.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) : null;
@@ -784,6 +789,9 @@ public sealed class OpenBodyProgramJournalAuthority
             PostconditionVerification = provesEffect ? result.PostconditionVerification : null,
             // The typed chore of the work this node settled, from the ONE value its clause was minted from as well.
             Chore = provesEffect ? result.Chore : null,
+            // The addresses this node's work proved the reading no longer describes - the receipt's own list, unioned by a
+            // `for_each` pass before it gets here, and the half a settlement delivers (the folded receipt is not published).
+            Evicted = provesEffect && result.Evicted is not null ? Array.AsReadOnly(result.Evicted.ToArray()) : null,
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
             FailureCode = namesShortfall ? result.FailureCode : null,
             Hint = namesShortfall ? result.Hint : null,

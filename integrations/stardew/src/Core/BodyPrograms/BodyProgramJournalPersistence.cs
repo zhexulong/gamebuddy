@@ -31,10 +31,11 @@ public static class BodyProgramJournalPersistence
     /// a reason", and only the version number can tell them apart.
     /// </para>
     /// <para>
-    /// RAISED to 6 for the node `chore` key. A v5 payload has no node `chore`, and a journal from another process is
-    /// superseded rather than resumed (the quarantine rule: an unfinished programme is never replayed, because the world
-    /// may have moved while the process was gone), so this is a version of the record's SHAPE and not a migration of live
-    /// state.
+    /// RAISED to 6 for the node `chore` key, and to 7 for the node `evicted` key. A v5 payload has no node `chore` and a v6
+    /// one has no `evicted`, and a journal from another process is superseded rather than resumed (the quarantine rule: an
+    /// unfinished programme is never replayed, because the world may have moved while the process was gone), so each of
+    /// those is a version of the record's SHAPE and not a migration of live state. The same sentence covers both because it
+    /// is the same argument, not two: nothing here reads an older document's missing field as "the Mod had nothing to say".
     /// </para>
     /// <para>
     /// There is no migration/dual-read path here by design, and the two directions are NOT the same fact. An OLDER journal
@@ -43,7 +44,7 @@ public static class BodyProgramJournalPersistence
     /// the difference between "this build cannot use this data" and "this build may throw it away".
     /// </para>
     /// </summary>
-    public const int SchemaVersion = 6;
+    public const int SchemaVersion = 7;
     private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state, BodyProgramActionCatalog? catalog = null, BridgeScope? expectedScope = null)
@@ -189,7 +190,11 @@ public static class BodyProgramJournalPersistence
             // EVERY persist: the journal held it, the projection to the wire read it, and the frozen state this authority
             // keeps answering from did not. Measured while a failed `for_each` pass tried to state its per-reason counts -
             // the counts never arrived.
-            node.Hint, node.RefusalDetail, node.Chore)).ToArray()),
+            node.Hint, node.RefusalDetail, node.Chore,
+            // The typed addresses a node proved gone, carried through the freeze for the same reason `Chore` is: this
+            // projection is what every later read of the journal answers from, so a field left out here is a field the
+            // settlement silently never published. A fresh list, so a caller cannot mutate the record after it is salted.
+            node.Evicted is null ? null : Array.AsReadOnly(node.Evicted.ToArray()))).ToArray()),
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
@@ -268,7 +273,7 @@ public static class BodyProgramJournalPersistence
             if (node.AdmissionAttempt != 0 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
                 || node.DerivedDeadlineMs is not null
                 || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null || node.FailureCode is not null
-                || node.RefusalDetail is not null)
+                || node.RefusalDetail is not null || node.Evicted is not null)
                 { refusal = "unattempted_shape"; return false; }
         }
         else
@@ -297,6 +302,16 @@ public static class BodyProgramJournalPersistence
         // worked - the same states the proof rides - and its grammar is the identifier rule a wire family key is made of.
         if (node.Chore is not null && (!BodyProgramValidation.IsIdentifier(node.Chore) || !BodyProgramValidation.MayCarryProof(node.State)))
             { refusal = "chore"; return false; }
+        // THE TYPED EVICTIONS ARE THE SAME CLAIM THE CHORE MAKES, one level finer: this node's work took these addresses
+        // out of the reading. Legal where it proved an effect, and every entry is an address - an opaque row id or a tile.
+        // A value that is neither is refused BY NAME, carrying the value, so a producer that published nonsense is named
+        // rather than read as "nothing was removed".
+        if (node.Evicted is not null)
+        {
+            if (!BodyProgramValidation.MayCarryProof(node.State)) { refusal = "evicted"; return false; }
+            foreach (string address in node.Evicted)
+                if (!BodyProgramValidation.IsEvictedAddress(address)) { refusal = $"evidence_evicted_not_an_address:{address}"; return false; }
+        }
         bool hasProof = node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null;
         bool hasCompleteProof = BodyProgramValidation.IsOpaqueTerminalProof(node.ReceiptId) && BodyProgramValidation.IsOpaqueTerminalProof(node.Evidence)
             && BodyProgramValidation.IsOpaqueTerminalProof(node.PostconditionVerification);
@@ -597,7 +612,7 @@ public static class BodyProgramJournalPersistence
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint", "refusalDetail", "chore")
+        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint", "refusalDetail", "chore", "evicted")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state)
             || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission)
             || !ReadNullableString(value.GetProperty("grantId"), out string? grant) || !ReadNullableExecutionBinding(value.GetProperty("executionBinding"), out NodeExecutionBinding? binding)
@@ -611,8 +626,29 @@ public static class BodyProgramJournalPersistence
              || !ReadNullableReasonCode(value.GetProperty("failureCode"), out string? failureCode)
              || !ReadNullableHint(value.GetProperty("hint"), out string? hint)
              || !ReadNullableRefusalDetail(value.GetProperty("refusalDetail"), out string? refusalDetail)
-             || !ReadNullableChore(value.GetProperty("chore"), out string? chore)) return false;
-         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint, refusalDetail, chore); return true;
+             || !ReadNullableChore(value.GetProperty("chore"), out string? chore)
+             || !ReadNullableAddresses(value.GetProperty("evicted"), out IReadOnlyList<string>? evicted)) return false;
+         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint, refusalDetail, chore, evicted); return true;
+    }
+
+    /// <summary>
+    /// A null-or-address-list field. Anything that is neither null nor a list of addresses fails the whole document closed,
+    /// and it fails BY NAME: a malformed address must never be read as "nothing was removed", which is the silence the
+    /// typed field exists to end (`host/src/fact-brief.ts#provedGoneTargets` subtracts these from a reading).
+    /// </summary>
+    private static bool ReadNullableAddresses(JsonElement value, out IReadOnlyList<string>? result)
+    {
+        result = null;
+        if (value.ValueKind == JsonValueKind.Null) return true;
+        if (value.ValueKind != JsonValueKind.Array) return false;
+        List<string> addresses = new();
+        foreach (JsonElement entry in value.EnumerateArray())
+        {
+            if (!ReadString(entry, out string? address) || address is null || !BodyProgramValidation.IsEvictedAddress(address)) return false;
+            addresses.Add(address);
+        }
+        result = Array.AsReadOnly(addresses.ToArray());
+        return true;
     }
 
     /// <summary>

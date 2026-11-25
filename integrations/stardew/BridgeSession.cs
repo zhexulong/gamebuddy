@@ -274,8 +274,8 @@ string? bodyProgramUnavailableReason = null,
     ///
     /// <para>
     /// A method rather than a `new` inside the projection above because the presentation is a second lookup by action id
-    /// (`FarmhandActionPresentationCatalog`), and a call site that repeated that lookup three times per field would read
-    /// as three facts. The presentation is optional on both sides: an action that publishes none says so by omitting it.
+    /// (`FarmhandActionPresentationCatalog`), and a call site that repeated that lookup per field would read as several
+    /// facts. The presentation is optional on both sides: an action that publishes none says so by omitting it.
     /// </para>
     /// </summary>
     private static FarmhandActionDescriptorWire WireDescriptor(
@@ -308,10 +308,9 @@ string? bodyProgramUnavailableReason = null,
                 : null,
             // The snapshot family this action's targets come from, or null when it addresses none.
             descriptor.TargetFamily,
-            // What the action is called, the sentence a model reads about it, and the kinds it acts on - the three facts
-            // a mounted tool states for itself and no longer has to copy.
+            // What the action is called and the kinds it acts on - the two facts a mounted tool states about the action
+            // itself rather than about the model's experience of it, which stays in the Host.
             presentation?.Label,
-            presentation?.Description,
             presentation?.TargetKinds);
 
     internal bool TryObserve(long generation, BridgeEnvelope<BridgeObserveRequest>? envelope, out BridgeEnvelope<BridgeSnapshot>? response, out string reasonCode)
@@ -1685,20 +1684,27 @@ string? bodyProgramUnavailableReason = null,
     }
 
     /// <summary>
-    /// A receipt's evidence on the wire: its detail, and the family its work consumed as a field of its own.
+    /// A receipt's evidence on the wire: its detail, the family its work consumed, and the addresses it took out.
     ///
     /// <para>
-    /// `chore` is the TYPED statement of the same fact the detail's `chore=` clause spells, projected from
-    /// <see cref="LocalExecutionReceipt.Chore"/> rather than parsed back out of the detail. A reader that needs the family
-    /// reads this field; a human reading a run's log reads the clause. One value fills both, where the receipt is minted.
+    /// `chore` and `evicted` are the TYPED statements of the same facts the detail's `chore=` clause and its
+    /// `target=`/`expected=`/`removed=`/`changed=` pairs spell, projected from <see cref="LocalExecutionReceipt.Chore"/> and
+    /// <see cref="LocalExecutionReceipt.Evicted"/> rather than parsed back out of the detail. A reader that needs them reads
+    /// these fields; a human reading a run's log reads the clause. One value fills both, where the receipt is minted.
+    /// </para>
+    /// <para>
+    /// `evicted` IS A LIST OF ADDRESSES AND NOT A STRING, which is why this map's values are `object`: a comma-joined
+    /// spelling would be the `key=val;` protocol one layer down, and the whole reason the field exists is that the reader
+    /// could not survive a separator it had to guess at.
     /// </para>
     /// </summary>
-    private static IReadOnlyDictionary<string, string>? ReceiptEvidence(LocalExecutionReceipt receipt)
+    private static IReadOnlyDictionary<string, object?>? ReceiptEvidence(LocalExecutionReceipt receipt)
     {
-        if (receipt.Evidence is null)
-            return receipt.Chore is null ? null : new Dictionary<string, string>(StringComparer.Ordinal) { ["chore"] = receipt.Chore };
-        Dictionary<string, string> evidence = new(StringComparer.Ordinal) { ["detail"] = receipt.Evidence };
+        if (receipt.Evidence is null && receipt.Chore is null && receipt.Evicted is null) return null;
+        Dictionary<string, object?> evidence = new(StringComparer.Ordinal);
+        if (receipt.Evidence is not null) evidence["detail"] = receipt.Evidence;
         if (receipt.Chore is not null) evidence["chore"] = receipt.Chore;
+        if (receipt.Evicted is not null) evidence["evicted"] = receipt.Evicted;
         return evidence;
     }
 
@@ -1840,7 +1846,7 @@ string? bodyProgramUnavailableReason = null,
     private static BridgeBodyProgramNodeStatus NodeStatus(BodyProgramStatusSnapshot snapshot, BodyProgramJournalNode node)
     {
         BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification, node.Chore);
+        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification, node.Chore, node.Evicted);
     }
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt, @event.AtMs);

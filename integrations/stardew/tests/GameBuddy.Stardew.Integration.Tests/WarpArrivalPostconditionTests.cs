@@ -87,6 +87,39 @@ public sealed class WarpArrivalPostconditionTests
     }
 
     /// <summary>
+    /// THE REACH IS STILL ENFORCED, which is the other half of declaring it.
+    ///
+    /// <para>
+    /// `travel` publishes `adjacent, 1` because its request path measures that distance (see
+    /// <c>TransitionTileIsResolvableSourceShapeTests.EveryTransitionDeclaresTheReachTheSharedRequestPathEnforces</c>), and
+    /// a declaration that replaced the refusal with a walk would be the false precondition
+    /// <c>TransportApproachWiringTests</c> warns about. So a body two tiles from the warp is still answered
+    /// <c>warp_out_of_range</c>, with the layer and the distance that produced it - measured `round99` (turn 78,
+    /// `enter_exit(40,-1)` from the Farm) is the same gate answering the other word.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ATravelFromTwoTilesAwayIsStillRefusedWithTheRangeThatBlockedIt()
+    {
+        using var world = World.Create();
+        world.AddWarp(4, 5, "Farm", 79, 17);
+        world.PlaceActorAt(6, 5);
+
+        LocalExecutionReceipt refused = world.Request("travel", 4, 5);
+
+        refused.State.Should().Be(ExecutionState.Rejected, refused.Evidence);
+        refused.ReasonCode.Should().Be(
+            "warp_out_of_range",
+            "one radius gate answers both transitions; only the word differs, because no door table owns an edge warp");
+        refused.Evidence.Should().Contain(
+            "blocked_by=range:adjacent:2",
+            "the refusal names the layer and the measured distance, which is what lets the caller walk one tile and re-issue");
+        refused.Evidence.Should().Contain(
+            "distance=2",
+            "and the number agrees with the distance the surface now declares");
+    }
+
+    /// <summary>
     /// The gate over the population: no arm of the arrival postcondition may compare the farmer's tile with the warp's
     /// declared target, because no warp's declared target is a promise the engine keeps. The mine arms are exempt by
     /// construction - a mine level is the location's identity - so the gate reads the method the whole family runs

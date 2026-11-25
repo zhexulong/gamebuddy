@@ -59,10 +59,10 @@ public sealed class HeldRequestAbsorptionTests
         answer.Payload.ExecutionId.Should().Be(absorption.Handler.ExecutionId!);
         // The hold is EVIDENCE, not a mystery: the dispatch says how long it waited (the Mod's evidence
         // string travels as the `detail` field of the wire's evidence map).
-        answer.Payload.Evidence!["detail"].Should().MatchRegex(@"(^|;)held_ms=\d+$");
+        EvidenceText(answer.Payload.Evidence!["detail"]).Should().MatchRegex(@"(^|;)held_ms=\d+$");
         absorption.Executions.TryGetReceipt(absorption.Request.Payload.RequestId, out LocalExecutionReceipt stored)
             .Should().BeTrue();
-        stored.Evidence.Should().Be(answer.Payload.Evidence!["detail"],
+        stored.Evidence.Should().Be(EvidenceText(answer.Payload.Evidence!["detail"]),
             "the answer is the receipt the ledger stored and published, not a second story");
 
         // Answered once and only once: another tick finds nothing parked and sends nothing.
@@ -155,7 +155,7 @@ public sealed class HeldRequestAbsorptionTests
         BridgeEnvelope<BridgeReceipt> dispatched = absorption.TakeAnswer();
         dispatched.CorrelationId.Should().Be(absorption.Request.CorrelationId, "the answer belongs to the request that waited");
         dispatched.Payload.State.Should().Be("accepted");
-        string detail = dispatched.Payload.Evidence!["detail"];
+        string detail = EvidenceText(dispatched.Payload.Evidence!["detail"]);
         var heldMs = System.Text.RegularExpressions.Regex.Match(detail, "(^|;)held_ms=(?<ms>[0-9]+)$");
         heldMs.Success.Should().BeTrue($"the dispatch says how long it waited: {detail}");
         long.Parse(heldMs.Groups["ms"].Value, System.Globalization.CultureInfo.InvariantCulture).Should().BeGreaterThanOrEqualTo(
@@ -235,7 +235,7 @@ public sealed class HeldRequestAbsorptionTests
         BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
         answer.CorrelationId.Should().Be(absorption.Request.CorrelationId);
         answer.Payload.State.Should().Be("accepted");
-        answer.Payload.Evidence!["detail"].Should().MatchRegex(@"(^|;)held_ms=\d+$");
+        EvidenceText(answer.Payload.Evidence!["detail"]).Should().MatchRegex(@"(^|;)held_ms=\d+$");
     }
 
     /// <summary>
@@ -467,6 +467,20 @@ public sealed class HeldRequestAbsorptionTests
             return receipt;
         }
     }
+
+    /// <summary>
+    /// One string out of the wire's evidence map, whichever shape the JSON round-trip gave it.
+    ///
+    /// THE MAP'S VALUES ARE `object?` SINCE `evicted` (a list of addresses) JOINED IT, so a frame decoded from JSON holds
+    /// `JsonElement` where it used to hold `string` - the wire is JSON, and this reads the JSON it was actually given
+    /// rather than the shape the encoder happened to hold.
+    /// </summary>
+    private static string EvidenceText(object? value) => value switch
+    {
+        string text => text,
+        System.Text.Json.JsonElement element => element.GetString() ?? string.Empty,
+        _ => string.Empty,
+    };
 
     private sealed class FakePersistence : IModGlobalDataPersistence
     {

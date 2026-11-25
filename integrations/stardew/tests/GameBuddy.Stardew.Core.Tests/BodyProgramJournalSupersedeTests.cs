@@ -53,7 +53,11 @@ public sealed class BodyProgramJournalSupersedeTests
     [Fact]
     public void ANewerJournalStaysCorruptBecauseADowngradeMustNotDestroyWhatItCannotRead()
     {
-        var store = new MemoryStore("{\"schemaVersion\":5,\"programs\":[],\"events\":[]}");
+        // ONE VERSION AHEAD OF THIS BUILD'S OWN SHAPE, derived rather than typed: a literal `5` here read as "newer" only
+        // until the next bump, and after it this test would silently exercise the SUPERSEDE path while still claiming to
+        // prove the downgrade refusal.
+        var store = new MemoryStore(
+            $"{{\"schemaVersion\":{BodyProgramJournalPersistence.SchemaVersion + 1},\"programs\":[],\"events\":[]}}");
 
         OpenBodyProgramJournalAuthority authority = Open(store);
 

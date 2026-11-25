@@ -68,7 +68,7 @@ public sealed class MineLadderDescentTests
         path.Should().NotBeNull($"the enter_mine body must exist at {ImplementationRelativePath}");
         string text = File.ReadAllText(path!);
 
-        text.Should().Contain("TryFindMineLadderTile(shaft, out int ladderX, out int ladderY)");
+        text.Should().Contain("TryFindMineLadderTile(shaft, out int descendX, out int descendY)");
         text.Should().Contain("int descentLevel = shaft.mineLevel + 1;");
         text.Should().Contain("Game1.enterMine(descentLevel);");
         // Separate terminal codes: a ladder request that names no live ladder is not the

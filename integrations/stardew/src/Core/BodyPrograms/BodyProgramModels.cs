@@ -300,6 +300,21 @@ public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, B
     /// </para>
     /// </summary>
     public string? Chore { get; init; }
+
+    /// <summary>
+    /// The addresses this terminal proved the world reading no longer describes, typed.
+    ///
+    /// <para>
+    /// A row's own opaque id, or - for a row addressed only by where it stands - its tile, both in the spelling
+    /// <see cref="BodyProgramValidation.IsEvictedAddress"/> admits. The reader this exists for
+    /// (`host/src/fact-brief.ts#provedGoneTargets`) stops offering such a row, and it used to learn this by splitting the
+    /// receipt's `key=val;` detail on `;` and reading `target=`/`expected=`/`removed=`/`changed=`. A space, a reorder or a
+    /// renamed key turned a finished removal into "nothing was proved" without saying anything, so the row the companion
+    /// had just taken out was offered as work again (`round78`'s four wasted `rock_source_gone`, `round80`'s 54
+    /// `soil_already_tilled`).
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string>? Evicted { get; init; }
 }
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
@@ -392,7 +407,20 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     /// grammar (<see cref="BodyProgramValidation.IsIdentifier"/>), which is the alphabet a wire family key is made of.
     /// </para>
     /// </summary>
-    string? Chore = null);
+    string? Chore = null,
+    /// <summary>
+    /// The addresses this node's work proved the world reading no longer describes, or null - the journal's copy of
+    /// <see cref="BodyProgramTerminalResult.Evicted"/>, and the one place a `for_each` pass unions its rows.
+    ///
+    /// <para>
+    /// Legal exactly where the node PROVED an effect, for the same reason <see cref="Chore"/> is: a step that proved
+    /// nothing took nothing out of the world. Each entry is an opaque row id or a tile, the union
+    /// <see cref="BodyProgramValidation.IsEvictedAddress"/> admits - one address space, two spellings, because a row
+    /// addressed by its own id and a row addressed only by where it stands are the same kind of address to the reader that
+    /// subtracts them from a reading.
+    /// </para>
+    /// </summary>
+    IReadOnlyList<string>? Evicted = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 
@@ -653,6 +681,45 @@ internal static class BodyProgramValidation
     internal static bool IsValidWatchdogMs(long value) => value is > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsValidDerivedDeadlineMs(long? value) => value is not null and > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
+
+    /// <summary>
+    /// An address a receipt may prove gone: a row's own opaque id, or the tile a row with no identity of its own is
+    /// addressed by (`AreaToolFootprint.Format`'s `62:19`).
+    ///
+    /// <para>
+    /// ONE ADDRESS SPACE, TWO SPELLINGS. The reader that subtracts these from a world reading
+    /// (`host/src/fact-brief.ts#provedGoneTargets`) keys on the address alone, exactly as
+    /// `host/src/game-world-vocabulary.ts#rowTargetId` gives a row its id when it publishes one and its tile when it does
+    /// not - so `soilTiles` (a tile) and `rockSourceTargets` (an id) leave one list by one rule. Anything else is refused
+    /// by name rather than used: a list of strings that happens to work is the `key=val;` form this field replaced.
+    /// </para>
+    /// </summary>
+    internal static bool IsEvictedAddress(string? value) => IsIdentifier(value) || IsTileAddress(value);
+
+    /// <summary>
+    /// One tile in the Mod's own spelling - `62:19`, with its sign when the map runs negative, and no leading zero.
+    ///
+    /// The colon is admitted here and not by widening <see cref="IsIdentifier"/>, whose alphabet also guards program, node,
+    /// request and argument identities: a tile must never be mistakable for one of those, which is the same reason
+    /// <see cref="IsResourceClaimKey"/> has its own rule.
+    /// </summary>
+    internal static bool IsTileAddress(string? value)
+    {
+        if (value is null) return false;
+        int colon = value.IndexOf(':');
+        return colon > 0 && IsCoordinate(value.AsSpan(0, colon)) && IsCoordinate(value.AsSpan(colon + 1));
+    }
+
+    /// <summary>One coordinate of a tile address: an optional `-`, then the digits of a canonical integer.</summary>
+    private static bool IsCoordinate(ReadOnlySpan<char> value)
+    {
+        if (value.Length > 0 && value[0] == '-') value = value[1..];
+        if (value.Length is 0 or > 9) return false;
+        if (value.Length > 1 && value[0] == '0') return false;
+        foreach (char character in value)
+            if (character is < '0' or > '9') return false;
+        return true;
+    }
     /// <summary>
     /// A resource-claim key: one or more lowercase identifier segments joined by `:`, so `embodied_actor` and
     /// `tool:scythe` are the same shape and a future subject (`inventory:seed_maker`) needs no new rule. The colon is

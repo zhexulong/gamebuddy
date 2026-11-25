@@ -29,7 +29,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// <summary>
     /// How many other human players one observation publishes. Stardew's own co-op tops out at four players in total, so
     /// this is the wire's declared bound (<c>protocol/bridge-v1.schema.json</c> <c>otherFarmers.maxItems</c>) rather than a
-    /// window a real session reaches; the radius decides what is SEEN, and the rows it withheld are counted beside them.
+    /// budget a real session reaches. It is a ROW budget and not a window: the family's subject is "who is on my map", and
+    /// no radius answers that - <see cref="FarmhandTargetDiscovery.DiscoverOtherFarmers"/> publishes every other player
+    /// standing on the actor's own map and counts the ones its row budget left out.
     /// </summary>
     internal const int OtherFarmerLimit = 16;
     // Animal-product discovery is the one place where the ACTING range is wider
@@ -4063,7 +4065,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// of it is left is the reader's own world reading rather than anything the clause asserts.
     /// </para>
     /// </summary>
-    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true)
+    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true, IReadOnlyList<string>? evicted = null)
     {
         string? boundActionId = this.ledger.TryGetActionId(requestId, out string action) ? action : null;
         // THE FLOOD MEMO LEARNS WHAT THE WORLD DID FROM THE RECEIPT. A refused node changed nothing, so the component
@@ -4086,13 +4088,52 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalExecutionReceipt? settled = this.ledger.MostRecentReceipt;
             detail = NoteRepeatedRefusal(settled?.ReasonCode, settled?.Evidence, reasonCode, detail);
         }
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint, Chore: choreFamily);
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint, Chore: choreFamily,
+            Evicted: EvictedAddresses(state, reasonCode, choreFamily, requestId, evicted));
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt, publish);
         if (state.IsTerminal())
             this.ledger.PublishIdleAfterRelease(executionId, requestId);
         return published;
     }
+
+    /// <summary>
+    /// The addresses this terminal proved the world reading no longer describes - the ONE rule, asked at the funnel every
+    /// action's terminal passes through.
+    ///
+    /// <para>
+    /// TWO PROOFS, ONE CLAIM. Either the WORLD answered that the row this request named is not there any more (a reason
+    /// code ending `_gone` - `rock_source_gone`, `item_target_gone`), or the action's own declaration says its success TAKES
+    /// that row out of the world (`FarmhandActionCatalog.ChoreFamilyOf`, which is null for every action whose chore
+    /// `LeavesRows`) and the terminal is that success. Both are declarations the Mod already owns; neither is read out of
+    /// the receipt's prose, which is what the reader that consumed them could not survive (`host/src/fact-brief.ts` split
+    /// `target=`/`expected=`/`removed=`/`changed=` out of `detail`, so a space or a rename read as "nothing removed").
+    /// </para>
+    /// <para>
+    /// A STEP OF ITS OWN MAY NAME ADDRESSES ITSELF, and `till_soil` is the one that does: its row is addressed by a TILE
+    /// (`soilTiles` rows publish no id) and its proof is the footprint the charged Hoe actually turned, which no
+    /// declaration can predict. Those arrive as <paramref name="claimed"/> and are unioned with the two derived ones, so no
+    /// path has to choose between them. The list is validated where it is stored and where it is read
+    /// (`BodyProgramValidation.IsEvictedAddress`), never silently filtered here: a value that is not an address has to be
+    /// refused by name, not dropped.
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<string>? EvictedAddresses(ExecutionState state, string reasonCode, string? choreFamily, string requestId, IReadOnlyList<string>? claimed)
+    {
+        List<string> addresses = claimed is null ? new List<string>() : new List<string>(claimed);
+        bool worldSaysItIsNotThere = reasonCode.EndsWith(EvictedReasonSuffix, StringComparison.Ordinal);
+        // The two states in which a terminal PROVED an effect. `partially_succeeded` is in the pair for the reason the
+        // reader puts it there: a step that worked part of what it addressed still took that part out of the world.
+        bool thisWorkTookItOut =
+            (state == ExecutionState.Succeeded || state == ExecutionState.PartiallySucceeded) && choreFamily is not null;
+        if ((worldSaysItIsNotThere || thisWorkTookItOut) && this.ledger.TryGetAddressedTarget(requestId, out string addressed)
+            && !addresses.Contains(addressed, StringComparer.Ordinal))
+            addresses.Add(addressed);
+        return addresses.Count == 0 ? null : addresses.AsReadOnly();
+    }
+
+    /// <summary>The Mod's own word for "the row this request named is not in the world": `rock_source_gone`.</summary>
+    private const string EvictedReasonSuffix = "_gone";
 
     /// <summary>
     /// Folds the native notices observed during a dispatch into that request's stored receipt. Notices are evidence
@@ -4406,9 +4447,16 @@ internal static class AreaToolFootprint
     /// <c>=</c> is usable - the detail is split on the first and then on the second - and <c>|</c> and <c>:</c> are.
     /// </summary>
     internal static string Format(IReadOnlyCollection<Vector2> tiles) =>
-        tiles.Count == 0
-            ? "none"
-            : string.Join("|", tiles.Select(tile => $"{tile.X:0}:{tile.Y:0}"));
+        tiles.Count == 0 ? "none" : string.Join("|", Addresses(tiles));
+
+    /// <summary>
+    /// The same tiles as ADDRESSES, one per entry, for the typed proof a receipt carries (`LocalExecutionReceipt.Evicted`).
+    ///
+    /// The spelling is this class's own (<see cref="Format"/> joins THIS list with `|`), so the string and the typed field
+    /// cannot disagree about a tile - and neither has to be split by a reader.
+    /// </summary>
+    internal static IReadOnlyList<string> Addresses(IReadOnlyCollection<Vector2> tiles) =>
+        Array.AsReadOnly(tiles.Select(tile => $"{tile.X:0}:{tile.Y:0}").ToArray());
 }
 
 /// <summary>

@@ -224,6 +224,10 @@ internal sealed partial class ExecutionManager
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay)
             return replay;
+        // THE ADDRESS THIS REQUEST NAMED, recorded where the caller's argument still is. The terminal is minted up to a
+        // whole walk later by a body that never saw it, and the funnel is the one place that knows what the terminal
+        // proved - so the funnel reads the address from here rather than out of the receipt's own prose.
+        this.ledger.RecordAddressedTarget(requestId, expectedTargetId);
         if (authorize?.Invoke() is TileTargetRefusal unauthorized)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unauthorized.ReasonCode, unauthorized.Evidence);
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile) is LocalExecutionReceipt admissionRejection)

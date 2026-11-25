@@ -148,6 +148,10 @@ public sealed class SettlementNamesItsChoreTests
         cut.PostconditionVerification.Should().NotContain("chore=",
             "the family belongs to the settlement's evidence, and this postcondition is not a string the reader receives");
         cut.Evidence.Should().Be("chore_done", "the node carries the receipt's own detail verbatim, unchanged");
+        // THE TYPED FAMILY TRAVELS THE SAME ROAD, and it is COPIED rather than re-derived: the receipt carries it, the
+        // executor puts it on the node, and the declaration is asked only by the stub that stands in for the funnel.
+        cut.Chore.Should().Be(FarmhandActionCatalog.ChoreFamilyOf("cut_weeds"),
+            "the family the receipt typed reaches the node, from the same declaration the funnel reads");
 
         // THE ROUND70 SHAPE: a harvest is work finished with nothing in its way, and the clause the settlement owes is
         // the family the harvest consumed.
@@ -155,7 +159,8 @@ public sealed class SettlementNamesItsChoreTests
         harvest.Should().NotBeNull();
         harvest!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
         harvest.PostconditionVerification.Should().NotContain("chore=");
-        FarmhandActionCatalog.ChoreClause(FarmhandActionCatalog.ChoreFamilyOf("harvest_crop")).Should().Be("chore=harvestTargets");
+        harvest.Chore.Should().Be("harvestTargets", "the family the harvest consumed, typed beside the string");
+        FarmhandActionCatalog.ChoreClause(harvest.Chore).Should().Be("chore=harvestTargets");
     }
 
     private static FarmhandForEachPassResult Pass(params FarmhandForEachTargetResult[] rows) =>
@@ -206,8 +211,12 @@ public sealed class SettlementNamesItsChoreTests
 
     private sealed class ChoreStubHandler : IFarmhandActionHandler
     {
+        // The funnel's own rule, answered by the funnel's own declaration: the family is the ACTION's, so the stub names
+        // the family the action consumes instead of hard-coding one per test case.
         public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger) =>
-            ledger.RememberTerminal(request.RequestId, "exec_1", ExecutionState.Succeeded, "chore_done", "chore_done");
+            ledger.RememberTerminal(request.RequestId, "exec_1", ExecutionState.Succeeded, "chore_done", "chore_done")
+                with
+                { Chore = FarmhandActionCatalog.ChoreFamilyOf(request.Action) };
     }
 
     private sealed class ChoreStubLedger : IExecutionLedger, IDispatchExecutionLedger

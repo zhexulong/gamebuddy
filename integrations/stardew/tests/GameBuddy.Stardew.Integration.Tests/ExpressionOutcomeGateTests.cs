@@ -171,6 +171,52 @@ public sealed class ExpressionOutcomeGateTests
     }
 
     /// <summary>
+    /// THE WAIT IS A READING TOO, not only a receipt.
+    ///
+    /// <para>
+    /// MEASURED `round99` (turn 109, `UndergroundMine1` at `2500`): `express_emote(note)` came back `emote_busy` with
+    /// `emoting=true;current_emote=24`, and 24 is the SLEEPY balloon the GAME sends at 24:00 and 25:00
+    /// (<c>Game1.cs:5962</c>, <c>:5967</c>) - a balloon the caller never sent, at a minute nothing on the surface
+    /// mentioned. The refusal was right and the turn was wasted anyway: the two guards existed nowhere but in the
+    /// refusal, so there was no way to know before sending.
+    /// </para>
+    /// <para>
+    /// The population is derived from the same place <see cref="ExpressionActions"/> reads: every catalogue row bound
+    /// to <see cref="EmoteNativeBinding"/> declares its `emote` argument, and that argument's published meaning names the
+    /// two guards that can refuse it and the game's own emotes. The refusal is then driven in the same test, because a
+    /// sentence that replaced the guard would be worse than one that was missing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ThePublishedSurfaceNamesWhatRefusesAGesture()
+    {
+        IReadOnlyList<string> actions = ExpressionActions();
+        actions.Should().NotBeEmpty("a population of zero agrees with itself");
+
+        foreach (string actionId in actions)
+        {
+            FarmhandActionDescriptorProjection published = FarmhandActionSurfacePublication.Actions
+                .Single(candidate => string.Equals(candidate.ActionId, actionId, StringComparison.Ordinal));
+            published.ArgumentSchema.Should().ContainKey(
+                "emote",
+                $"`{actionId}` dispatches the word it declares, and that argument is where its meaning is published");
+            string meaning = published.ArgumentSchema["emote"].Description ?? string.Empty;
+            foreach (string fact in new[] { "emote_busy", "cutscene_active", "24:00", "25:00" })
+            {
+                meaning.Should().Contain(
+                    fact,
+                    $"`{actionId}` can be refused by `{fact}` and this is the reading a caller has before sending it - "
+                    + "round99's turn 109 spent a turn on a refusal whose cause was published nowhere");
+            }
+        }
+
+        DrivenOutcome refused = Drive("express_emote", ExpressionCase.EmotePlaying);
+        refused.ReasonCode.Should().Be(
+            "emote_busy",
+            "the meaning tells a caller when it would be refused; the guard itself is still the engine's");
+    }
+
+    /// <summary>
     /// THE ENGINE FACT the first answer rests on: <c>Farmer.doEmote</c> is its guard and four writes, so a refused
     /// emote is NOT queued anywhere - it cannot be deferred to the moment the event ends, and the honest answer is
     /// therefore a wait the caller re-issues rather than a hold this Mod keeps.

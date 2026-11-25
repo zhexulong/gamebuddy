@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -36,11 +37,17 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <c>enter_exit</c> therefore resolves through BOTH tables - the door table first, because a door has a native
 /// click entry whose gates must run, and the warp table as the fallback. <c>travel</c> resolves the warp table
 /// ALONE, and that asymmetry is the action surface's own declaration rather than an oversight:
-/// <c>FarmhandActionDefinitions.Transition</c> gives <c>enter_exit</c> <c>Approach = Adjacent</c> because it runs
-/// the native door action, and gives <c>travel</c> no approach because it resolves the warp and drives the
-/// transition from wherever the body stands. Widening <c>travel</c> to the door table would not widen it at all -
-/// <c>DispatchNativeDoor</c> is gated on <c>doorOwned</c>, so a door tile taken by <c>travel</c> would run
-/// <c>enter_exit</c>'s entry and the two actions would be one.
+/// <c>DispatchNativeDoor</c> is gated on <c>doorOwned</c>, so widening <c>travel</c> to the door table would not
+/// widen it at all - a door tile taken by <c>travel</c> would run <c>enter_exit</c>'s entry and the two actions
+/// would be one.
+/// </para>
+///
+/// <para>
+/// The REACH is a different fact and both actions share it: one method, one gate
+/// (<c>Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player)</c>), and `doorOwned` only decides which
+/// word the same refusal carries. So both declare <c>adjacent</c> - see
+/// <see cref="EveryTransitionDeclaresTheReachTheSharedRequestPathEnforces"/> for what happened when `travel`
+/// declared nothing while the code beneath it refused a wander from two tiles away with `warp_out_of_range`.
 /// </para>
 ///
 /// <para>
@@ -116,7 +123,7 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
     /// <para>
     /// What this pins is the OTHER direction, because the wrong fix is the tempting one: resolving the door table
     /// for <c>travel</c> would suppress that refusal, and - with <c>DispatchNativeDoor</c> gated on
-    /// <c>doorOwned</c> - turn `travel` into `enter_exit`. The declaration the gate reads is the surface's own
+    /// <c>doorOwned</c> - turn `travel` into `enter_exit`. The declaration a reader acts on is the surface's own
     /// <c>Approach</c>, so a change to either side fails here by name instead of drifting apart quietly.
     /// </para>
     /// </summary>
@@ -125,9 +132,10 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
     {
         FarmhandActionDescriptor travel = DescriptorOf("travel");
         FarmhandActionDescriptor enterExit = DescriptorOf("enter_exit");
-        travel.Approach.Should().BeNull(
-            "travel resolves the warp and drives the transition from wherever the body stands, which is why a door "
-            + "tile - one location.warps never held - is refused `warp_not_available` rather than walked to");
+        travel.Approach.Should().Be(FarmhandActionApproachRequirement.Adjacent,
+            "travel drives the warp itself but enters it from beside the source tile - the shared gate refuses a "
+            + "wander with `warp_out_of_range` - so a door tile it cannot resolve is refused `warp_not_available` "
+            + "rather than walked to and silently turned into `enter_exit`");
         enterExit.Approach.Should().Be(FarmhandActionApproachRequirement.Adjacent,
             "enter_exit runs the native door action, which needs the actor beside the door");
 
@@ -143,6 +151,64 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
             + "a door tile reached by travel must still answer `warp_not_available`, and resolving one there would "
             + "both suppress that refusal and - with DispatchNativeDoor gated on doorOwned - collapse the two "
             + "actions into one");
+    }
+
+    /// <summary>
+    /// Every action that transits through <c>RequestLocalDoorTransition</c> declares the reach that method enforces.
+    ///
+    /// <para>
+    /// WHY THIS EXISTS. `round99` (turn 78, `enter_exit(40,-1)` from the Farm): the compiler wrote no walk for an edge
+    /// exit whose source is outside the grid, the node then ran from two tiles away and the Mod answered
+    /// `warp_out_of_range`. The refusal was honest and the modifier's rule was stated in the code - but `travel`,
+    /// which runs through the same gate, DECLARED NOTHING, so `plan_shape` answered
+    /// `approach_requirement_undeclared` (indistinguishable from "no constraint"), a caller had no reading that named
+    /// the range, and the Host's walk insertion read the fallback `0` instead of the surface's distance. One range,
+    /// two readings, one of them absent.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS DERIVED from the surface's own declaration: every execution row that names the `warps`
+    /// target family is an action whose coordinates are a warp source tile, which is the tile this gate measures to.
+    /// The NUMBER is read from the shared method rather than restated here, so a change to the radius fails here by
+    /// name instead of leaving the declaration one step behind the code.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryTransitionDeclaresTheReachTheSharedRequestPathEnforces()
+    {
+        string transition = EnclosingMethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition");
+        Match radius = Regex.Match(
+            transition,
+            @"Utility\.tileWithinRadiusOfPlayer\(sourceX, sourceY, (\d+), Game1\.player\)",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(1));
+        radius.Success.Should().BeTrue(
+            "the shared transition path must still measure a reach, or this gate has nothing to compare a declaration "
+            + "against and would pass on an empty reading");
+        int enforced = int.Parse(radius.Groups[1].Value, CultureInfo.InvariantCulture);
+
+        var transitions = FarmhandActionCatalog.Registrations
+            .Where(registration => string.Equals(registration.Descriptor?.TargetFamily, "warps", StringComparison.Ordinal))
+            .ToList();
+        transitions.Should().NotBeEmpty("a family-derived population of zero agrees with itself");
+
+        foreach (FarmhandActionRegistration registration in transitions)
+        {
+            string actionId = registration.ActionId;
+            FarmhandActionApproachRequirement? declared = registration.Descriptor?.Approach;
+            declared.Should().NotBeNull(
+                $"`{actionId}` names a warp source tile and its request path refuses a body {enforced} tile(s) away, so "
+                + "the range belongs in the declaration a caller reads, not only in the refusal");
+            declared!.WithinTiles.Should().Be(
+                enforced,
+                $"`{actionId}` must declare the same reach RequestLocalDoorTransition enforces, or the surface states one "
+                + "distance and the receipt measures another");
+
+            FarmhandActionDescriptorProjection published = FarmhandActionSurfacePublication.Actions
+                .Single(candidate => candidate.ActionId == actionId);
+            published.Approach.Should().Be(
+                new FarmhandActionApproachRequirementProjection("adjacent", enforced),
+                $"`{actionId}` publishes the same relation and distance through `plan_shape`");
+        }
     }
 
     /// <summary>The action surface's own declaration for one action, read rather than restated.</summary>

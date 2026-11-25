@@ -698,6 +698,10 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusalCode));
         ExecutionState state;
         string reasonCode;
+        // THE FOOTPRINT THE CHARGE ACTUALLY TURNED, declared out here because the terminal below publishes it as the
+        // typed proof: `soilTiles` rows carry no id, so the tiles ARE the addresses, and a pass that has to be subtracted
+        // from the next reading cannot be read back out of `changed=` in the detail.
+        List<Vector2> changed = new();
         Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
         try
         {
@@ -742,7 +746,7 @@ internal sealed partial class ExecutionManager
             StardewValley.TerrainFeatures.HoeDirt? dirtAfter = location.GetHoeDirtAtTile(tile);
             string after = DescribeSoilFeature(dirtAfter);
             bool tilled = dirtAfter is not null;
-            List<Vector2> changed = AreaToolFootprint.Changed(tilledBefore, AreaToolFootprint.Observe(targetX, targetY, scanTile => location.GetHoeDirtAtTile(scanTile) is not null));
+            changed = AreaToolFootprint.Changed(tilledBefore, AreaToolFootprint.Observe(targetX, targetY, scanTile => location.GetHoeDirtAtTile(scanTile) is not null));
             evidence["location"] = specification.Location;
             evidence["target"] = $"{targetX},{targetY}";
             evidence["before"] = before;
@@ -764,7 +768,7 @@ internal sealed partial class ExecutionManager
             evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
         return this.RememberTerminal(requestId, executionId, state, reasonCode,
-            ToolActionEvidence.Compose(ToolActionEvidence.TillSoil, evidence));
+            ToolActionEvidence.Compose(ToolActionEvidence.TillSoil, evidence), evicted: AreaToolFootprint.Addresses(changed));
     }
 
     /// <summary>

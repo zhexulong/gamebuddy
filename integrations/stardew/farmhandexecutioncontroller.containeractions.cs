@@ -337,7 +337,7 @@ internal sealed partial class ExecutionManager
     /// other kind locks its own field. Both are the lock the vanilla menu path would hold, so a Junimo
     /// chest open in another room is refused as contention instead of being written through.
     /// </summary>
-    private static string? ReadContainerContentionRefusal(Chest chest)
+    internal static string? ReadContainerContentionRefusal(Chest chest)
     {
         NetMutex mutex = chest.GetMutex();
         return ContainerContentionRefusal(mutex.IsLocked(), mutex.IsLockHeld());
@@ -372,7 +372,7 @@ internal sealed partial class ExecutionManager
     /// UI, which the shared admission's non-Modal profiles refuse as a hold before the body runs.
     /// </para>
     /// </summary>
-    private static string? TakeContainerLock(Chest chest, GameLocation location)
+    internal static string? TakeContainerLock(Chest chest, GameLocation location)
     {
         NetMutex mutex = chest.GetMutex();
         bool granted = false;

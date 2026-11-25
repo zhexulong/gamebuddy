@@ -243,6 +243,15 @@ public sealed class ModEntryFixtureBoundaryTests
         // tile it searches for beside that crop (a `Vector2?` helper, so the boundary scanner sees it and it is
         // registered rather than exempted).
         "InitializeNativeLocalPairedCompanionFixture", "FindNativeLocalPairedChestTile",
+        // The paired world's HOST half and its one builder: the row that owns crop+container on the Farm, the publication
+        // of the tile her own process stands on, the verification of the report she writes back, and the builder both
+        // lanes share so the published tile and the warped tile cannot be two searches.
+        "InitializeNativePairedCompanionFixture", "TryVerifyNativePairedCompanionPlacement",
+        "RefuseNativePairedCompanionPlacement", "BuildNativeLocalPairedCompanionWorld",
+        "NativeLocalPairedCompanionWorldLine",
+        // ...and its CLIENT half, which runs in her own process: the engine forbids the Host from moving another farmer
+        // (Farmer.warpFarmer warps Game1.player of the calling process), so the placement is performed where her body is.
+        "TryPlaceNativePairedCompanionFixture", "RefuseNativePairedCompanionStanding",
         "InitializeNativeLocalHarvestFruitTreeFixture",
         "InitializeNativeLocalMachineNavigateAbFixture",
         "InitializeNativeLocalMachinePreconditionFixture",

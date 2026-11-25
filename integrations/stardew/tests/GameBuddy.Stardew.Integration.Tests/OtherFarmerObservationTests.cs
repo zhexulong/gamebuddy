@@ -113,17 +113,40 @@ public sealed class OtherFarmerObservationTests
     }
 
     [Fact]
-    public void AFarmerAcrossTheFarmIsWithheldAndCounted()
+    public void AFarmerTwentyTilesAwayOnTheSameMapIsPublishedWithItsTile()
     {
         using var world = TargetFamilyCompletenessTests.TargetFamilyWorld.Create();
         world.StandAt(2, 2);
-        // Twelve tiles away on the same map: past the Mod's six-tile discovery window, and still a person on this farm.
-        world.PlaceOtherFarmer(OtherFarmerName, x: 14, y: 2, id: OtherFarmerId);
+        // Twenty tiles away on the SAME map: a person waving from across the farm. She is visible to whoever is watching
+        // this screen, and the question this family answers is "who is on my map", which no reach radius answers.
+        world.PlaceOtherFarmer(OtherFarmerName, x: 22, y: 2, id: OtherFarmerId);
+
+        BridgeOtherFarmerTarget row = Single(world, out int omitted);
+
+        row.Name.Should().Be(OtherFarmerName, "a person across the farm is still a person on this farm");
+        row.X.Should().Be(22, "the row carries the tile she is actually standing on, however far that is from the actor");
+        row.Y.Should().Be(2);
+        row.Location.Should().Be(world.Farm.NameOrUniqueName, "and the map it belongs to, which is what the bound is now");
+        omitted.Should().Be(0, "the only other farmer on this map was published");
+    }
+
+    [Fact]
+    public void TheRowBudgetIsTheOnlyCapOnThisMapAndTheRowsPastItAreCounted()
+    {
+        using var world = TargetFamilyCompletenessTests.TargetFamilyWorld.Create();
+        world.StandAt(2, 2);
+        int placed = ExecutionManager.OtherFarmerLimit + 1;
+        for (int index = 0; index < placed; index += 1)
+            world.PlaceOtherFarmer($"Player{index}", x: 3 + index, y: 2, id: OtherFarmerId + index);
 
         IReadOnlyList<BridgeOtherFarmerTarget> rows = world.OtherFarmers(out int omitted);
 
-        rows.Should().BeEmpty("a farmer twelve tiles away is not standing next to her");
-        omitted.Should().Be(1, "and the family says one other farmer was withheld, so `[]` never reads as a lone farmer");
+        // Cardinality boundary (CORRECT): the budget is the family's own `maxItems`, not a window, so the map's players
+        // are all candidates and exactly one row is the one the budget could not carry - the furthest, because the list is
+        // ordered before it is trimmed.
+        rows.Should().HaveCount(ExecutionManager.OtherFarmerLimit, "the cap is the wire's declared row budget");
+        rows.Select(row => row.X).Should().NotContain(3 + placed - 1, "the cap costs the furthest player, never the nearest");
+        omitted.Should().Be(1, "and the row it left out is counted, so the list never reads as the whole map");
     }
 
     [Fact]
@@ -137,7 +160,7 @@ public sealed class OtherFarmerObservationTests
 
         IReadOnlyList<BridgeOtherFarmerTarget> rows = world.OtherFarmers(out int omitted);
 
-        rows.Should().BeEmpty("only the actor's own map is read, exactly as every other radius-bounded family is");
+        rows.Should().BeEmpty("only the actor's own map is read, which is the whole bound this family has");
         omitted.Should().Be(1, "another human player is on no row, so the count is what says they exist");
     }
 
@@ -166,7 +189,7 @@ public sealed class OtherFarmerObservationTests
 
         IReadOnlyList<BridgeOtherFarmerTarget> rows = world.OtherFarmers(out int omitted);
 
-        rows.Should().HaveCount(2, "both farmers are inside the six-tile window");
+        rows.Should().HaveCount(2, "both farmers are on this map");
         rows[0].Name.Should().Be("Near", "the row order is the actor's: nearest first, like every other discovery family");
         omitted.Should().Be(0);
     }
@@ -180,7 +203,7 @@ public sealed class OtherFarmerObservationTests
         out int omitted)
     {
         IReadOnlyList<BridgeOtherFarmerTarget> rows = world.OtherFarmers(out omitted);
-        rows.Should().ContainSingle("the fixture puts exactly one other farmer inside the discovery envelope");
+        rows.Should().ContainSingle("the fixture puts exactly one other farmer on the actor's map");
         return rows[0];
     }
 }

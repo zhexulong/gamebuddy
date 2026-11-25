@@ -214,6 +214,15 @@ public sealed record NativeLocalPlayerFixtureConfig
         // fixture never ships anything and never touches the bin.
         "native_strawberry_covenant_v1",
         "native_rotate_furniture_v1",
+        // THE PAIRED COMPANION WORLD: one ripe crop AND one chest holding one item on the same map, with the actor
+        // already on that map inside the observation's own discovery radius of both. It exists because the paired run
+        // measures S1 (a place to stand beside) and S2 (a container with something in it) on ONE launch, and no
+        // scenario before it carried both halves.
+        "native_paired_companion_v1",
+        // The two deposit Givens: one EMPTY fish tank in the room she is in, one EMPTY pedestal on the Farm, and the one
+        // carried item each action puts into it.
+        "native_put_item_in_fish_tank_v1",
+        "native_place_item_on_pedestal_v1",
         "native_remove_fence_v1",
         "native_play_session_v1",
         // Pure embodied-actor expression actions: Farmer.doEmote / Farmer
@@ -491,13 +500,21 @@ public sealed class HostAutomationConfig
     public string RequireFixtureLiveLocale { get; init; } = string.Empty;
     public bool TriggerNativeSaveAfterClientExit { get; init; }
 
+    /// <summary>
+    /// The Host player's script channel: the fixture telling the Host player where to stand, what to wave and what to
+    /// say, for the two-body slices a one-bridge run cannot produce on its own. Opt-in and fixture-only - see
+    /// <see cref="HostPlayerScriptChannel"/> for why it is a file arm and not a second bridge.
+    /// </summary>
+    public HostPlayerScriptConfig? HostPlayerScript { get; init; }
+
     internal bool IsValid => Enable
         && SaveName.Length is >= 1 and <= 128
         && SaveName.EndsWith("_", StringComparison.Ordinal) is false
         && SaveName.All(character => char.IsLetterOrDigit(character) || character is '_' or '-')
         && (RequireFixtureLiveLocale.Length == 0 || NativeChatPresentationPolicy.IsRequiredLiveLocale(RequireFixtureLiveLocale))
+        && (HostPlayerScript is not { Enable: true } || HostPlayerScript.IsValid)
         && (FixtureScenario.Length == 0 || (SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal)
-            && FixtureScenario is "native_native_farmhand_talk_to_npc_v1" or "native_talk_to_npc_v1" or "farmhand_chat_v1" or "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_interact_npc_with_item_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_jodi_harvest_deliver_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_ride_minecart_v1" or "native_farmhand_talk_to_npc_v1"));
+            && FixtureScenario is "native_native_farmhand_talk_to_npc_v1" or "native_talk_to_npc_v1" or "farmhand_chat_v1" or "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_interact_npc_with_item_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_jodi_harvest_deliver_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1" or "native_water_pet_bowl_v1" or "native_ride_minecart_v1" or "native_farmhand_talk_to_npc_v1" or "native_paired_companion_v1"));
 }
 
 public sealed class FarmhandProvisioningProbeConfig

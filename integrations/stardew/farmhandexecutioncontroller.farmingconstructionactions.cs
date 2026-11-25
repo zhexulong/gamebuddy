@@ -136,17 +136,36 @@ internal sealed partial class ExecutionManager
     /// bought for it. MEASURED `round92`, `plan_534` (30 nodes): the can ran dry at `n21` and `n22`..`n30` each walked to
     /// their tile and were refused `watering_can_empty` - nine walks for one fact the plan knew when it was written. The
     /// body keeps its own check, because a request admitted before the walk may have waited through one.
+    /// <para>
+    /// SHE NAMES THE TILE, THE EXECUTOR NAMES THE CROP. `round99` (`game-1795514126213`): the block she read said `可收的
+    /// 作物 (33,16)` while `cropTargets` published no row for that tile, so the only way to water it was to retype an
+    /// identity nothing on the page carried. The intent - THIS tile - is hers and stays in the request; the identity is
+    /// read from the LIVE tile when the gate opens, because that is the only reading that can be true when she swings.
     /// </para>
     /// </summary>
-    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs) =>
-        this.RequestLocalTileTarget(
+    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
+    {
+        // Read ONCE, before the gate can mint: it is the receipt's `targetId_source`, and an absent request must not start
+        // reporting itself as the caller's after the body answered for it.
+        bool resolvedAtExecution = string.IsNullOrWhiteSpace(expectedTargetId);
+        return this.RequestLocalTileTarget(
             "water_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: location => DescribeWaterCropRefusal(location, targetX, targetY, expectedTargetId, out _)
-                ?? DescribeEmptyWateringCanRefusal(),
+            gate: location =>
+            {
+                if (resolvedAtExecution)
+                {
+                    if (!TryMintTileTargetAtExecution("water_crop", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return unnamed;
+                    expectedTargetId = minted;
+                }
+                return DescribeWaterCropRefusal(location, targetX, targetY, expectedTargetId, out _)
+                    ?? DescribeEmptyWateringCanRefusal();
+            },
             inReach: IsCropTargetInRange,
-            execute: (executionId, admittedRequestId) => this.ExecuteWaterCrop(executionId, admittedRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs));
+            execute: (executionId, admittedRequestId) => this.ExecuteWaterCrop(executionId, admittedRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs, resolvedAtExecution));
+    }
 
     /// <summary>
     /// What makes the can this action will swing unable to water, asked WITHOUT selecting it - the selection belongs to the
@@ -199,12 +218,17 @@ internal sealed partial class ExecutionManager
             return new TileTargetRefusal("crop_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropNeedsNoWater}");
         if (dirt.isWatered())
             return new TileTargetRefusal("crop_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropAlreadyWatered}");
-        return string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal)
+        // A CALLER'S ID IS COMPARED, AND BOTH SIDES ARE PRINTED. An id she sent is a claim about which crop is on this
+        // tile, and a tile that now holds a different one is `water_crop_target_changed:<expected>:<found>` - the reading a
+        // caller acts on by re-observing, rather than a code that says only that something was wrong (`round99`'s scope:
+        // intent from her, identity from the executor, and the receipt states which half answered).
+        string liveTargetId = BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value);
+        return string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal)
             ? null
-            : new TileTargetRefusal("crop_target_changed", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+            : new TileTargetRefusal($"water_crop_target_changed:{expectedTargetId}:{liveTargetId}", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged};expected={expectedTargetId};found={liveTargetId}");
     }
 
-    private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs, bool resolvedAtExecution)
     {
         StardewValley.GameLocation location = Game1.player.currentLocation;
         // THE SAME PREDICATE THE GATE ASKED. This body runs after a walk the request was admitted for, so the world has
@@ -251,6 +275,10 @@ internal sealed partial class ExecutionManager
             List<Vector2> changed = AreaToolFootprint.Changed(wateredBefore, AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is { } scanDirt && scanDirt.isWatered()));
             bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
             evidence["location"] = specification.Location;
+            // WHICH HALF ANSWERED FOR THE CROP THIS RECEIPT WATERED, and the family it belongs to: `target=` above names the
+            // identity, and this pair says whether she supplied it or the body minted it from the live tile.
+            evidence["targetId_source"] = TargetIdSource(resolvedAtExecution);
+            evidence["targetId_kind"] = TargetIdKind("water_crop");
             evidence["target"] = expectedTargetId;
             evidence["tile"] = $"{targetX.ToString(CultureInfo.InvariantCulture)},{targetY.ToString(CultureInfo.InvariantCulture)}";
             evidence["before_watered"] = beforeWatered.ToString().ToLowerInvariant();
@@ -281,14 +309,29 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>Native crop harvest limited to ready, ordinary Grab crops.</summary>
-    public LocalExecutionReceipt RequestLocalHarvestCrop(string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs) =>
-        this.RequestLocalTileTarget(
+    public LocalExecutionReceipt RequestLocalHarvestCrop(string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        // THE SAME SWAP AS `water_crop`'s: the tile is her intent, the identity is the executor's answer. Measured
+        // `round99`: `harvestTargets` was `[]` while the block named a ripe crop nine to thirty-five tiles away, so a
+        // plan that walked there first then harvested had no id to carry and could not be written at all.
+        bool resolvedAtExecution = string.IsNullOrWhiteSpace(expectedTargetId);
+        return this.RequestLocalTileTarget(
             "harvest_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: location => DescribeHarvestCropRefusal(location, targetX, targetY, expectedTargetId, out _, out _),
+            gate: location =>
+            {
+                if (resolvedAtExecution)
+                {
+                    if (!TryMintTileTargetAtExecution("harvest_crop", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return unnamed;
+                    expectedTargetId = minted;
+                }
+                return DescribeHarvestCropRefusal(location, targetX, targetY, expectedTargetId, out _, out _);
+            },
             inReach: IsCropTargetInRange,
-            execute: (executionId, admittedRequestId) => this.ExecuteHarvestCrop(executionId, admittedRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs));
+            execute: (executionId, admittedRequestId) => this.ExecuteHarvestCrop(executionId, admittedRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs, resolvedAtExecution));
+    }
 
     /// <summary>
     /// What makes this tile a place the actor can harvest: a living crop, ready, that the engine harvests by hand, and
@@ -314,12 +357,15 @@ internal sealed partial class ExecutionManager
             return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropNotReady}");
         if (crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
             return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.HarvestMethodNotGrab}");
-        return string.Equals(BuildCropTargetId(location, targetX, targetY, crop.netSeedIndex.Value, crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal)
+        // THE SAME TWO SIDES AS `water_crop`: a stated id names a particular crop, and a tile that now holds another one is
+        // `harvest_crop_target_changed:<expected>:<found>` - the repair is to look again, not to retry this address.
+        string liveTargetId = BuildCropTargetId(location, targetX, targetY, crop.netSeedIndex.Value, crop.indexOfHarvest.Value);
+        return string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal)
             ? null
-            : new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+            : new TileTargetRefusal($"harvest_crop_target_changed:{expectedTargetId}:{liveTargetId}", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged};expected={expectedTargetId};found={liveTargetId}");
     }
 
-    private LocalExecutionReceipt ExecuteHarvestCrop(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteHarvestCrop(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs, bool resolvedAtExecution)
     {
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -437,7 +483,7 @@ internal sealed partial class ExecutionManager
     ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
     string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
     return this.RememberTerminal(requestId, executionId, state, reasonCode,
-        $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
+        $"location={specification.Location};target={expectedTargetId};{DescribeTargetIdentity("harvest_crop", resolvedAtExecution)};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
     }
 
     /// <summary>

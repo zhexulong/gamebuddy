@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
@@ -76,6 +77,7 @@ public sealed class SettlementChoreSeamTests
             "tile=60,9;target=60,9;arrival=exact;path=stardew_native");
         approach.Evidence.Should().NotContain(
             "chore=", "a step that has not settled has consumed nothing, so it may not name a family");
+        approach.Chore.Should().BeNull("and the typed field is the same statement, held to the same rule");
 
         LocalExecutionReceipt settled = seam.Settle(
             "req_harvest",
@@ -96,8 +98,17 @@ public sealed class SettlementChoreSeamTests
         wire.Should().Be(settled.Evidence, "the wire detail IS the receipt's evidence, projected one-to-one");
         wire.Should().Contain("chore=harvestTargets", "this is the string round71 did not contain");
 
+        // AND THE SAME FAMILY IS A FIELD OF ITS OWN, because a reader that has to find it inside that string can only be
+        // wrong silently: this is the value `fact-brief.ts` reads to say what is LEFT of the chore, and it is the field
+        // the clause above was spelled from - one value, two forms, never two answers.
+        settled.Chore.Should().Be("harvestTargets", "the terminal's typed field names the family its work consumed");
+        seam.WireChore(settled).Should().Be(settled.Chore, "the wire carries the same family beside the detail");
+        wire.Should().Contain($"{FarmhandActionCatalog.ChoreClause(settled.Chore)}",
+            "the clause and the field are spelled from one family value");
+
         // AND THE DURABLE READING AGREES: a replay, an exact receipt query and a held request all answer with this.
         seam.Stored("req_harvest").Evidence.Should().Be(settled.Evidence);
+        seam.Stored("req_harvest").Chore.Should().Be(settled.Chore);
     }
 
     /// <summary>
@@ -122,12 +133,15 @@ public sealed class SettlementChoreSeamTests
             seam.Settle(requestId, executionId, ExecutionState.Succeeded, "settled", "observed=1");
 
             string? evidence = seam.Stored(requestId).Evidence;
-            string? expected = FarmhandActionCatalog.ChoreClause(FarmhandActionCatalog.ChoreFamilyOf(registration.ActionId));
+            string? expectedFamily = FarmhandActionCatalog.ChoreFamilyOf(registration.ActionId);
+            string? expected = FarmhandActionCatalog.ChoreClause(expectedFamily);
             if (expected is null)
             {
                 silent++;
                 if (!string.Equals(evidence, "observed=1", StringComparison.Ordinal))
                     findings.Add($"{registration.ActionId}: finishes no chore but its settlement says '{evidence}'");
+                if (seam.Stored(requestId).Chore is not null)
+                    findings.Add($"{registration.ActionId}: finishes no chore but its typed field names one");
                 continue;
             }
 
@@ -135,6 +149,11 @@ public sealed class SettlementChoreSeamTests
             string wanted = $"observed=1;{expected}";
             if (!string.Equals(evidence, wanted, StringComparison.Ordinal))
                 findings.Add($"{registration.ActionId}: expected '{wanted}', settlement says '{evidence}'");
+            // AND THE TYPED FIELD IS THE SAME FAMILY THE CLAUSE NAMES, for every consuming registration - the two forms
+            // are minted from one value, so an action whose clause and field disagreed fails here by name.
+            if (!string.Equals(seam.Stored(requestId).Chore, expectedFamily, StringComparison.Ordinal))
+                findings.Add(
+                    $"{registration.ActionId}: the clause names {expectedFamily} and the field names {seam.Stored(requestId).Chore}");
         }
 
         string report =
@@ -146,7 +165,7 @@ public sealed class SettlementChoreSeamTests
 
     /// <summary>
     /// The clause is SPELLED in exactly one function, and that function is called from the two seams that write it and
-    /// nowhere else - the settlement funnel and a pass's own verdict line. A third call site is a copy.
+    /// nowhere else - the settlement funnel and a pass's own verdict line.
     /// </summary>
     [Fact]
     public void TheClauseIsSpelledOnceAndOnlyWhereItIsWritten()
@@ -171,10 +190,10 @@ public sealed class SettlementChoreSeamTests
         }
 
         string report = $"files examined {examined} · declarations {declarations.Count} · call sites {callSites.Count}";
-        declarations.Should().HaveCount(1, $"{report} - the clause must have exactly one declaration (the catalogue's)");
+        declarations.Should().HaveCount(1, $"{report} - the clause must have exactly one spelling (the catalogue's)");
         callSites.Should().HaveCount(
             2,
-            $"{report} - two seams write the clause: the settlement funnel and a pass's verdict line. A third is a copy");
+            $"{report} - the two forms have two seams: the settlement funnel and a pass's verdict line. A third is a copy");
 
         string funnelFile = ControllerPartials.DeclaringFile("RememberTerminal");
         callSites.Should().Contain(
@@ -182,15 +201,16 @@ public sealed class SettlementChoreSeamTests
             $"the settlement's clause is written at the funnel every terminal's evidence is composed at (`{funnelFile}`)");
         callSites.Should().Contain(
             site => site.StartsWith("RouteReenteringBodyProgramExecutor.cs:", StringComparison.Ordinal),
-            "and the other seam is a pass's verdict line, which states the same family after a `:`");
+            "and the other form belongs to the pass seam, which states the same family after a `:`");
 
         string funnel = Body(ControllerPartials.Read(funnelFile), FunnelDeclaration);
-        funnel.Should().Contain("ChoreClause(choreFamily)", "the funnel spells the clause from its one family value");
+        funnel.Should().Contain("ChoreFamilyOf(", "the funnel takes the family as ONE value, which the typed field carries");
+        funnel.Should().Contain("Chore: choreFamily", "and the receipt carries that same value as its typed field");
         funnel.Should().Contain("state.IsTerminal()", "a settlement names the family; a step that has not settled does not");
 
-        // AND NOBODY SPELLS THE FIELD BY HAND. The token is derived from `FarmhandActionCatalog.ChoreField` at exactly
-        // two places - the clause and a pass line's suffix - so a literal `chore=` anywhere else is a third spelling the
-        // reader parses identically and no comparison would ever catch.
+        // AND NOBODY SPELLS THE FIELD BY HAND. The token is derived from `FarmhandActionCatalog.ChoreField` in exactly two
+        // functions - the clause and a pass line's suffix - so a literal `chore=` anywhere else is a second spelling the
+        // reader would parse identically and no comparison would ever catch.
         var spelled = new List<string>();
         foreach ((string file, string source) in production)
         {
@@ -206,6 +226,38 @@ public sealed class SettlementChoreSeamTests
 
         spelled.Should().BeEmpty(
             $"{report} - the clause's field is derived from the catalogue's `ChoreField`, never written out");
+    }
+
+    /// <summary>
+    /// A PASS names the family its rows finished ONCE, and writes that one value to both of its forms.
+    ///
+    /// <para>
+    /// The aggregation is genuinely different from a single action's (`PassChoreFamily` reads the rows, because a pass can
+    /// address several actions and only an agreement among them is a chore), so it is a second function by necessity - and
+    /// the two forms it feeds must still come from ONE call to it. A second read of `PassChoreFamily` is how a clause and a
+    /// field come to name different families.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void APassWritesOneFamilyValueToBothOfItsForms()
+    {
+        const string executor = "src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs";
+        string source = File.ReadAllText(Path.Combine(RepositoryRoot(), "integrations", "stardew", executor));
+        string pass = source[source.IndexOf("private BodyProgramTerminalResult? ExecuteForEach(", StringComparison.Ordinal)..];
+
+        Regex.Matches(pass, @"PassChoreFamily\s*\(").Count.Should().Be(
+            1, "the pass reads its one family value ONCE and hands it to both forms");
+        Regex.Matches(pass, @"ChoreSuffix\s*\(choreFamily\)").Count.Should().BeGreaterThan(
+            1, "every settled pass line carries the clause for that same value");
+        Regex.Matches(pass, @"Chore = choreFamily").Count.Should().Be(
+            Regex.Matches(pass, @"ChoreSuffix\s*\(choreFamily\)").Count,
+            "every pass terminal that writes a clause also carries the same family as its typed field");
+
+        // AND THE PASS SEAM'S SPELLING IS THE CATALOGUE'S, never its own: `:chore=<family>` is one separator plus the
+        // clause every other writer spells.
+        RouteReenteringBodyProgramExecutor.ChoreSuffix("harvestTargets")
+            .Should().Be($":{FarmhandActionCatalog.ChoreClause("harvestTargets")}");
+        RouteReenteringBodyProgramExecutor.ChoreSuffix(null).Should().BeEmpty("a pass that finished no chore states none");
     }
 
     /// <summary>
@@ -295,6 +347,18 @@ public sealed class SettlementChoreSeamTests
             if (!payload.TryGetProperty("evidence", out JsonElement evidence) || evidence.ValueKind != JsonValueKind.Object)
                 return null;
             return evidence.TryGetProperty("detail", out JsonElement detail) ? detail.GetString() : null;
+        }
+
+        /// <summary>The settlement's `evidence.chore` as the wire carries it: the typed family, or null when it named none.</summary>
+        internal string? WireChore(LocalExecutionReceipt receipt)
+        {
+            this.session.TryCreateReceiptEvent(1, receipt, out string json).Should().BeTrue(
+                $"the receipt for {receipt.RequestId} must project onto the wire");
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement payload = document.RootElement.GetProperty("payload");
+            if (!payload.TryGetProperty("evidence", out JsonElement evidence) || evidence.ValueKind != JsonValueKind.Object)
+                return null;
+            return evidence.TryGetProperty("chore", out JsonElement chore) ? chore.GetString() : null;
         }
     }
 

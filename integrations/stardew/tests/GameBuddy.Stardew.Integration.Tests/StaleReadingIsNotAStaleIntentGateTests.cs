@@ -180,7 +180,7 @@ public sealed class StaleReadingIsNotAStaleIntentGateTests
             : reasonCode;
         bool refusedForTheReading = !dispatched && string.Equals(reasonCode, "stale_snapshot", StringComparison.Ordinal);
         bool reachedItsHandler = dispatched && response is not null;
-        string? evidence = response?.Payload.Evidence is { } detail && detail.TryGetValue("detail", out string? sentence) ? sentence : null;
+        string? evidence = response?.Payload.Evidence is { } detail && detail.TryGetValue("detail", out object? sentence) ? sentence as string : null;
         return new StaleDrive(actionId, expectsAWorldChange, refusedForTheReading, reachedItsHandler, answer, evidence);
     }
 
@@ -248,7 +248,7 @@ public sealed class StaleReadingIsNotAStaleIntentGateTests
 
         /// <summary>The one evidence sentence the wire carries, or null when the receipt carried none.</summary>
         internal static string? Sentence(BridgeReceipt receipt) =>
-            receipt.Evidence is { } detail && detail.TryGetValue("detail", out string? sentence) ? sentence : null;
+            receipt.Evidence is { } detail && detail.TryGetValue("detail", out object? sentence) ? sentence as string : null;
 
         private BridgeEnvelope<BridgeHello> Hello() => new(
             BridgeProtocol.Version,

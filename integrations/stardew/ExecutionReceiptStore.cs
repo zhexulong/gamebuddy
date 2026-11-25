@@ -29,6 +29,17 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     private readonly Dictionary<string, LocalExecutionReceipt> receiptsByRequestId = new(StringComparer.Ordinal);
     /** Same bounded lifetime as receipts; the action identity is ledger-owned, not bridge cache state. */
     private readonly Dictionary<string, string> actionIdsByRequestId = new(StringComparer.Ordinal);
+    /// <summary>
+    /// The address a request NAMED, recorded by the seam that dispatches it, so the terminal funnel can prove it gone
+    /// without reading it back out of the receipt's prose.
+    ///
+    /// <para>
+    /// It lives here rather than on the receipt because the fact is about the REQUEST and the receipt is minted up to a
+    /// whole walk later, by a body that never saw the caller's argument. Same bounded lifetime as the receipt: the eviction
+    /// below removes it with the rest of that request's one record.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<string, string> addressedTargetsByRequestId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> executionIdsByRequestId = new(StringComparer.Ordinal);
     private readonly Queue<string> receiptOrder = new();
     // An execution may have several native completion observations, but it announces its single post-release idle
@@ -114,6 +125,7 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
                 this.receiptsByRequestId.Remove(evictedRequestId);
                 this.actionIdsByRequestId.Remove(evictedRequestId);
                 this.executionIdsByRequestId.Remove(evictedRequestId);
+                this.addressedTargetsByRequestId.Remove(evictedRequestId);
             }
         }
 
@@ -230,6 +242,24 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
 
     /// <summary>Returns the action identity captured on the game-thread dispatch lineage.</summary>
     internal bool TryGetActionId(string requestId, out string actionId) => this.actionIdsByRequestId.TryGetValue(requestId, out actionId!);
+
+    /// <summary>
+    /// Records the address this request named, so the funnel can say whether its terminal proved that address gone.
+    ///
+    /// <para>
+    /// One writer per dispatch, called from the seam that already carries the caller's <c>expectedTargetId</c>. Nothing is
+    /// derived from it: the record states WHICH ADDRESS was asked about, and the funnel decides what the terminal proved
+    /// about that address from the Mod's own declarations (`FarmhandActionCatalog.ChoreFamilyOf` and the `_gone` word).
+    /// </para>
+    /// </summary>
+    internal void RecordAddressedTarget(string requestId, string targetId)
+    {
+        if (targetId.Length > 0) this.addressedTargetsByRequestId[requestId] = targetId;
+    }
+
+    /// <summary>The address this request named, or false when it named none (a resolve-at-execution request, a movement).</summary>
+    internal bool TryGetAddressedTarget(string requestId, out string targetId) =>
+        this.addressedTargetsByRequestId.TryGetValue(requestId, out targetId!);
 
     public bool TryGetBoundExecutionId(string requestId, out string executionId) =>
         this.executionIdsByRequestId.TryGetValue(requestId, out executionId!);

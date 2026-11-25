@@ -94,6 +94,10 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
             expectedTargetId = minted;
         }
+        // THE ADDRESS THIS REQUEST NAMED, recorded once the mint has settled it: the terminal is minted after a possible
+        // walk, by a body that never saw the caller's argument, and the funnel reads it here to decide what that terminal
+        // proved (an opaque row id would otherwise have to be parsed back out of the receipt's prose).
+        this.ledger.RecordAddressedTarget(requestId, expectedTargetId);
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
             return this.TryBeginToolApproach(
                 requestId,
@@ -229,6 +233,9 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
             expectedTargetId = minted;
         }
+        // THE ADDRESS THIS REQUEST NAMED. `pickup_item` does not use the shared tile-target seam (its walk is the magnet's
+        // own rectangle, see below), so it records the address here - the funnel is what turns it into the typed proof.
+        this.ledger.RecordAddressedTarget(requestId, expectedTargetId);
         (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target =
             FindItemTarget(location, expectedTargetId, expectedQualifiedItemId);
         if (target is null)

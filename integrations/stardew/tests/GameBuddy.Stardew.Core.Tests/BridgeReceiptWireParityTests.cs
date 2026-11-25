@@ -41,7 +41,7 @@ public sealed class BridgeReceiptWireParityTests
             "rejected",
             "world_not_ready",
             1,
-            new Dictionary<string, string> { ["detail"] = "machine=target;slot=none" },
+            new Dictionary<string, object?> { ["detail"] = "machine=target;slot=none" },
             new BridgeExecutionOrigin("programme", "plan_0001", "n02"),
             new BridgeLocalObservation("Farm", 1, 2, 0, "0600", false, 7),
             new ObserveSceneResultPayload(

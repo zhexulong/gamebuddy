@@ -119,7 +119,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// A PASS IS NOT A SETTLEMENT OF ONE ACTION: its rows may name different actions, so the family it finished is the
     /// aggregation <see cref="PassChoreFamily"/> derives and not any one row's declaration. The clause a single settled
     /// action owes the reader is minted elsewhere and only once - where the receipt's `evidence.detail` is composed
-    /// (<see cref="FarmhandActionCatalog.ChoreClause"/>).
+    /// (<see cref="FarmhandActionCatalog.ChoreEntry"/>).
     /// </para>
     /// </summary>
     internal static string ChoreSuffix(string? family) =>
@@ -423,7 +423,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
         // THE CLAUSE IS NOT RESTATED HERE. `receipt.Evidence` below already carries `chore=<family>` for an
         // action whose work consumes a family, minted where that string is composed for every terminal
-        // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreClause`), and this postcondition is
+        // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreEntry`), and this postcondition is
         // a journal field rather than the settlement a reader receives. Minted here as well it was a second
         // spelling on a seam nobody's `evidence.detail` reaches - measured `round71`, three harvested crops and
         // no `chore=` in the log.
@@ -436,6 +436,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}")
         {
             Chore = receipt.Chore,
+            // The addresses this receipt proved out of the reading, typed. Carried here because the receipt itself is folded
+            // into the settlement rather than published: without this the proof would stop at a frame nobody receives and
+            // every programme's row subtraction would go silent (`round80`: 54 `soil_already_tilled` in eighteen minutes).
+            Evicted = receipt.Evicted,
         };
     }
 
@@ -588,6 +592,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         // as the typed field beside it. A second read of `PassChoreFamily` is how a clause and a field came to name
         // different families.
         string? choreFamily = PassChoreFamily(pass);
+        // THE ROWS' OWN PROOFS, UNIONED INTO THE NODE'S. A pass settles sixty rows as ONE node and the single shape a
+        // settlement delivers is that node, so a row's typed address reaches her only if it is gathered here - in the order
+        // the rows ran, with no duplicates, because two rows that named one address named one address.
+        IReadOnlyList<string>? evicted = PassEvicted(pass);
         // A PARTIAL PASS IS NOT A POLITE SUCCESS. It carries the proof of the rows that did happen (the same aggregate a
         // full pass carries, whose `state` says which verdict this is) AND the dominant reason plus the counts for the
         // rows that did not, in the same two fields a failed pass uses. That is the whole answer the caller needs: what
@@ -607,6 +615,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 Hint = FailureHint(pass),
                 RefusalDetail = BodyProgramValidation.BoundRefusalDetail(FailureDetail(pass)),
                 Chore = choreFamily,
+                Evicted = evicted,
             };
         return new BodyProgramTerminalResult(
             execution,
@@ -619,7 +628,24 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}{ChoreSuffix(choreFamily)}")
         {
             Chore = choreFamily,
+            Evicted = evicted,
         };
+    }
+
+    /// <summary>
+    /// The addresses one pass's rows proved out of the reading, in the order the rows ran and without duplicates.
+    ///
+    /// A row that proved nothing contributes nothing - a refused row that answered `_gone` carries the address itself, so
+    /// this is a union of what the rows said rather than a rule about which rows count.
+    /// </summary>
+    private static IReadOnlyList<string>? PassEvicted(FarmhandForEachPassResult pass)
+    {
+        List<string> addresses = new();
+        foreach (FarmhandForEachTargetResult row in pass.Targets)
+            if (row.Evicted is { } claimed)
+                foreach (string address in claimed)
+                    if (!addresses.Contains(address, StringComparer.Ordinal)) addresses.Add(address);
+        return addresses.Count == 0 ? null : Array.AsReadOnly(addresses.ToArray());
     }
 
     /// <summary>
