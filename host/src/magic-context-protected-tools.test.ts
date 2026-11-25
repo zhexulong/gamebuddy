@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { STARDEW_PLAN_WORK_TOOL_NAME } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import { createStardewKnowledgeTools } from "./knowledge.js";
@@ -84,6 +85,7 @@ function registeredGameToolNames(): readonly string[] {
   const connection = stardewConnection();
   return [
     createCompanionStatusTool().name,
+    STARDEW_PLAN_WORK_TOOL_NAME,
     ...createStardewObservationTools(connection).map((tool) => tool.name),
     ...createStardewKnowledgeTools(connection).map((tool) => tool.name),
     ...createWorldBookTools({ metadata: worldBookMetadata(book), book }, undefined).map((tool) => tool.name),

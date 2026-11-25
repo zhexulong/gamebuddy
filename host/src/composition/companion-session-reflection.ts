@@ -20,8 +20,8 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { resolveRuntimePaths } from "../runtime-identity.js";
 import { type RuntimeMagicContextRoot, withRuntimeMagicContextRoot } from "../runtime-core.internal.js";
+import { resolveRuntimePaths } from "../runtime-identity.js";
 
 /**
  * The shape this module relies on from the vendored package's `./dreamer` entry.
@@ -34,7 +34,10 @@ import { type RuntimeMagicContextRoot, withRuntimeMagicContextRoot } from "../ru
  */
 interface DreamerSubpath {
   openRuntimeDatabase: () => {
-    prepare: (sql: string) => { get: (...params: unknown[]) => unknown };
+    prepare: (sql: string) => {
+      get: (...params: unknown[]) => unknown;
+      all: (...params: unknown[]) => unknown[];
+    };
   } | null;
   loadPiConfig: (options: Readonly<{ cwd: string }>) => Readonly<{ config: unknown }>;
   dreamerRunConfig: (config: unknown, fallback: unknown) => unknown;
@@ -189,11 +192,25 @@ async function planAgainstRuntimeStore(root: RuntimeMagicContextRoot): Promise<C
   if (typeof projectIdentity !== "string" || projectIdentity.length === 0)
     return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
 
-  // Nothing to reflect on yet: the compartment stream is what a reflection reads, and the historian's first fold
-  // is what creates it.
+  // Reflect on either folded compartments OR meaningful raw user turns recorded in
+  // short sessions that exited/slept before hitting Historian's fold threshold.
   const compartments = db.prepare("SELECT COUNT(*) AS n FROM compartments").get() as { n?: number } | undefined;
-  if ((compartments?.n ?? 0) === 0)
-    return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
+  if ((compartments?.n ?? 0) === 0) {
+    const userMessages = db
+      .prepare("SELECT content FROM message_history_fts WHERE role = 'user' LIMIT 50")
+      .all() as Array<{ content?: unknown }>;
+    const hasMeaningfulDialogue = userMessages.some((row) => {
+      if (typeof row.content !== "string") return false;
+      const cleaned = row.content
+        .replace(
+          /<(world-state|world-facts|execution-result|memory-recall|ctx-search-hint|system-reminder)>[\s\S]*?<\/\1>/gi,
+          "",
+        )
+        .trim();
+      return cleaned.length >= 4;
+    });
+    if (!hasMeaningfulDialogue) return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
+  }
 
   const loaded = dreamer.loadPiConfig({ cwd: root.runtimeCwd });
   const registrationOwner = {};

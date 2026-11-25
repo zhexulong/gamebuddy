@@ -363,8 +363,8 @@ function createBodyProgramTools(
     submitTool(),
     Object.freeze(
       defineTool({
-        name: "stardew_plan_work",
-        label: "stardew_plan_work",
+        name: STARDEW_PLAN_WORK_TOOL_NAME,
+        label: STARDEW_PLAN_WORK_TOOL_NAME,
         // The unit the 2026-10-21 measurement asked for (see `stardew_submit_action_program`): one model round-trip
         // per PIECE OF WORK, not per step. A plan script is how the companion says "all of it, in this order" without
         // paying a decision between steps; it is compiled here and submitted as ONE program, so the Mod's journal,
@@ -898,6 +898,7 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
 }
 
 /** How many of the Mod's diagnostics a refusal repeats; its wire bound allows 64, a plan answer is re-read every turn. */
+export const STARDEW_PLAN_WORK_TOOL_NAME = "stardew_plan_work";
 export const MAX_PLAN_VERIFICATION_DIAGNOSTICS = 8;
 
 /** How much of one diagnostic's own text a refusal repeats before the cut is marked. */

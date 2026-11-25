@@ -674,7 +674,7 @@ test("AIRP host-vendor boundary: written magic-context config, protected tools, 
     assert.equal(config.temporal_awareness, false);
     assert.deepEqual(config.protected_tools, GAMEBUDDY_PROTECTED_TOOLS);
 
-    // ADR-0014 Host projection holds on ctx_search & ctx_expand mounted on Game surface.
+    // ADR-0014 Host projection holds on ctx_search, ctx_expand, ctx_memory, ctx_note, and ctx_reduce mounted on Game surface.
     const mountedToolsByName = new Map(runtime.session.agent.state.tools.map((tool) => [tool.name, tool]));
     for (const [toolName, expected] of Object.entries(COMPANION_ARCHIVE_TOOL_DESCRIPTIONS)) {
       const mounted = mountedToolsByName.get(toolName);
@@ -686,6 +686,14 @@ test("AIRP host-vendor boundary: written magic-context config, protected tools, 
       );
       assert.equal(projected.description, expected.description);
     }
+
+    // WP-A Domain alignment: ctx_memory admits only ongoing-interaction categories; ctx_search omits git_commit.
+    const ctxMemoryParams = JSON.stringify(mountedToolsByName.get("ctx_memory")?.parameters ?? {});
+    assert.match(ctxMemoryParams, /SEMANTIC_MEMORY/);
+    assert.match(ctxMemoryParams, /INTERACTION_EPISODE/);
+    assert.doesNotMatch(ctxMemoryParams, /PROJECT_RULES/);
+    const ctxSearchParams = JSON.stringify(mountedToolsByName.get("ctx_search")?.parameters ?? {});
+    assert.doesNotMatch(ctxSearchParams, /git_commit/);
   } finally {
     disposeRuntimeBestEffort(runtime);
   }

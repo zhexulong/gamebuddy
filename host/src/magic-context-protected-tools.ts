@@ -22,6 +22,7 @@
  */
 export const GAMEBUDDY_PROTECTED_TOOLS: Readonly<Record<string, number>> = Object.freeze({
   stardew_observe: 1,
+  stardew_plan_work: 1,
   stardew_read_scene: 1,
   stardew_find_destination: 1,
   stardew_inspect_world_map: 1,

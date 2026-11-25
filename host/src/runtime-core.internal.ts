@@ -24,6 +24,7 @@ import { keepsOwnToolOnPlanSurface } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 import { projectArchiveToolDescription } from "./companion-archive-tool-descriptions.js";
 import type { CompanionInterruption } from "./companion-interruption.js";
+import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
@@ -35,8 +36,8 @@ import {
   type GameIntegrationAdapter,
   type IntegrationActionPolicy,
 } from "./game-integration-adapter.js";
-import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
 import {
   assertProfileMatchesBinding,
   createIdentityProfileBinding,
@@ -49,7 +50,6 @@ import {
   writeIdentityProfile,
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
-import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import { magicContextContentLanguage } from "./magic-context-content-language.js";
 import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
@@ -93,19 +93,19 @@ import {
   readGameSessionPreset,
   renderPresetMainSegment,
 } from "./tavern/preset-game-session.js";
+import type { MacroContext } from "./tavern/preset-macros.js";
+import {
+  boundPresetSampling,
+  type PresetThreadSources,
+  presetRequestMacros,
+  presetRequestMarkers,
+  publishPresetRequestSegments,
+} from "./tavern/preset-request-segments.js";
 import {
   type PresetSamplingValues,
   withPlayerSamplingTemperature,
   withPresetSampling,
 } from "./tavern/preset-sampling.js";
-import {
-  boundPresetSampling,
-  presetRequestMacros,
-  presetRequestMarkers,
-  publishPresetRequestSegments,
-  type PresetThreadSources,
-} from "./tavern/preset-request-segments.js";
-import type { MacroContext } from "./tavern/preset-macros.js";
 import { createPresetStore } from "./tavern/preset-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
@@ -199,39 +199,10 @@ function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
   };
 }
 
-/**
- * Magic Context v0.33.0 auto-search searches raw history by the current Pi
- * session ID, not by GameBuddy's continuity ID. Its only cross-session path is
- * project memory, which deliberately remains outside the approved product
- * scope. Do not enable it as a Chat/Game recall substitute.
- */
-export const MAGIC_CONTEXT_RECALL_ENABLED = false;
+export const MAGIC_CONTEXT_RECALL_ENABLED = true;
 
-/**
- * First approved ongoing-interaction gate: native read-only rendering of
- * existing same-opaque-runtime Semantic Memory. This does not grant Host
- * write/read access. Magic Context's native promotion and automatic embedded
- * Historian authoring gates are selected below; auto-search, embedding,
- * Dreamer, and Sidekick stay off.
- */
 export const MAGIC_CONTEXT_MEMORY_ENABLED = true;
-// Magic Context's own ongoing-interaction Historian can publish eligible
-// Semantic facts when it is enabled. The Host never classifies or writes them.
-//
-// Off as a rollout gate, not by accident - reopening it was an explicit owner
-// decision (P7 of the Player-Managed Interaction Memory plan) and that decision
-// is still open. Keep it off, but do not expect flipping it to fill the Memory
-// notebook: promotion runs only inside a historian fold publish, over an
-// *anchored* compartment range, and the fold fires at 65% of the model's usable
-// window (measured: a five-turn run sat at 0.38% of a 750,000-token window with
-// `times_execute_threshold_reached = 0`). No ordinary conversation reaches it, so
-// the notebook's copy names the route that exists - the player asking her to keep
-// something - and claims no automatic accumulation.
-export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false;
-/**
- * Magic Context's native trigger may now run the embedded-SDK, no-tool
- * Historian when its own context-pressure policy requires organization.
- */
+export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = true;
 export const MAGIC_CONTEXT_HISTORIAN_ENABLED = true;
 
 /**
@@ -1116,6 +1087,7 @@ export async function createRuntimeWithFixedToolsCore(
               "verify-broad": { schedule: "" },
               "compress-cues": { schedule: "" },
               retrospective: { schedule: "" },
+              reflect: { schedule: "" },
               "maintain-docs": { schedule: "" },
               "evaluate-smart-notes": { schedule: "" },
               "review-user-memories": { schedule: "" },

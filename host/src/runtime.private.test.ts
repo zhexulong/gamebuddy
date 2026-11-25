@@ -1,17 +1,11 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readdir, realpath, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { before } from "node:test";
-import { createServer, type Server, type Socket } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  AUTHORED_CONTEXT_REGISTRY_SLOT_KEY,
-  authoredContextCatalogFixture,
-  readAuthoredContextRegistry,
-} from "./test-support/authored-context-catalog.test-support.js";
-
 import {
   hasRuntimeEnvironmentFactsProvider,
   injectRuntimeEnvironmentFacts,
@@ -21,11 +15,15 @@ import {
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { composeFactBrief } from "./fact-brief.js";
-import { formatGameEnvironmentFacts } from "./game-world-vocabulary.js";
-import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
-import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
+import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
+import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
+import { formatGameEnvironmentFacts } from "./game-world-vocabulary.js";
+import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import type { IntegrationLaunchHandle } from "./integration-launcher.js";
 import type { KnowledgeBundle } from "./knowledge.js";
+import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { ActionRegistration, ExecutionReceipt, Scope, Snapshot } from "./protocol.js";
 import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
@@ -41,16 +39,17 @@ import {
   MAGIC_CONTEXT_MEMORY_DOMAIN,
   MAGIC_CONTEXT_MEMORY_ENABLED,
   MAGIC_CONTEXT_RECALL_ENABLED,
+  RUNTIME_PACKAGE_VERSIONS,
   resolveMagicContextExtensionEntry,
   resolveRuntimePaths,
-  RUNTIME_PACKAGE_VERSIONS,
 } from "./runtime.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
-import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
-import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
-import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge } from "./stardew-integration-launcher.js";
-import type { IntegrationLaunchHandle } from "./integration-launcher.js";
+import {
+  AUTHORED_CONTEXT_REGISTRY_SLOT_KEY,
+  authoredContextCatalogFixture,
+  readAuthoredContextRegistry,
+} from "./test-support/authored-context-catalog.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 // The compiled test artifact is deliberately not a production artifact, so
@@ -717,7 +716,13 @@ test("a Game runtime registers no environment-facts provider: the facts reach th
         const world = await observe.call(mod.connection);
         const brief = composeFactBrief({
           inputs: [],
-          snapshot: Object.freeze({ snapshot: world, revision: world.revision, ageTurns: 0, ageMs: 0, contentAgeMs: 0 }),
+          snapshot: Object.freeze({
+            snapshot: world,
+            revision: world.revision,
+            ageTurns: 0,
+            ageMs: 0,
+            contentAgeMs: 0,
+          }),
           events: [],
           locale: "zh-CN",
         });
@@ -1841,6 +1846,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
       "verify-broad": "",
       "compress-cues": "",
       retrospective: "",
+      reflect: "",
       "maintain-docs": "",
       "evaluate-smart-notes": "",
       "review-user-memories": "",
@@ -1856,17 +1862,17 @@ test("runtime loads only Magic Context and preserves a session partition", async
     assert.deepEqual(config.system_prompt_injection, { enabled: false });
     assert.equal(config.memory.domain, MAGIC_CONTEXT_MEMORY_DOMAIN);
     assert.equal(config.memory.enabled, MAGIC_CONTEXT_MEMORY_ENABLED);
-    assert.equal(config.memory.auto_promote, false);
-    assert.equal(MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED, false);
+    assert.equal(config.memory.auto_promote, MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED);
+    assert.equal(MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED, true);
     assert.equal(config.memory.auto_search.enabled, MAGIC_CONTEXT_RECALL_ENABLED);
-    assert.equal(MAGIC_CONTEXT_RECALL_ENABLED, false);
+    assert.equal(MAGIC_CONTEXT_RECALL_ENABLED, true);
     const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
     assert.deepEqual(manifest.featureFlags, {
       gameplaySubagent: false,
       magicContextMemoryDomain: MAGIC_CONTEXT_MEMORY_DOMAIN,
       magicContextMemoryEnabled: MAGIC_CONTEXT_MEMORY_ENABLED,
-      magicContextAutoPromoteEnabled: false,
-      magicContextAutoSearchEnabled: false,
+      magicContextAutoPromoteEnabled: MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
+      magicContextAutoSearchEnabled: MAGIC_CONTEXT_RECALL_ENABLED,
     });
     await access(join(runtime.paths.runtimeCwd, "data", "cortexkit", "magic-context", "context.db"));
 
@@ -1976,7 +1982,7 @@ test("internal Historian fixture override can disable automatic authoring withou
     assert.deepEqual(config.historian, { disable: true });
     assert.equal(config.memory.enabled, MAGIC_CONTEXT_MEMORY_ENABLED);
     assert.equal(config.memory.auto_promote, MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED);
-    assert.equal(config.memory.auto_search.enabled, false);
+    assert.equal(config.memory.auto_search.enabled, MAGIC_CONTEXT_RECALL_ENABLED);
   } finally {
     runtime.session.dispose();
   }

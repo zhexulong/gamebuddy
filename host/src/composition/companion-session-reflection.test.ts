@@ -1,7 +1,8 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
@@ -12,8 +13,8 @@ import {
   companionReflectionPendingPath,
   companionReflectionRuntimeCwd,
   createCompanionSessionReflectionChild,
-  reflectCompanionSessionOnce,
   recordPendingCompanionReflection,
+  reflectCompanionSessionOnce,
   runPendingCompanionReflection,
 } from "./companion-session-reflection.js";
 
@@ -258,5 +259,61 @@ test("a preempted reflection keeps its marker and spends no attempt", async () =
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(mountRoot, { recursive: true, force: true });
+  }
+});
+
+test("a short session with 0 compartments and only mechanical XML turns returns not_applicable without calling a model", async () => {
+  const root = mkdtempSync(join(tmpdir(), "companion-reflection-mechanical-"));
+  const storeDir = join(root, "data", "cortexkit", "magic-context");
+  mkdirSync(storeDir, { recursive: true });
+  const dbPath = join(storeDir, "context.db");
+  const sqlite = new DatabaseSync(dbPath);
+  try {
+    sqlite.exec(`
+      CREATE TABLE session_meta (
+        session_id TEXT PRIMARY KEY,
+        last_response_time INTEGER,
+        cached_m0_project_identity TEXT
+      );
+      CREATE TABLE compartments (
+        session_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        start_message INTEGER NOT NULL,
+        end_message INTEGER NOT NULL,
+        title TEXT,
+        content TEXT,
+        importance INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE message_history_fts (
+        session_id TEXT,
+        message_ordinal TEXT,
+        message_id TEXT,
+        role TEXT,
+        content TEXT
+      );
+    `);
+    sqlite
+      .prepare("INSERT INTO session_meta (session_id, last_response_time, cached_m0_project_identity) VALUES (?, ?, ?)")
+      .run("ses-mechanical", Date.now(), "project-mechanical");
+    sqlite
+      .prepare(
+        "INSERT INTO message_history_fts (session_id, message_ordinal, message_id, role, content) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "ses-mechanical",
+        "1",
+        "m1",
+        "user",
+        "<world-state>Day 1</world-state>\n<execution-result>settled</execution-result>",
+      );
+  } finally {
+    sqlite.close();
+  }
+  try {
+    const outcome = await reflectCompanionSessionOnce({ runtimeCwd: root, timeoutMs: 5_000 });
+    assert.equal(outcome, "not_applicable");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
