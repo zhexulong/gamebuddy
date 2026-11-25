@@ -28,6 +28,7 @@ import {
   renderSliceLine,
   runPairedLiveRun,
   topologyFacts,
+  PAIRED_SLICES,
 } from "./run-stardew-native-local-player-paired-companion-live-run.mjs";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "gb-paired-"));
@@ -444,7 +445,10 @@ test("one failed slice still prints the other three lines: a stop is never a sil
       .split("\n")
       .filter((line) => line.startsWith("PAIRED_SLICE "));
     assert.equal(onDisk.length, sliceLines.length);
-    assert.ok(JSON.parse(readFileSync(join(dir, "paired-report.json"), "utf8")).slices.length === 4);
+    assert.equal(
+      JSON.parse(readFileSync(join(dir, "paired-report.json"), "utf8")).slices.length,
+      PAIRED_SLICES.length,
+    );
   } finally {
     console.log = original;
     rmSync(dir, { recursive: true, force: true });
